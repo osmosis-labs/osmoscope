@@ -1,0 +1,61 @@
+{
+  "name": "osmometer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dashboard for displaying the main tokenomics of the OSMO token",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "type-check": "tsc --noEmit",
+    "populate-history": "tsx scripts/populate-burn-history.ts",
+    "populate-staking-apr": "tsx scripts/populate-staking-apr-history.ts",
+    "populate-revenue": "tsx scripts/populate-revenue-history.ts",
+    "populate-total-stake": "tsx scripts/populate-total-stake-history.ts",
+    "backfill-modeled-values": "tsx scripts/backfill-modeled-values.ts",
+    "apply-historical-params": "tsx scripts/apply-historical-params.ts",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.59.0",
+    "clsx": "^2.1.1",
+    "csv-parse": "^6.1.0",
+    "dotenv": "^17.2.3",
+    "lru-cache": "^11.2.2",
+    "next": "^15.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.13.3",
+    "tailwind-merge": "^2.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.8.7",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "autoprefixer": "^10.4.22",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^15.0.0",
+    "eslint-config-prettier": "^9.1.0",
+    "husky": "^9.1.6",
+    "lint-staged": "^15.2.10",
+    "postcss": "^8.4.47",
+    "prettier": "^3.3.3",
+    "prettier-plugin-tailwindcss": "^0.6.8",
+    "tailwindcss": "^3.4.14",
+    "tsx": "^4.20.6",
+    "typescript": "^5.6.3"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,css,md}": [
+      "prettier --write"
+    ]
+  },
+  "packageManager": "yarn@4.5.1"
+}
