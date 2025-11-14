@@ -1,0 +1,884 @@
+"use client";
+
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
+import { useMemo, useState } from "react";
+import type { HistoricalRecord } from "@/lib/historical-file";
+import {
+  TimeRangeSelector,
+  TimeRange,
+  filterDataByTimeRange,
+} from "../TimeRangeSelector";
+
+// Assumptions for asset composition
+const TAKER_FEES_OSMO_PERCENT = 0.5; // 50% OSMO
+const PROTOREV_OSMO_PERCENT = 0.5; // 50% OSMO
+const PROTOREV_MAINTAINER_PERCENT = 0.05; // 5% to maintainers
+
+// Calculate revenue totals for the filtered time range
+function calculateRevenueTotals(filteredData: HistoricalRecord[]) {
+  // Get data with revenue information
+  const recentData = filteredData.filter((r) => r.totalRevenue !== undefined);
+
+  if (recentData.length === 0) {
+    // Return null if no data available
+    return null;
+  }
+
+  // Sum up the totals for the entire filtered range
+  const totalTakerFees = recentData.reduce(
+    (sum, r) => sum + (r.takerFeesRevenue || 0),
+    0
+  );
+  const totalProtorev = recentData.reduce(
+    (sum, r) => sum + (r.protorevRevenue || 0),
+    0
+  );
+  const totalTxFees = recentData.reduce(
+    (sum, r) => sum + (r.txnFeesRevenue || 0),
+    0
+  );
+  const totalMev = recentData.reduce((sum, r) => sum + (r.mevRevenue || 0), 0);
+
+  return {
+    takerFees: totalTakerFees,
+    protorev: totalProtorev,
+    txFees: totalTxFees,
+    topOfBlock: totalMev,
+  };
+}
+
+interface FeeFlowNode {
+  id: string;
+  label: string;
+  shortLabel?: string;
+  value: number;
+  color: string;
+  level: number; // For positioning
+}
+
+interface FeeFlowLink {
+  source: string;
+  target: string;
+  value: number;
+  label: string;
+}
+
+interface FeeFlowChartProps {
+  historicalData?: HistoricalRecord[];
+}
+
+export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [timeRange, setTimeRange] = useState<TimeRange>("30d");
+
+  // Show either the clicked node or the hovered node (clicked takes priority)
+  const displayNode = selectedNode || hoveredNode;
+
+  // Filter data based on selected time range
+  const filteredData = filterDataByTimeRange(historicalData, timeRange);
+
+  const {
+    nodes,
+    links: _links,
+    osmoStakingPercent,
+    osmoCommunityPercent,
+    osmoBurnPercent,
+    nonOsmoStakingPercent,
+    nonOsmoCommunityPercent,
+    nonOsmoBurnPercent,
+    takerFeesOsmo,
+    takerFeesNonOsmo,
+    takerOsmoToStaking,
+    takerOsmoToCommunity,
+    takerOsmoToBurn,
+    takerNonOsmoToStaking,
+    takerNonOsmoToCommunity,
+    takerNonOsmoToBurn,
+    protorevOsmo,
+    protorevNonOsmo,
+    protorevOsmoToBurn,
+    protorevNonOsmoToCommunity,
+    txFeesToStaking,
+    tobToCommunity,
+    revenueAvgs,
+  } = useMemo(() => {
+    // Get the latest distribution parameters from historical data
+    const latestRecord = historicalData[historicalData.length - 1];
+    const osmoTakerDist = latestRecord?.osmoTakerFeeDistribution;
+    const nonOsmoTakerDist = latestRecord?.nonOsmoTakerFeeDistribution;
+
+    // Convert string percentages to numbers (they're stored as decimal strings like "0.33")
+    const osmoStakingPercent = osmoTakerDist
+      ? parseFloat(osmoTakerDist.stakingRewards)
+      : 0.33;
+    const osmoCommunityPercent = osmoTakerDist
+      ? parseFloat(osmoTakerDist.communityPool)
+      : 0.33;
+    const osmoBurnPercent = osmoTakerDist
+      ? parseFloat(osmoTakerDist.burn || "0.34")
+      : 0.34;
+
+    const nonOsmoStakingPercent = nonOsmoTakerDist
+      ? parseFloat(nonOsmoTakerDist.stakingRewards)
+      : 0;
+    const nonOsmoCommunityPercent = nonOsmoTakerDist
+      ? parseFloat(nonOsmoTakerDist.communityPool)
+      : 1.0;
+    const nonOsmoBurnPercent = nonOsmoTakerDist
+      ? parseFloat(nonOsmoTakerDist.burn || "0")
+      : 0;
+
+    // Calculate revenue totals for the selected time range
+    const revenueAvgs = calculateRevenueTotals(filteredData);
+
+    // If no revenue data available, show error message
+    if (!revenueAvgs) {
+      return (
+        <Card>
+          <CardHeader>
+            <CardTitle>Protocol Revenue</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex min-h-[400px] items-center justify-center">
+              <div className="text-center">
+                <p className="mb-2 text-lg text-white">
+                  Revenue Data Unavailable
+                </p>
+                <p className="text-sm text-osmo-200">
+                  No revenue data available for the selected time range
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    // Calculate flows using real revenue data
+    const takerFeesOsmo = revenueAvgs.takerFees * TAKER_FEES_OSMO_PERCENT;
+    const takerFeesNonOsmo =
+      revenueAvgs.takerFees * (1 - TAKER_FEES_OSMO_PERCENT);
+
+    const protorevTotal = revenueAvgs.protorev;
+    const protorevToMaintainers = protorevTotal * PROTOREV_MAINTAINER_PERCENT;
+    const protorevAfterMaintainers = protorevTotal - protorevToMaintainers;
+    const protorevOsmo = protorevAfterMaintainers * PROTOREV_OSMO_PERCENT;
+    const protorevNonOsmo =
+      protorevAfterMaintainers * (1 - PROTOREV_OSMO_PERCENT);
+
+    const txFees = revenueAvgs.txFees;
+    const tobFees = revenueAvgs.topOfBlock;
+
+    // Distribution using actual chain parameters
+    // Taker fees OSMO: use actual distribution from chain
+    const takerOsmoToStaking = takerFeesOsmo * osmoStakingPercent;
+    const takerOsmoToCommunity = takerFeesOsmo * osmoCommunityPercent;
+    const takerOsmoToBurn = takerFeesOsmo * osmoBurnPercent;
+
+    // Taker fees non-OSMO: use actual distribution from chain
+    const takerNonOsmoToStaking = takerFeesNonOsmo * nonOsmoStakingPercent;
+    const takerNonOsmoToCommunity = takerFeesNonOsmo * nonOsmoCommunityPercent;
+    const takerNonOsmoToBurn = takerFeesNonOsmo * nonOsmoBurnPercent;
+
+    // ProtoRev OSMO: all burned
+    const protorevOsmoToBurn = protorevOsmo;
+
+    // ProtoRev non-OSMO: all to community pool
+    const protorevNonOsmoToCommunity = protorevNonOsmo;
+
+    // Transaction fees: 100% OSMO, distributed to staking
+    const txFeesToStaking = txFees;
+
+    // Top of Block: 100% to community pool
+    const tobToCommunity = tobFees;
+
+    // Calculate totals
+    const totalToStaking =
+      takerOsmoToStaking + takerNonOsmoToStaking + txFeesToStaking;
+    const totalToCommunityPool =
+      takerOsmoToCommunity +
+      takerNonOsmoToCommunity +
+      protorevNonOsmoToCommunity +
+      tobToCommunity;
+    const totalToBurn =
+      takerOsmoToBurn + takerNonOsmoToBurn + protorevOsmoToBurn;
+
+    const nodes: FeeFlowNode[] = [
+      // Sources (Level 0)
+      {
+        id: "taker_fees",
+        label: "Taker Fees",
+        value: revenueAvgs.takerFees,
+        color: "#4CAF50",
+        level: 0,
+      },
+      {
+        id: "protorev",
+        label: "ProtoRev",
+        value: revenueAvgs.protorev,
+        color: "#2196F3",
+        level: 0,
+      },
+      {
+        id: "tx_fees",
+        label: "Transaction Fees",
+        shortLabel: "Tx Fees",
+        value: revenueAvgs.txFees,
+        color: "#FF9800",
+        level: 0,
+      },
+      {
+        id: "top_of_block",
+        label: "Top of Block",
+        shortLabel: "ToB",
+        value: revenueAvgs.topOfBlock,
+        color: "#FFC107",
+        level: 0,
+      },
+
+      // Intermediate splits (Level 1)
+      {
+        id: "taker_osmo",
+        label: "Taker (OSMO)",
+        value: takerFeesOsmo,
+        color: "#66BB6A",
+        level: 1,
+      },
+      {
+        id: "taker_non_osmo",
+        label: "Taker (Non-OSMO)",
+        value: takerFeesNonOsmo,
+        color: "#81C784",
+        level: 1,
+      },
+      {
+        id: "protorev_maintainers",
+        label: "ProtoRev Maintainers",
+        value: protorevToMaintainers,
+        color: "#64B5F6",
+        level: 1,
+      },
+      {
+        id: "protorev_after_maintainers",
+        label: "ProtoRev (After Maintainers)",
+        value: protorevAfterMaintainers,
+        color: "#42A5F5",
+        level: 1,
+      },
+
+      // ProtoRev splits (Level 2)
+      {
+        id: "protorev_osmo",
+        label: "ProtoRev (OSMO)",
+        value: protorevOsmo,
+        color: "#1E88E5",
+        level: 2,
+      },
+      {
+        id: "protorev_non_osmo",
+        label: "ProtoRev (Non-OSMO)",
+        value: protorevNonOsmo,
+        color: "#1976D2",
+        level: 2,
+      },
+
+      // Destinations (Level 3)
+      {
+        id: "staking",
+        label: "Staking Rewards",
+        value: totalToStaking,
+        color: "#9C27B0",
+        level: 3,
+      },
+      {
+        id: "community_pool",
+        label: "Community Pool",
+        value: totalToCommunityPool,
+        color: "#00BCD4",
+        level: 3,
+      },
+      {
+        id: "burn",
+        label: "Burn",
+        value: totalToBurn,
+        color: "#FF6B6B",
+        level: 3,
+      },
+    ];
+
+    const links: FeeFlowLink[] = [
+      // Taker fees split
+      {
+        source: "taker_fees",
+        target: "taker_osmo",
+        value: takerFeesOsmo,
+        label: "50% OSMO",
+      },
+      {
+        source: "taker_fees",
+        target: "taker_non_osmo",
+        value: takerFeesNonOsmo,
+        label: "50% Non-OSMO",
+      },
+
+      // Taker OSMO distribution
+      {
+        source: "taker_osmo",
+        target: "staking",
+        value: takerOsmoToStaking,
+        label: `${(osmoStakingPercent * 100).toFixed(0)}%`,
+      },
+      {
+        source: "taker_osmo",
+        target: "community_pool",
+        value: takerOsmoToCommunity,
+        label: `${(osmoCommunityPercent * 100).toFixed(0)}%`,
+      },
+      {
+        source: "taker_osmo",
+        target: "burn",
+        value: takerOsmoToBurn,
+        label: `${(osmoBurnPercent * 100).toFixed(0)}%`,
+      },
+
+      // Taker non-OSMO distribution
+      ...(takerNonOsmoToStaking > 0
+        ? [
+            {
+              source: "taker_non_osmo",
+              target: "staking",
+              value: takerNonOsmoToStaking,
+              label: `${(nonOsmoStakingPercent * 100).toFixed(0)}%`,
+            },
+          ]
+        : []),
+      ...(takerNonOsmoToCommunity > 0
+        ? [
+            {
+              source: "taker_non_osmo",
+              target: "community_pool",
+              value: takerNonOsmoToCommunity,
+              label: `${(nonOsmoCommunityPercent * 100).toFixed(0)}%`,
+            },
+          ]
+        : []),
+      ...(takerNonOsmoToBurn > 0
+        ? [
+            {
+              source: "taker_non_osmo",
+              target: "burn",
+              value: takerNonOsmoToBurn,
+              label: `${(nonOsmoBurnPercent * 100).toFixed(0)}%`,
+            },
+          ]
+        : []),
+
+      // ProtoRev split
+      {
+        source: "protorev",
+        target: "protorev_maintainers",
+        value: protorevToMaintainers,
+        label: "5%",
+      },
+      {
+        source: "protorev",
+        target: "protorev_after_maintainers",
+        value: protorevAfterMaintainers,
+        label: "95%",
+      },
+
+      // ProtoRev after maintainers split
+      {
+        source: "protorev_after_maintainers",
+        target: "protorev_osmo",
+        value: protorevOsmo,
+        label: "50% OSMO",
+      },
+      {
+        source: "protorev_after_maintainers",
+        target: "protorev_non_osmo",
+        value: protorevNonOsmo,
+        label: "50% Non-OSMO",
+      },
+
+      // ProtoRev OSMO to burn
+      {
+        source: "protorev_osmo",
+        target: "burn",
+        value: protorevOsmoToBurn,
+        label: "100%",
+      },
+
+      // ProtoRev non-OSMO to community pool
+      {
+        source: "protorev_non_osmo",
+        target: "community_pool",
+        value: protorevNonOsmoToCommunity,
+        label: "100%",
+      },
+
+      // Transaction fees to staking
+      {
+        source: "tx_fees",
+        target: "staking",
+        value: txFeesToStaking,
+        label: "100%",
+      },
+
+      // Top of Block to community pool
+      {
+        source: "top_of_block",
+        target: "community_pool",
+        value: tobToCommunity,
+        label: "100%",
+      },
+    ];
+
+    return {
+      nodes,
+      links,
+      osmoStakingPercent,
+      osmoCommunityPercent,
+      osmoBurnPercent,
+      nonOsmoStakingPercent,
+      nonOsmoCommunityPercent,
+      nonOsmoBurnPercent,
+      takerFeesOsmo,
+      takerFeesNonOsmo,
+      takerOsmoToStaking,
+      takerOsmoToCommunity,
+      takerOsmoToBurn,
+      takerNonOsmoToStaking,
+      takerNonOsmoToCommunity,
+      takerNonOsmoToBurn,
+      protorevOsmo,
+      protorevNonOsmo,
+      protorevOsmoToBurn,
+      protorevNonOsmoToCommunity,
+      txFeesToStaking,
+      tobToCommunity,
+      revenueAvgs,
+    };
+  }, [historicalData, filteredData]);
+
+  const formatUSD = (value: number) => {
+    return `$${value.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  };
+
+  const formatUSDCompact = (value: number) => {
+    if (value >= 1000000) {
+      // For millions, round to whole number if >= 10M, else 1 decimal
+      return value >= 10000000
+        ? `$${Math.round(value / 1000000)}M`
+        : `$${(value / 1000000).toFixed(1)}M`;
+    } else if (value >= 10000) {
+      // For 10k+, round to whole number
+      return `$${Math.round(value / 1000)}k`;
+    } else if (value >= 1000) {
+      // For 1k-10k, use 1 decimal
+      return `$${(value / 1000).toFixed(1)}k`;
+    }
+    return `$${Math.round(value)}`;
+  };
+
+  const getTooltipContent = (nodeId: string) => {
+    switch (nodeId) {
+      case "taker_fees":
+        return {
+          title: "Taker Fees",
+          total: formatUSD(revenueAvgs.takerFees),
+          breakdown: [
+            { label: "OSMO (50%)", value: formatUSD(takerFeesOsmo) },
+            { label: "Non-OSMO (50%)", value: formatUSD(takerFeesNonOsmo) },
+          ],
+          flows: [
+            {
+              label: `→ Staking (${(osmoStakingPercent * 100).toFixed(0)}% OSMO, ${(nonOsmoStakingPercent * 100).toFixed(0)}% Non-OSMO)`,
+              value: formatUSD(takerOsmoToStaking + takerNonOsmoToStaking),
+            },
+            {
+              label: `→ Community Pool (${(osmoCommunityPercent * 100).toFixed(0)}% OSMO, ${(nonOsmoCommunityPercent * 100).toFixed(0)}% Non-OSMO)`,
+              value: formatUSD(takerOsmoToCommunity + takerNonOsmoToCommunity),
+            },
+            {
+              label: `→ Burn (${(osmoBurnPercent * 100).toFixed(0)}% OSMO, ${(nonOsmoBurnPercent * 100).toFixed(0)}% Non-OSMO)`,
+              value: formatUSD(takerOsmoToBurn + takerNonOsmoToBurn),
+            },
+          ],
+        };
+      case "protorev":
+        return {
+          title: "ProtoRev",
+          total: formatUSD(revenueAvgs.protorev),
+          breakdown: [
+            {
+              label: "To Maintainers (5%)",
+              value: formatUSD(revenueAvgs.protorev * 0.05),
+            },
+            {
+              label: "Remaining (95%)",
+              value: formatUSD(revenueAvgs.protorev * 0.95),
+            },
+            { label: "  • OSMO (50%)", value: formatUSD(protorevOsmo) },
+            { label: "  • Non-OSMO (50%)", value: formatUSD(protorevNonOsmo) },
+          ],
+          flows: [
+            { label: "→ Burn (OSMO)", value: formatUSD(protorevOsmoToBurn) },
+            {
+              label: "→ Community Pool (Non-OSMO)",
+              value: formatUSD(protorevNonOsmoToCommunity),
+            },
+          ],
+        };
+      case "tx_fees":
+        return {
+          title: "Transaction Fees",
+          total: formatUSD(revenueAvgs.txFees),
+          breakdown: [
+            { label: "100% OSMO", value: formatUSD(revenueAvgs.txFees) },
+          ],
+          flows: [
+            { label: "→ Staking (100%)", value: formatUSD(txFeesToStaking) },
+          ],
+        };
+      case "top_of_block":
+        return {
+          title: "Top of Block",
+          total: formatUSD(revenueAvgs.topOfBlock),
+          breakdown: [
+            {
+              label: "100% to Community Pool",
+              value: formatUSD(revenueAvgs.topOfBlock),
+            },
+          ],
+          flows: [
+            {
+              label: "→ Community Pool (100%)",
+              value: formatUSD(tobToCommunity),
+            },
+          ],
+        };
+      case "staking":
+        return {
+          title: "Staking Rewards",
+          total: formatUSD(
+            takerOsmoToStaking + takerNonOsmoToStaking + txFeesToStaking
+          ),
+          breakdown: [
+            {
+              label: "From Taker Fees (OSMO)",
+              value: formatUSD(takerOsmoToStaking),
+            },
+            {
+              label: "From Taker Fees (Non-OSMO)",
+              value: formatUSD(takerNonOsmoToStaking),
+            },
+            {
+              label: "From Transaction Fees",
+              value: formatUSD(txFeesToStaking),
+            },
+          ],
+        };
+      case "community_pool":
+        return {
+          title: "Community Pool",
+          total: formatUSD(
+            takerOsmoToCommunity +
+              takerNonOsmoToCommunity +
+              protorevNonOsmoToCommunity +
+              tobToCommunity
+          ),
+          breakdown: [
+            {
+              label: "From Taker Fees (OSMO)",
+              value: formatUSD(takerOsmoToCommunity),
+            },
+            {
+              label: "From Taker Fees (Non-OSMO)",
+              value: formatUSD(takerNonOsmoToCommunity),
+            },
+            {
+              label: "From ProtoRev (Non-OSMO)",
+              value: formatUSD(protorevNonOsmoToCommunity),
+            },
+            { label: "From Top of Block", value: formatUSD(tobToCommunity) },
+          ],
+        };
+      case "burn":
+        return {
+          title: "Burn",
+          total: formatUSD(
+            takerOsmoToBurn + takerNonOsmoToBurn + protorevOsmoToBurn
+          ),
+          breakdown: [
+            {
+              label: "From Taker Fees (OSMO)",
+              value: formatUSD(takerOsmoToBurn),
+            },
+            {
+              label: "From Taker Fees (Non-OSMO)",
+              value: formatUSD(takerNonOsmoToBurn),
+            },
+            {
+              label: "From ProtoRev (OSMO)",
+              value: formatUSD(protorevOsmoToBurn),
+            },
+          ],
+        };
+      default:
+        return null;
+    }
+  };
+
+  const getNodesByLevel = (level: number) =>
+    nodes.filter((node) => node.level === level);
+
+  // Calculate total for proportional sizing (already 30-day totals from calculateRevenueTotals)
+  const total30Days =
+    revenueAvgs.takerFees +
+    revenueAvgs.protorev +
+    revenueAvgs.txFees +
+    revenueAvgs.topOfBlock;
+
+  // Get final destinations
+  const destinations = getNodesByLevel(3);
+  const totalDestinations = destinations.reduce(
+    (sum, node) => sum + node.value,
+    0
+  );
+
+  // Check if we're using fallback values
+  // Check if we're using fallback revenue values (no historical revenue data)
+  const usingFallbackValues =
+    historicalData.length === 0 ||
+    !historicalData.slice(-30).some((r) => r.totalRevenue !== undefined);
+
+  // Get time range label for display
+  const getTimeRangeLabel = () => {
+    switch (timeRange) {
+      case "7d":
+        return "Last 7 days";
+      case "30d":
+        return "Last 30 days";
+      case "90d":
+        return "Last 90 days";
+      default:
+        return "Last 30 days";
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-4">
+            <CardTitle>Protocol Revenue</CardTitle>
+            <TimeRangeSelector
+              selectedRange={timeRange}
+              onRangeChange={setTimeRange}
+            />
+          </div>
+          <div className="text-right">
+            <div className="text-3xl font-bold text-white">
+              {formatUSD(total30Days)}
+            </div>
+            <div className="text-xs text-osmo-200">
+              {getTimeRangeLabel()}
+              {usingFallbackValues && (
+                <span className="ml-2 text-yellow-400">*</span>
+              )}
+            </div>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="relative">
+          {/* Gradient box encompassing both sources and destinations */}
+          <div className="via-white/2 rounded-lg bg-gradient-to-b from-white/5 to-transparent p-4">
+            {/* Sources with proportional widths */}
+            <div>
+              <div className="mb-2 text-xs font-semibold text-osmo-200">
+                SOURCES
+              </div>
+              <div className="mb-6 flex gap-2">
+                {getNodesByLevel(0).map((node) => {
+                  const widthPercent = (node.value / total30Days) * 100;
+                  // Use short label if bar is narrow (< 15%)
+                  const displayLabel =
+                    widthPercent < 15 && node.shortLabel
+                      ? node.shortLabel
+                      : node.label;
+                  return (
+                    <div
+                      key={node.id}
+                      style={{ width: `${widthPercent}%` }}
+                      className="relative"
+                    >
+                      <div
+                        className="flex h-16 cursor-pointer flex-col items-center justify-center rounded transition-all hover:opacity-80 hover:ring-2 hover:ring-white"
+                        style={{ backgroundColor: node.color }}
+                        onMouseEnter={() =>
+                          !selectedNode && setHoveredNode(node.id)
+                        }
+                        onMouseLeave={() => setHoveredNode(null)}
+                        onClick={() =>
+                          setSelectedNode(
+                            selectedNode === node.id ? null : node.id
+                          )
+                        }
+                      >
+                        <div className="px-1 text-center text-xs font-semibold text-white">
+                          {displayLabel}
+                        </div>
+                        <div className="px-1 text-xs text-white/90">
+                          {formatUSDCompact(node.value)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Flow spacer */}
+            <div className="h-8"></div>
+
+            {/* Destinations with proportional widths */}
+            <div>
+              <div className="mb-2 text-xs font-semibold text-osmo-200">
+                DESTINATIONS
+              </div>
+              <div className="flex gap-2">
+                {destinations.map((node) => {
+                  const widthPercent = (node.value / totalDestinations) * 100;
+                  return (
+                    <div
+                      key={node.id}
+                      style={{ width: `${widthPercent}%` }}
+                      className="relative"
+                    >
+                      <div
+                        className="flex h-24 cursor-pointer flex-col items-center justify-center rounded transition-all hover:opacity-80 hover:ring-2 hover:ring-white"
+                        style={{ backgroundColor: node.color }}
+                        onMouseEnter={() =>
+                          !selectedNode && setHoveredNode(node.id)
+                        }
+                        onMouseLeave={() => setHoveredNode(null)}
+                        onClick={() =>
+                          setSelectedNode(
+                            selectedNode === node.id ? null : node.id
+                          )
+                        }
+                      >
+                        <div className="px-2 text-center text-sm font-bold text-white">
+                          {node.label}
+                        </div>
+                        <div className="px-2 text-lg font-bold text-white">
+                          {formatUSDCompact(node.value)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Overlay Detail View */}
+          {displayNode &&
+            (() => {
+              const tooltipData = getTooltipContent(displayNode);
+              if (!tooltipData) return null;
+
+              return (
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+                  <div
+                    className="pointer-events-auto mx-4 w-full max-w-md rounded-lg border border-white/20 bg-osmo-900/95 p-6 shadow-2xl backdrop-blur-md"
+                    onMouseEnter={() => setHoveredNode(displayNode)}
+                    onMouseLeave={() => !selectedNode && setHoveredNode(null)}
+                  >
+                    <div className="mb-4 flex items-start justify-between">
+                      <div>
+                        <div className="mb-1 text-xl font-bold text-white">
+                          {tooltipData.title}
+                        </div>
+                        <div className="text-osmo-accent text-3xl font-bold">
+                          {tooltipData.total}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSelectedNode(null);
+                          setHoveredNode(null);
+                        }}
+                        className="text-osmo-200 transition-colors hover:text-white"
+                      >
+                        <svg
+                          className="h-5 w-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M6 18L18 6M6 6l12 12"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+
+                    {tooltipData.breakdown &&
+                      tooltipData.breakdown.length > 0 && (
+                        <div className="mb-4 border-t border-white/10 pt-4">
+                          <div className="mb-3 text-sm font-semibold text-osmo-200">
+                            Composition:
+                          </div>
+                          {tooltipData.breakdown.map((item, idx) => (
+                            <div
+                              key={idx}
+                              className="mb-2 flex justify-between py-1 text-sm text-white"
+                            >
+                              <span className="text-osmo-100">
+                                {item.label}
+                              </span>
+                              <span className="font-semibold">
+                                {item.value}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                    {tooltipData.flows && tooltipData.flows.length > 0 && (
+                      <div className="border-t border-white/10 pt-4">
+                        <div className="mb-3 text-sm font-semibold text-osmo-200">
+                          {displayNode === "taker_fees" ||
+                          displayNode === "protorev" ||
+                          displayNode === "tx_fees" ||
+                          displayNode === "top_of_block"
+                            ? "Flows to:"
+                            : "Flows from:"}
+                        </div>
+                        {tooltipData.flows.map((item, idx) => (
+                          <div
+                            key={idx}
+                            className="mb-2 flex justify-between py-1 text-sm text-white"
+                          >
+                            <span className="text-osmo-100">{item.label}</span>
+                            <span className="font-semibold">{item.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
