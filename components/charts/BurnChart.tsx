@@ -12,12 +12,13 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
 import { formatNumber, formatNumberWithCommas } from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   TimeRangeSelector,
   TimeRange,
   filterDataByTimeRange,
 } from "../TimeRangeSelector";
+import { ScreenshotButtons } from "../ScreenshotButtons";
 
 interface BurnChartProps {
   burned: number;
@@ -25,6 +26,7 @@ interface BurnChartProps {
 }
 
 export function BurnChart({ burned, historicalData }: BurnChartProps) {
+  const cardRef = useRef<HTMLDivElement>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>("90d");
 
   // Filter data based on selected time range
@@ -40,7 +42,7 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
   }));
 
   return (
-    <Card>
+    <Card ref={cardRef}>
       <CardHeader>
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
@@ -49,6 +51,7 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
               selectedRange={timeRange}
               onRangeChange={setTimeRange}
             />
+            <ScreenshotButtons targetRef={cardRef} filename="osmo-burned" />
           </div>
           <div className="text-right">
             <div className="text-3xl font-bold text-[#FF6B6B]">

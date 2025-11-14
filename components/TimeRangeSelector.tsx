@@ -22,7 +22,11 @@ export function TimeRangeSelector({
   ];
 
   return (
-    <div className="flex gap-1 rounded-lg bg-white/5 p-1">
+    <div
+      className="flex gap-1 rounded-lg bg-white/5 p-1"
+      data-screenshot-compact
+      data-selected-range={selectedRange}
+    >
       {ranges.map((range) => (
         <button
           key={range.value}

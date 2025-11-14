@@ -1,13 +1,14 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import type { HistoricalRecord } from "@/lib/historical-file";
 import {
   TimeRangeSelector,
   TimeRange,
   filterDataByTimeRange,
 } from "../TimeRangeSelector";
+import { ScreenshotButtons } from "../ScreenshotButtons";
 
 // Assumptions for asset composition
 const TAKER_FEES_OSMO_PERCENT = 0.5; // 50% OSMO
@@ -68,6 +69,7 @@ interface FeeFlowChartProps {
 }
 
 export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
+  const cardRef = useRef<HTMLDivElement>(null);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>("30d");
@@ -132,27 +134,33 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
     // Calculate revenue totals for the selected time range
     const revenueAvgs = calculateRevenueTotals(filteredData);
 
-    // If no revenue data available, show error message
+    // If no revenue data available, return null and handle in component
     if (!revenueAvgs) {
-      return (
-        <Card>
-          <CardHeader>
-            <CardTitle>Protocol Revenue</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex min-h-[400px] items-center justify-center">
-              <div className="text-center">
-                <p className="mb-2 text-lg text-white">
-                  Revenue Data Unavailable
-                </p>
-                <p className="text-sm text-osmo-200">
-                  No revenue data available for the selected time range
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      );
+      return {
+        nodes: [],
+        links: [],
+        osmoStakingPercent: 0,
+        osmoCommunityPercent: 0,
+        osmoBurnPercent: 0,
+        nonOsmoStakingPercent: 0,
+        nonOsmoCommunityPercent: 0,
+        nonOsmoBurnPercent: 0,
+        takerFeesOsmo: 0,
+        takerFeesNonOsmo: 0,
+        takerOsmoToStaking: 0,
+        takerOsmoToCommunity: 0,
+        takerOsmoToBurn: 0,
+        takerNonOsmoToStaking: 0,
+        takerNonOsmoToCommunity: 0,
+        takerNonOsmoToBurn: 0,
+        protorevOsmo: 0,
+        protorevNonOsmo: 0,
+        protorevOsmoToBurn: 0,
+        protorevNonOsmoToCommunity: 0,
+        txFeesToStaking: 0,
+        tobToCommunity: 0,
+        revenueAvgs: null,
+      };
     }
 
     // Calculate flows using real revenue data
@@ -663,13 +671,52 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
         return "Last 30 days";
       case "90d":
         return "Last 90 days";
+      case "1y":
+        return "Last 1 year";
+      case "all":
+        return "All Time";
       default:
-        return "Last 30 days";
+        return "All Time";
     }
   };
 
+  // If no revenue data available, show error message
+  if (!revenueAvgs) {
+    return (
+      <Card ref={cardRef}>
+        <CardHeader>
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-4">
+              <CardTitle>Protocol Revenue</CardTitle>
+              <TimeRangeSelector
+                selectedRange={timeRange}
+                onRangeChange={setTimeRange}
+              />
+              <ScreenshotButtons
+                targetRef={cardRef}
+                filename="protocol-revenue"
+              />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex min-h-[400px] items-center justify-center">
+            <div className="text-center">
+              <p className="mb-2 text-lg text-white">
+                Revenue Data Unavailable
+              </p>
+              <p className="text-sm text-osmo-200">
+                No revenue data available for the selected time range
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
-    <Card>
+    <Card ref={cardRef}>
       <CardHeader>
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
@@ -677,6 +724,10 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
             <TimeRangeSelector
               selectedRange={timeRange}
               onRangeChange={setTimeRange}
+            />
+            <ScreenshotButtons
+              targetRef={cardRef}
+              filename="protocol-revenue"
             />
           </div>
           <div className="text-right">

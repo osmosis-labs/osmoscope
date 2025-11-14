@@ -9,13 +9,15 @@ import { StakingAprChart } from "./charts/StakingAprChart";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/Card";
 import { formatPercentage, formatNumberWithCommas } from "@/lib/utils";
 import { logger } from "@/lib/logger";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { HistoricalRecord } from "@/lib/historical-file";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
+import { ScreenshotButtons } from "./ScreenshotButtons";
 
 export function OsmosisDashboard() {
   const { data, isLoading, error } = useOsmosisMetrics();
   const [historicalData, setHistoricalData] = useState<HistoricalRecord[]>([]);
+  const burnedPieChartRef = useRef<HTMLDivElement>(null);
 
   // Fetch historical data
   useEffect(() => {
@@ -80,10 +82,16 @@ export function OsmosisDashboard() {
 
       {/* Row: OSMO Burned doughnut and line chart */}
       <div className="grid gap-6 lg:grid-cols-[1fr_2fr]">
-        <Card>
+        <Card ref={burnedPieChartRef}>
           <CardHeader>
             <div className="flex items-start justify-between">
-              <CardTitle>OSMO Burned (%)</CardTitle>
+              <div className="flex flex-col items-start gap-2">
+                <CardTitle>OSMO Burned (%)</CardTitle>
+                <ScreenshotButtons
+                  targetRef={burnedPieChartRef}
+                  filename="osmo-burned-percentage"
+                />
+              </div>
               <div className="text-right">
                 <div className="text-3xl font-bold text-[#FF6B6B]">
                   {formatPercentage((data.burned / data.circulating) * 100)}
@@ -91,7 +99,7 @@ export function OsmosisDashboard() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="flex items-center justify-center p-1">
+          <CardContent className="relative flex items-center justify-center p-1">
             <ResponsiveContainer width="100%" height={380}>
               <PieChart>
                 <Pie
@@ -125,6 +133,15 @@ export function OsmosisDashboard() {
                 />
               </PieChart>
             </ResponsiveContainer>
+            {/* OSMO icon in center of doughnut */}
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <img
+                src="/Osmosis_Icon.png"
+                alt="Osmosis"
+                className="h-36 w-36 opacity-80"
+                style={{ transform: "translate(-2%, 2%)" }}
+              />
+            </div>
           </CardContent>
         </Card>
         <BurnChart burned={data.burned} historicalData={historicalData} />

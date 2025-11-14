@@ -15,12 +15,13 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
 import { formatPercentage } from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import {
   TimeRangeSelector,
   TimeRange,
   filterDataByTimeRange,
 } from "../TimeRangeSelector";
+import { ScreenshotButtons } from "../ScreenshotButtons";
 
 // Custom tooltip to show only one "Net Inflation" value
 function CustomTooltip({
@@ -83,6 +84,7 @@ export function InflationRatesChart({
   netInflation,
   historicalData,
 }: InflationRatesChartProps) {
+  const cardRef = useRef<HTMLDivElement>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>("90d");
 
   // Memoize expensive chart data calculations
@@ -213,14 +215,17 @@ export function InflationRatesChart({
   }, [historicalData, timeRange, inflationRate, burnRate, netInflation]);
 
   return (
-    <Card>
+    <Card ref={cardRef}>
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle>OSMO Inflation</CardTitle>
-          <TimeRangeSelector
-            selectedRange={timeRange}
-            onRangeChange={setTimeRange}
-          />
+          <div className="flex items-center gap-4">
+            <TimeRangeSelector
+              selectedRange={timeRange}
+              onRangeChange={setTimeRange}
+            />
+            <ScreenshotButtons targetRef={cardRef} filename="osmo-inflation" />
+          </div>
         </div>
       </CardHeader>
       <CardContent>

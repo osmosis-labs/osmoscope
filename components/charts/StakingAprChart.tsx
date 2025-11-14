@@ -1,7 +1,7 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import {
   LineChart,
   Line,
@@ -21,6 +21,7 @@ import {
   TimeRange,
   filterDataByTimeRange,
 } from "../TimeRangeSelector";
+import { ScreenshotButtons } from "../ScreenshotButtons";
 
 // Custom tooltip component for APR breakdown
 function CustomTooltip({
@@ -90,6 +91,7 @@ export function StakingAprChart({
   currentApr,
   historicalData,
 }: StakingAprChartProps) {
+  const cardRef = useRef<HTMLDivElement>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>("90d");
 
   // Filter data based on selected time range
@@ -172,7 +174,7 @@ export function StakingAprChart({
   }, [filteredData, currentApr]);
 
   return (
-    <Card>
+    <Card ref={cardRef}>
       <CardHeader>
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
@@ -181,6 +183,7 @@ export function StakingAprChart({
               selectedRange={timeRange}
               onRangeChange={setTimeRange}
             />
+            <ScreenshotButtons targetRef={cardRef} filename="staking-apr" />
           </div>
           <div className="text-right">
             <div className="text-3xl font-bold text-[#9C27B0]">
