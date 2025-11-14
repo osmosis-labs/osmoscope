@@ -21,6 +21,48 @@ const NUMIA_API_KEY = process.env.NUMIA_API_KEY;
 // Helper to add delay between requests
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Helper to perform fetch with retry logic for rate limiting
+async function fetchWithRetry(
+  url: string,
+  maxRetries = 3,
+  baseDelay = 1000
+): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      // If we get a 429, wait and retry with exponential backoff
+      if (response.status === 429) {
+        const retryDelay = baseDelay * Math.pow(2, attempt);
+        logger.warn(
+          `Rate limited (429) for ${url}, retrying in ${retryDelay}ms (attempt ${attempt + 1}/${maxRetries})`
+        );
+        await delay(retryDelay);
+        continue;
+      }
+
+      return response;
+    } catch (error) {
+      lastError = error as Error;
+      if (attempt < maxRetries - 1) {
+        const retryDelay = baseDelay * Math.pow(2, attempt);
+        logger.warn(
+          `Request failed for ${url}, retrying in ${retryDelay}ms (attempt ${attempt + 1}/${maxRetries})`
+        );
+        await delay(retryDelay);
+      }
+    }
+  }
+
+  throw lastError || new Error(`Failed after ${maxRetries} retries`);
+}
+
 // LRU cache with size limit to prevent memory leaks
 // Short cache: For data that changes frequently (currently unused, kept for future use)
 // Long cache: For data that changes once per day (supply, inflation, balances, staking pool, params)
@@ -54,13 +96,9 @@ async function cachedFetch(url: string, useLongCache = false): Promise<any> {
   }
 
   // Add small delay to avoid rate limiting
-  await delay(100);
+  await delay(200);
 
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-    },
-  });
+  const response = await fetchWithRetry(url);
 
   if (!response.ok) {
     // Don't cache errors
@@ -342,10 +380,12 @@ export async function calculateOsmosisMetrics() {
         fetchMintParams(),
       ]);
 
-    // Fetch developer balances in parallel (kept for future use)
-    const _devBalances = await Promise.all(
-      devAddresses.map((addr) => fetchBalance(addr))
-    );
+    // Fetch developer balances sequentially to avoid rate limiting
+    const _devBalances: number[] = [];
+    for (const addr of devAddresses) {
+      const balance = await fetchBalance(addr);
+      _devBalances.push(balance);
+    }
 
     // Calculate total supply (minted - burned)
     const totalSupply = mintedSupply - burnedAmount;
