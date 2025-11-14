@@ -54,7 +54,7 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
             <ScreenshotButtons targetRef={cardRef} filename="osmo-burned" />
           </div>
           <div className="text-right">
-            <div className="text-3xl font-bold text-[#FF6B6B]">
+            <div className="text-3xl font-bold text-[#FF7043]">
               {formatNumberWithCommas(burned)}
             </div>
             <div className="text-xs text-osmo-200">Total Burned</div>
@@ -97,7 +97,7 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
             <Line
               type="monotone"
               dataKey="OSMO Burned"
-              stroke="#FF6B6B"
+              stroke="#FF7043"
               strokeWidth={2}
               dot={false}
             />

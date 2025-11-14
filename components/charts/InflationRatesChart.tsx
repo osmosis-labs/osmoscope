@@ -50,7 +50,7 @@ function CustomTooltip({
       {data["Net Inflation"] != null && (
         <p
           style={{
-            color: data["Net Inflation"] >= 0 ? "#2196F3" : "#FF9800",
+            color: data["Net Inflation"] >= 0 ? "#E53935" : "#81C784",
             marginBottom: "4px",
           }}
         >
@@ -58,12 +58,12 @@ function CustomTooltip({
         </p>
       )}
       {data["Inflation Rate"] != null && (
-        <p style={{ color: "#4CAF50", marginBottom: "4px" }}>
+        <p style={{ color: "#7C4DFF", marginBottom: "4px" }}>
           Inflation Rate: {formatPercentage(data["Inflation Rate"])}
         </p>
       )}
       {data["Burn Rate"] != null && (
-        <p style={{ color: "#FF6B6B" }}>
+        <p style={{ color: "#FF7043" }}>
           Burn Rate: {formatPercentage(data["Burn Rate"])}
         </p>
       )}
@@ -175,7 +175,7 @@ export function InflationRatesChart({
       return {
         date: data.date,
         "Inflation Rate": data.inflationRate,
-        "Burn Rate": data.burnRate,
+        "Burn Rate": -data.burnRate, // Display as positive
         "Net Inflation": data.netInflation,
         "Net Inflation Positive": netInflationPositive,
         "Net Inflation Negative": netInflationNegative,
@@ -233,21 +233,21 @@ export function InflationRatesChart({
         <div className="mb-6 grid grid-cols-3 gap-4 border-b border-white/10 pb-4">
           <div className="text-center">
             <div
-              className={`text-2xl font-bold ${hasNegativeNetInflation ? "text-[#FF9800]" : "text-[#2196F3]"}`}
+              className={`text-2xl font-bold ${hasNegativeNetInflation ? "text-[#81C784]" : "text-[#E53935]"}`}
             >
               {formatPercentage(averageNetInflation)}
             </div>
             <div className="text-sm text-osmo-100">Net Inflation</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-[#4CAF50]">
+            <div className="text-2xl font-bold text-[#7C4DFF]">
               {formatPercentage(averageInflationRate)}
             </div>
             <div className="text-sm text-osmo-100">Inflation Rate</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-[#FF6B6B]">
-              {formatPercentage(averageBurnRate)}
+            <div className="text-2xl font-bold text-[#FF7043]">
+              {formatPercentage(-averageBurnRate)}
             </div>
             <div className="text-sm text-osmo-100">Burn Rate</div>
           </div>
@@ -274,12 +274,12 @@ export function InflationRatesChart({
             />
             <Tooltip content={<CustomTooltip />} />
             <ReferenceLine y={0} stroke="#fff" strokeDasharray="3 3" />
-            <Bar dataKey="Inflation Rate" fill="#4CAF50" opacity={0.8} />
-            <Bar dataKey="Burn Rate" fill="#FF6B6B" opacity={0.8} />
+            <Bar dataKey="Inflation Rate" fill="#7C4DFF" opacity={0.8} />
+            <Bar dataKey="Burn Rate" fill="#FF7043" opacity={0.8} />
             <Line
               type="monotone"
               dataKey="Net Inflation Positive"
-              stroke="#2196F3"
+              stroke="#E53935"
               strokeWidth={3}
               dot={false}
               connectNulls={false}
@@ -287,7 +287,7 @@ export function InflationRatesChart({
             <Line
               type="monotone"
               dataKey="Net Inflation Negative"
-              stroke="#FF9800"
+              stroke="#81C784"
               strokeWidth={3}
               dot={false}
               connectNulls={false}

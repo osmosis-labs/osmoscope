@@ -73,7 +73,7 @@ export function TokenBalancesChart({
             />
           </div>
           <div className="text-right">
-            <div className="text-3xl font-bold text-[#95E1D3]">
+            <div className="text-3xl font-bold text-[#7C4DFF]">
               {formatNumberWithCommas(circulating)}
             </div>
             <div className="text-xs text-osmo-200">Circulating</div>
@@ -85,16 +85,16 @@ export function TokenBalancesChart({
           <AreaChart data={chartData}>
             <defs>
               <linearGradient id="colorCirculating" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#95E1D3" stopOpacity={0.8} />
-                <stop offset="95%" stopColor="#95E1D3" stopOpacity={0.1} />
+                <stop offset="5%" stopColor="#7C4DFF" stopOpacity={0.8} />
+                <stop offset="95%" stopColor="#7C4DFF" stopOpacity={0.1} />
               </linearGradient>
               <linearGradient id="colorRestricted" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#FF9800" stopOpacity={0.8} />
-                <stop offset="95%" stopColor="#FF9800" stopOpacity={0.1} />
+                <stop offset="5%" stopColor="#9E9E9E" stopOpacity={0.8} />
+                <stop offset="95%" stopColor="#9E9E9E" stopOpacity={0.1} />
               </linearGradient>
               <linearGradient id="colorCommunity" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#2196F3" stopOpacity={0.8} />
-                <stop offset="95%" stopColor="#2196F3" stopOpacity={0.1} />
+                <stop offset="5%" stopColor="#2994D0" stopOpacity={0.8} />
+                <stop offset="95%" stopColor="#2994D0" stopOpacity={0.1} />
               </linearGradient>
             </defs>
             <CartesianGrid
@@ -129,17 +129,9 @@ export function TokenBalancesChart({
             />
             <Area
               type="monotone"
-              dataKey="Circulating Supply"
-              stackId="1"
-              stroke="#95E1D3"
-              strokeWidth={2}
-              fill="url(#colorCirculating)"
-            />
-            <Area
-              type="monotone"
               dataKey="Restricted Supply"
               stackId="1"
-              stroke="#FF9800"
+              stroke="#9E9E9E"
               strokeWidth={2}
               fill="url(#colorRestricted)"
             />
@@ -147,9 +139,17 @@ export function TokenBalancesChart({
               type="monotone"
               dataKey="Community Supply"
               stackId="1"
-              stroke="#2196F3"
+              stroke="#2994D0"
               strokeWidth={2}
               fill="url(#colorCommunity)"
+            />
+            <Area
+              type="monotone"
+              dataKey="Circulating Supply"
+              stackId="1"
+              stroke="#7C4DFF"
+              strokeWidth={2}
+              fill="url(#colorCirculating)"
             />
           </AreaChart>
         </ResponsiveContainer>
