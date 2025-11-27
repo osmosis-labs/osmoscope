@@ -1,6 +1,13 @@
 import fs from "fs/promises";
 import path from "path";
 import { logger } from "./logger";
+import {
+  isGitHubStorageEnabled,
+  getHistoryFromGitHub,
+  getHistoryRangeFromGitHub,
+  saveSnapshotToGitHub,
+  getHistoryStatsFromGitHub,
+} from "./github-storage";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const HISTORY_FILE = path.join(DATA_DIR, "history.json");
@@ -24,6 +31,7 @@ export interface HistoricalRecord {
   inflationRate: number;
   totalStaked?: number; // Total bonded tokens from staking pool
   stakingApr?: number; // Raw APR for this specific date
+  stakingRate?: number; // 30-day average APR
   // Revenue distribution parameters
   distributionProportions?: {
     staking: string;
@@ -176,6 +184,15 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<void> {
         return; // Skip saving
       }
 
+      // Use GitHub storage if enabled, otherwise use local file storage
+      if (isGitHubStorageEnabled()) {
+        logger.info("Using GitHub storage");
+        await saveSnapshotToGitHub(data);
+        return;
+      }
+
+      // Fall back to local file storage
+      logger.info("Using local file storage");
       await ensureDataDir();
 
       // Read existing history
@@ -202,10 +219,9 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<void> {
       // Add new snapshot
       history.push(data);
 
-      // Keep only last 90 days
-      const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
-      history = history.filter(
-        (record) => new Date(record.timestamp).getTime() > ninetyDaysAgo
+      // Sort by timestamp to maintain chronological order
+      history.sort((a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
 
       // Save back to file
@@ -219,6 +235,17 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<void> {
 
 // Get all historical records
 export async function getHistory(): Promise<HistoricalRecord[]> {
+  // Use GitHub storage if enabled, otherwise use local file storage
+  if (isGitHubStorageEnabled()) {
+    try {
+      return await getHistoryFromGitHub();
+    } catch (error) {
+      logger.error("Failed to fetch from GitHub, falling back to local file:", error);
+      // Fall through to local file storage
+    }
+  }
+
+  // Use local file storage
   try {
     const content = await fs.readFile(HISTORY_FILE, "utf-8");
     return JSON.parse(content);
@@ -232,6 +259,16 @@ export async function getHistory(): Promise<HistoricalRecord[]> {
 export async function getHistoryRange(
   days: number
 ): Promise<HistoricalRecord[]> {
+  // Use GitHub storage if enabled for potential optimization
+  if (isGitHubStorageEnabled()) {
+    try {
+      return await getHistoryRangeFromGitHub(days);
+    } catch (error) {
+      logger.error("Failed to fetch range from GitHub, falling back to getHistory:", error);
+      // Fall through to regular getHistory
+    }
+  }
+
   const history = await getHistory();
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 
@@ -292,6 +329,16 @@ export async function getBurnRateFromHistory(
 
 // Get stats about the historical data
 export async function getHistoryStats() {
+  // Use GitHub storage if enabled
+  if (isGitHubStorageEnabled()) {
+    try {
+      return await getHistoryStatsFromGitHub();
+    } catch (error) {
+      logger.error("Failed to get stats from GitHub, falling back:", error);
+      // Fall through to local implementation
+    }
+  }
+
   const history = await getHistory();
 
   if (history.length === 0) {
