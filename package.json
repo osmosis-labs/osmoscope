@@ -19,10 +19,17 @@
     "apply-historical-params": "tsx scripts/apply-historical-params.ts",
     "populate-from-archive": "tsx scripts/populate-from-archive.ts",
     "validate-history": "tsx scripts/validate-history.ts",
-    "prepare": "husky"
+    "migrate-json-to-db": "tsx scripts/migrate-json-to-db.ts",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "prepare": "husky",
+    "backup-to-github": "tsx scripts/backup-to-github.ts"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",
+    "@prisma/client": "^7.0.1",
     "@tanstack/react-query": "^5.59.0",
     "clsx": "^2.1.1",
     "csv-parse": "^6.1.0",
@@ -30,6 +37,7 @@
     "html2canvas": "^1.4.1",
     "lru-cache": "^11.2.2",
     "next": "^15.0.0",
+    "prisma": "^7.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.13.3",
