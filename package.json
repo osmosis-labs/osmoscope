@@ -20,8 +20,7 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
-    "prepare": "husky",
-    "backup-to-github": "tsx scripts/backup-to-github.ts"
+    "prepare": "husky"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",

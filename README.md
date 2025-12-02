@@ -49,7 +49,6 @@ The following features are planned for future development:
 - **[Osmosis Archive Node](https://lcd.archive.osmosis.zone)** - Historical blockchain data
 - **[Osmosis LCD API](https://lcd.osmosis.zone/swagger/)** - Real-time blockchain data
 - **[Numia Data API](https://www.numia.xyz/)** - Historical staking APR and revenue data
-- **GitHub Storage** - Backup storage via Octokit API
 
 ### Development Tools
 
@@ -183,7 +182,6 @@ osmometer/
 │   ├── populate-revenue-history.ts              # Populate protocol revenue from DataLenses/Numia
 │   ├── validate-history.ts                      # Validate historical data integrity
 │   ├── migrate-json-to-db.ts                    # Migrate JSON data to Vercel Postgres
-│   ├── backup-to-github.ts                      # Backup data to GitHub via Octokit
 │   └── lib/
 │       └── archive-node.ts                      # Archive node client with rate limiting
 │
@@ -426,11 +424,10 @@ The dashboard has **1,441 records** of historical data spanning from **June 2021
 
 ### Data Storage Strategy
 
-The application uses a **three-tier fallback system**:
+The application uses a **two-tier fallback system**:
 
 1. **Vercel Postgres** (Priority 1) - Primary production database with Prisma ORM
-2. **GitHub Storage** (Priority 2) - Backup via Octokit REST API
-3. **Local JSON Files** (Priority 3) - Development fallback
+2. **Local JSON Files** (Priority 3) - Development fallback
 
 This ensures high availability and allows the app to work in any environment.
 

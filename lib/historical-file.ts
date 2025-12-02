@@ -2,13 +2,6 @@ import fs from "fs/promises";
 import path from "path";
 import { logger } from "./logger";
 import {
-  isGitHubStorageEnabled,
-  getHistoryFromGitHub,
-  getHistoryRangeFromGitHub,
-  saveSnapshotToGitHub,
-  getHistoryStatsFromGitHub,
-} from "./github-storage";
-import {
   isDatabaseEnabled,
   saveSnapshotToDatabase,
   getHistoryFromDatabase,
@@ -199,14 +192,7 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<void> {
         return;
       }
 
-      // Use GitHub storage if enabled (priority 2)
-      if (isGitHubStorageEnabled()) {
-        logger.info("Using GitHub storage");
-        await saveSnapshotToGitHub(data);
-        return;
-      }
-
-      // Fall back to local file storage (priority 3)
+      // Fall back to local file storage (priority 2)
       logger.info("Using local file storage");
       await ensureDataDir();
 
@@ -257,24 +243,11 @@ export async function getHistory(): Promise<HistoricalRecord[]> {
       return await getHistoryFromDatabase();
     } catch (error) {
       logger.error("Failed to fetch from database, falling back:", error);
-      // Fall through to GitHub storage
-    }
-  }
-
-  // Use GitHub storage if enabled (priority 2)
-  if (isGitHubStorageEnabled()) {
-    try {
-      return await getHistoryFromGitHub();
-    } catch (error) {
-      logger.error(
-        "Failed to fetch from GitHub, falling back to local file:",
-        error
-      );
       // Fall through to local file storage
     }
   }
 
-  // Use local file storage (priority 3)
+  // Use local file storage (priority 2)
   try {
     const content = await fs.readFile(HISTORY_FILE, "utf-8");
     return JSON.parse(content);
@@ -294,24 +267,11 @@ export async function getHistoryRange(
       return await getHistoryRangeFromDatabase(days);
     } catch (error) {
       logger.error("Failed to fetch range from database, falling back:", error);
-      // Fall through to GitHub storage
+      // Fall through to filtering all records
     }
   }
 
-  // Use GitHub storage if enabled (priority 2)
-  if (isGitHubStorageEnabled()) {
-    try {
-      return await getHistoryRangeFromGitHub(days);
-    } catch (error) {
-      logger.error(
-        "Failed to fetch range from GitHub, falling back to getHistory:",
-        error
-      );
-      // Fall through to regular getHistory
-    }
-  }
-
-  // Fall back to filtering all records (priority 3)
+  // Fall back to filtering all records (priority 2)
   const history = await getHistory();
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 
@@ -391,16 +351,6 @@ export async function getHistoryStats() {
       return await getHistoryStatsFromDatabase();
     } catch (error) {
       logger.error("Failed to get stats from database, falling back:", error);
-      // Fall through to GitHub storage
-    }
-  }
-
-  // Use GitHub storage if enabled
-  if (isGitHubStorageEnabled()) {
-    try {
-      return await getHistoryStatsFromGitHub();
-    } catch (error) {
-      logger.error("Failed to get stats from GitHub, falling back:", error);
       // Fall through to local implementation
     }
   }
