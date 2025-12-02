@@ -4,11 +4,15 @@ import { logger } from "../../lib/logger";
 
 // Archive node configuration
 const ARCHIVE_NODE_URL = "https://lcd.archive.osmosis.zone";
-const REQUESTS_PER_SECOND = 0.5; // Very conservative to avoid rate limits
-const DELAY_MS = 1000 / REQUESTS_PER_SECOND; // 2000ms between requests
+const REQUESTS_PER_SECOND = 1.5; // Increased from 0.5 for faster processing
+const DELAY_MS = 1000 / REQUESTS_PER_SECOND; // ~667ms between requests
 
 // Epoch cache file
-const EPOCH_CACHE_FILE = path.join(process.cwd(), "data", "epoch-block-cache.json");
+const EPOCH_CACHE_FILE = path.join(
+  process.cwd(),
+  "data",
+  "epoch-block-cache.json"
+);
 
 // Track last request time for rate limiting
 let lastRequestTime = 0;
@@ -76,18 +80,22 @@ export function saveEpochCache(cache: EpochCache): void {
 export function exportEpochCacheToCSV(outputPath: string): void {
   try {
     const cache = loadEpochCache();
-    const entries = Object.entries(cache).sort((a, b) => a[0].localeCompare(b[0]));
+    const entries = Object.entries(cache).sort((a, b) =>
+      a[0].localeCompare(b[0])
+    );
 
     // Create CSV content
     const csvLines = [
       "date,block_height", // Header
-      ...entries.map(([date, data]) => `${date},${data.blockHeight}`)
+      ...entries.map(([date, data]) => `${date},${data.blockHeight}`),
     ];
 
     const csvContent = csvLines.join("\n");
     fs.writeFileSync(outputPath, csvContent);
 
-    logger.info(`Exported ${entries.length} epoch block heights to ${outputPath}`);
+    logger.info(
+      `Exported ${entries.length} epoch block heights to ${outputPath}`
+    );
   } catch (error) {
     logger.error("Failed to export epoch cache to CSV:", error);
     throw error;
@@ -126,9 +134,7 @@ export async function queryArchiveNode<T>(
     headers["x-cosmos-block-height"] = height.toString();
   }
 
-  logger.debug(
-    `Querying: ${endpoint}${height ? ` at height ${height}` : ""}`
-  );
+  logger.debug(`Querying: ${endpoint}${height ? ` at height ${height}` : ""}`);
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -257,7 +263,9 @@ async function queryBlockHeader(height: number): Promise<BlockHeader> {
     try {
       const earlierHeight = height - offset;
       if (earlierHeight > 0) {
-        logger.debug(`  Trying block ${earlierHeight} (${offset} blocks earlier)`);
+        logger.debug(
+          `  Trying block ${earlierHeight} (${offset} blocks earlier)`
+        );
         const response = await queryArchiveNode<{
           block: { header: BlockHeader };
         }>(`/cosmos/base/tendermint/v1beta1/blocks/${earlierHeight}`);
@@ -337,7 +345,7 @@ async function interpolationSearchBlockByTimestamp(
     const timeDiffSec = timeDiffMs / 1000;
 
     logger.debug(
-      `Block ${clampedGuess}: ${guessTime.toISOString()} (${timeDiffSec > 0 ? '+' : ''}${timeDiffSec.toFixed(0)}s from target)`
+      `Block ${clampedGuess}: ${guessTime.toISOString()} (${timeDiffSec > 0 ? "+" : ""}${timeDiffSec.toFixed(0)}s from target)`
     );
 
     // If we're very close (within 30 seconds), fine-tune with linear search
@@ -346,7 +354,11 @@ async function interpolationSearchBlockByTimestamp(
       let finalBlock = clampedGuess;
       if (guessTime <= targetTime) {
         // Search forward to find last block before target
-        for (let i = clampedGuess; i <= Math.min(clampedGuess + 10, high); i++) {
+        for (
+          let i = clampedGuess;
+          i <= Math.min(clampedGuess + 10, high);
+          i++
+        ) {
           const h = await queryBlockHeader(i);
           const t = new Date(h.time);
           if (t <= targetTime) {
@@ -380,7 +392,9 @@ async function interpolationSearchBlockByTimestamp(
     }
   }
 
-  logger.warn(`Search reached max iterations (${MAX_ITERATIONS}), returning ${result}`);
+  logger.warn(
+    `Search reached max iterations (${MAX_ITERATIONS}), returning ${result}`
+  );
   return result;
 }
 
@@ -435,7 +449,9 @@ export async function getBlockHeightForDate(date: string): Promise<number> {
   const cache = loadEpochCache();
 
   if (cache[date]) {
-    logger.debug(`Using cached block height for ${date}: ${cache[date].blockHeight}`);
+    logger.debug(
+      `Using cached block height for ${date}: ${cache[date].blockHeight}`
+    );
     return cache[date].blockHeight;
   }
 
