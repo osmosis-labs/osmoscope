@@ -1,6 +1,14 @@
 import fs from "fs/promises";
 import path from "path";
 import { logger } from "./logger";
+import {
+  isDatabaseEnabled,
+  saveSnapshotToDatabase,
+  getHistoryFromDatabase,
+  getHistoryRangeFromDatabase,
+  getHistoryStatsFromDatabase,
+  getBurnRateFromDatabase,
+} from "./historical-file-db";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const HISTORY_FILE = path.join(DATA_DIR, "history.json");
@@ -24,6 +32,7 @@ export interface HistoricalRecord {
   inflationRate: number;
   totalStaked?: number; // Total bonded tokens from staking pool
   stakingApr?: number; // Raw APR for this specific date
+  stakingRate?: number; // 30-day average APR
   // Revenue distribution parameters
   distributionProportions?: {
     staking: string;
@@ -176,6 +185,15 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<void> {
         return; // Skip saving
       }
 
+      // Use database if enabled (priority 1)
+      if (isDatabaseEnabled()) {
+        logger.info("Using database storage");
+        await saveSnapshotToDatabase(data);
+        return;
+      }
+
+      // Fall back to local file storage (priority 2)
+      logger.info("Using local file storage");
       await ensureDataDir();
 
       // Read existing history
@@ -202,10 +220,10 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<void> {
       // Add new snapshot
       history.push(data);
 
-      // Keep only last 90 days
-      const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
-      history = history.filter(
-        (record) => new Date(record.timestamp).getTime() > ninetyDaysAgo
+      // Sort by timestamp to maintain chronological order
+      history.sort(
+        (a, b) =>
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
 
       // Save back to file
@@ -219,6 +237,17 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<void> {
 
 // Get all historical records
 export async function getHistory(): Promise<HistoricalRecord[]> {
+  // Use database if enabled (priority 1)
+  if (isDatabaseEnabled()) {
+    try {
+      return await getHistoryFromDatabase();
+    } catch (error) {
+      logger.error("Failed to fetch from database, falling back:", error);
+      // Fall through to local file storage
+    }
+  }
+
+  // Use local file storage (priority 2)
   try {
     const content = await fs.readFile(HISTORY_FILE, "utf-8");
     return JSON.parse(content);
@@ -232,6 +261,17 @@ export async function getHistory(): Promise<HistoricalRecord[]> {
 export async function getHistoryRange(
   days: number
 ): Promise<HistoricalRecord[]> {
+  // Use database if enabled (priority 1) - most efficient with WHERE clause
+  if (isDatabaseEnabled()) {
+    try {
+      return await getHistoryRangeFromDatabase(days);
+    } catch (error) {
+      logger.error("Failed to fetch range from database, falling back:", error);
+      // Fall through to filtering all records
+    }
+  }
+
+  // Fall back to filtering all records (priority 2)
   const history = await getHistory();
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 
@@ -244,6 +284,19 @@ export async function getHistoryRange(
 export async function getBurnRateFromHistory(
   days: number = 1
 ): Promise<number> {
+  // Use database if enabled (more efficient query)
+  if (isDatabaseEnabled()) {
+    try {
+      return await getBurnRateFromDatabase(days);
+    } catch (error) {
+      logger.error(
+        "Failed to calculate burn rate from database, falling back:",
+        error
+      );
+      // Fall through to JSON-based calculation
+    }
+  }
+
   const history = await getHistory();
 
   if (history.length < 2) {
@@ -292,6 +345,16 @@ export async function getBurnRateFromHistory(
 
 // Get stats about the historical data
 export async function getHistoryStats() {
+  // Use database if enabled (most efficient with aggregation queries)
+  if (isDatabaseEnabled()) {
+    try {
+      return await getHistoryStatsFromDatabase();
+    } catch (error) {
+      logger.error("Failed to get stats from database, falling back:", error);
+      // Fall through to local implementation
+    }
+  }
+
   const history = await getHistory();
 
   if (history.length === 0) {

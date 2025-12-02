@@ -1,0 +1,53 @@
+// Prisma schema for Osmometer historical data
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("POSTGRES_PRISMA_URL") // uses connection pooling
+  directUrl = env("POSTGRES_URL_NON_POOLING") // uses a direct connection
+}
+
+model HistoricalRecord {
+  id        BigInt   @id @default(autoincrement())
+  timestamp DateTime @unique @db.Timestamptz(6)
+
+  // Supply metrics
+  burnedSupply       Decimal  @db.Decimal(20, 6)
+  mintedSupply       Decimal  @db.Decimal(20, 6)
+  totalSupply        Decimal  @db.Decimal(20, 6)
+  circulatingSupply  Decimal  @db.Decimal(20, 6)
+  restrictedSupply   Decimal? @db.Decimal(20, 6)
+  communitySupply    Decimal? @db.Decimal(20, 6)
+
+  // Staking metrics
+  inflationRate Decimal  @db.Decimal(10, 6)
+  totalStaked   Decimal? @db.Decimal(20, 6)
+  stakingApr    Decimal? @db.Decimal(10, 6)
+  stakingRate   Decimal? @db.Decimal(10, 6)
+
+  // Distribution parameters (stored as JSON for flexibility)
+  distributionProportions            Json?
+  osmoTakerFeeDistribution           Json?
+  nonOsmoTakerFeeDistribution        Json?
+  communityPoolDenomWhitelist        String[]
+  communityPoolDenomToSwapNonWhitelistedAssetsTo String?
+
+  // Revenue metrics (daily values in USD)
+  txnFeesRevenue    Decimal? @db.Decimal(20, 2)
+  takerFeesRevenue  Decimal? @db.Decimal(20, 2)
+  protorevRevenue   Decimal? @db.Decimal(20, 2)
+  mevRevenue        Decimal? @db.Decimal(20, 2)
+  totalRevenue      Decimal? @db.Decimal(20, 2)
+
+  // Metadata
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([timestamp(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("historical_records")
+}
