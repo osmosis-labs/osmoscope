@@ -2,7 +2,7 @@
 
 > A comprehensive, real-time dashboard for visualizing Osmosis (OSMO) token economics
 
-A modern Next.js application that displays live tokenomics metrics for the Osmosis blockchain, including inflation rates, burn mechanisms, supply distribution, protocol revenue, and staking data. Built with real-time data from the Osmosis LCD API and Numia Data.
+A modern Next.js application that displays live tokenomics metrics for the Osmosis blockchain, including inflation rates, burn mechanisms, supply distribution, protocol revenue, and staking data. Built with real-time data from the Osmosis LCD API, Osmosis Archive Node, and Numia Data.
 
 ![OSMO Tokenomics Dashboard](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js) ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?style=flat-square&logo=typescript) ![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-38bdf8?style=flat-square&logo=tailwind-css)
 
@@ -45,9 +45,11 @@ The following features are planned for future development:
 ### Data Management
 
 - **[TanStack Query v5](https://tanstack.com/query)** - Server state management with caching
-- **File-based storage** - JSON snapshots for historical data
+- **[Vercel Postgres](https://vercel.com/storage/postgres)** - Primary database storage with Prisma ORM
+- **[Osmosis Archive Node](https://lcd.archive.osmosis.zone)** - Historical blockchain data
 - **[Osmosis LCD API](https://lcd.osmosis.zone/swagger/)** - Real-time blockchain data
-- **[Numia Data API](https://www.numia.xyz/)** - Historical staking APR data
+- **[Numia Data API](https://www.numia.xyz/)** - Historical staking APR and revenue data
+- **GitHub Storage** - Backup storage via Octokit API
 
 ### Development Tools
 
@@ -74,7 +76,7 @@ The following features are planned for future development:
 1. **Clone the repository:**
 
 ```bash
-git clone https://github.com/yourusername/osmometer.git
+git clone https://github.com/osmosis-labs/osmometer.git
 cd osmometer
 ```
 
@@ -130,12 +132,16 @@ yarn format:check      # Check if code is formatted
 yarn type-check        # Run TypeScript type checking
 
 # Data Population Scripts
-yarn populate-history            # Populate historical burn/supply data from CSV
-yarn backfill-modeled-values     # Add modeled restricted/community supply values
-yarn apply-historical-params     # Apply historical parameter changes and inflation adjustments
+yarn populate-from-archive       # Populate historical data from Osmosis Archive Node (primary)
 yarn populate-staking-apr        # Populate historical staking APR data from Numia
-yarn populate-total-stake        # Populate total staked amounts from CSV
-yarn populate-revenue            # Populate protocol revenue data from DataLenses
+yarn populate-revenue            # Populate protocol revenue data from DataLenses/Numia
+yarn validate-history            # Validate historical data integrity
+
+# Database Migration
+yarn migrate-json-to-db          # Migrate JSON data to Vercel Postgres database
+yarn db:generate                 # Generate Prisma client
+yarn db:push                     # Push schema to database
+yarn db:studio                   # Open Prisma Studio
 ```
 
 ## 📁 Project Structure
@@ -172,13 +178,14 @@ osmometer/
 │   └── utils.ts                          # Formatting utilities
 │
 ├── scripts/                                      # Data Population Scripts
-│   ├── populate-burn-history.ts                 # Populate burn/supply history from CSV
+│   ├── populate-from-archive.ts                 # Main script: Populate from Osmosis Archive Node
 │   ├── populate-staking-apr-history.ts          # Populate staking APR history from Numia
-│   ├── populate-total-stake-history.ts          # Populate total staked from CSV
-│   ├── populate-revenue-history.ts              # Populate protocol revenue from DataLenses
-│   ├── backfill-modeled-values.ts               # Add modeled restricted/community supply
-│   ├── apply-historical-params.ts               # Apply historical param changes
-│   └── check-data-coverage.js                   # Analyze data coverage and gaps
+│   ├── populate-revenue-history.ts              # Populate protocol revenue from DataLenses/Numia
+│   ├── validate-history.ts                      # Validate historical data integrity
+│   ├── migrate-json-to-db.ts                    # Migrate JSON data to Vercel Postgres
+│   ├── backup-to-github.ts                      # Backup data to GitHub via Octokit
+│   └── lib/
+│       └── archive-node.ts                      # Archive node client with rate limiting
 │
 ├── types/                                 # TypeScript Definitions
 │   └── osmosis.ts                        # All type definitions
@@ -345,159 +352,111 @@ All charts support filtering by time range:
 
 ## 📊 Populating Historical Data
 
-The dashboard uses a combination of real-time API calls and historical data stored in `data/history.json`. Here's how to populate the historical database:
+The dashboard uses a combination of real-time API calls and historical data. Here's how to populate the historical database:
 
-### Complete Historical Data Population
+### Primary Method: Archive Node Population
 
-Run these commands in order to populate all historical data:
+The **recommended way** to populate historical data is using the Osmosis Archive Node:
 
 ```bash
-# 1. Create initial historical records from CSV
-yarn populate-history
+# Populate all historical supply, burn, staking, and distribution data from 2021-present
+yarn populate-from-archive
+```
 
-# 2. Add modeled values for restricted and community supply
-yarn backfill-modeled-values
+This script:
 
-# 3. Apply historical parameter changes and inflation adjustments
-yarn apply-historical-params
+- Fetches comprehensive blockchain state for each historical date
+- Processes ~120 records per hour at 1.5 QPS
+- Saves progress every 10 records (resumable if interrupted)
+- Handles missing data with intelligent fallback to nearby blocks
 
-# 4. Populate staking APR from Numia API
+### Supplementary Data Scripts
+
+After populating from the archive node, optionally add supplementary data:
+
+```bash
+# Populate historical staking APR from Numia API
 yarn populate-staking-apr
 
-# 5. Populate total staked amounts from CSV
-yarn populate-total-stake
-
-# 6. Populate protocol revenue from DataLenses API
+# Populate protocol revenue data from DataLenses/Numia API
 yarn populate-revenue
+
+# Validate data integrity
+yarn validate-history
 ```
 
-### Individual Script Details
+### Database Migration
 
-**Burn & Supply History** (`yarn populate-history`)
+Once historical data is populated in JSON files, migrate to Vercel Postgres:
 
-- Reads `data/historical-balances.csv`
-- Creates initial historical snapshots in `data/history.json`
-- See `data/README-historical-balances.md` for CSV format
+```bash
+# Generate Prisma client
+yarn db:generate
 
-**Modeled Values** (`yarn backfill-modeled-values`)
+# Push schema to database
+yarn db:push
 
-- Adds static `restrictedSupply` (97046470) and `communitySupply` (89137083) values
-- These are placeholders until real historical data sources are available
-
-**Historical Parameters** (`yarn apply-historical-params`)
-
-- Applies governance-approved parameter changes:
-  - July 9, 2025: Pool incentives removed (20% → 0%), taker fee burn increased (50% → 70%)
-  - July 16, 2025: Staking rewards reduced (50% → 25%)
-  - August 19, 2025: Staking rewards reduced (25% → 8%)
-  - November 3, 2025: Non-OSMO taker fee burn introduced (0% → 52.5%)
-- Adjusts historical inflation rates for circulating proportion changes
-- Applies 50% inflation increase to pre-June 21, 2025 data
-
-**Staking APR** (`yarn populate-staking-apr`)
-
-- Fetches 2+ years of staking APR from Numia API
-- Populates raw daily `stakingApr` values
-- Requires `NUMIA_API_KEY` environment variable for best results
-
-**Total Staked** (`yarn populate-total-stake`)
-
-- Reads `data/TotalStake.csv`
-- Populates `totalStaked` field with historical bonded token amounts
-
-**Protocol Revenue** (`yarn populate-revenue`)
-
-- Fetches daily revenue from DataLenses API (2021 onwards)
-- Populates `takerFeesRevenue`, `protorevRevenue`, `txnFeesRevenue`, `mevRevenue`, `totalRevenue`
-- No API key required
-
-### Manual Snapshot
-
-The dashboard automatically saves snapshots when metrics are fetched. To force a snapshot:
-
-```typescript
-// In your code or API route
-import { saveSnapshot } from "@/lib/historical-file";
-
-await saveSnapshot({
-  timestamp: new Date().toISOString(),
-  burnedSupply: burned,
-  mintedSupply: minted,
-  totalSupply: total,
-  circulatingSupply: circulating,
-  inflationRate: inflation,
-  // ... other fields
-});
+# Migrate all JSON data to database
+yarn migrate-json-to-db
 ```
 
-## 📋 Data Coverage & Limitations
+### Automatic Daily Snapshots
+
+The dashboard automatically saves daily snapshots at 17:20 UTC when metrics are fetched. The snapshot is only saved if there are meaningful changes in the data.
+
+## 📋 Data Coverage & Storage
 
 ### Current Historical Data Coverage
 
-The dashboard currently has **~510 days** of historical data spanning from **June 21, 2024** to **November 12, 2025** (~17 months).
+The dashboard has **1,441 records** of historical data spanning from **June 2021** to **December 2025** (~4+ years).
 
-| Data Field              | Coverage       | Source                 | Status               |
-| ----------------------- | -------------- | ---------------------- | -------------------- |
-| **Burned Supply**       | 100% (510/510) | Osmosis Chain          | ✅ Real              |
-| **Minted Supply**       | 100% (510/510) | Osmosis Chain          | ✅ Real              |
-| **Total Supply**        | 100% (510/510) | Calculated             | ✅ Real              |
-| **Circulating Supply**  | 100% (510/510) | Calculated             | ✅ Real              |
-| **Inflation Rate**      | 100% (510/510) | Chain params, adjusted | ✅ Real (adjusted)   |
-| **Total Staked**        | 100% (510/510) | CSV data               | ✅ Real              |
-| **Staking APR**         | 100% (510/510) | Numia API              | ✅ Real              |
-| **Protocol Revenue**    | 100% (510/510) | DataLenses/Numia API   | ✅ Real              |
-| **Distribution Params** | 100% (510/510) | Governance proposals   | ✅ Real              |
-| **Restricted Supply**   | 100% (510/510) | Modeled                | ⚠️ Static (97046470) |
-| **Community Supply**    | 100% (510/510) | Modeled                | ⚠️ Static (89137083) |
+| Data Field              | Coverage         | Source                 | Status  |
+| ----------------------- | ---------------- | ---------------------- | ------- |
+| **Burned Supply**       | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
+| **Minted Supply**       | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
+| **Total Supply**        | 100% (1441/1441) | Calculated             | ✅ Real |
+| **Circulating Supply**  | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
+| **Inflation Rate**      | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
+| **Total Staked**        | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
+| **Staking APR**         | Partial          | Numia API              | ✅ Real |
+| **Protocol Revenue**    | Partial          | DataLenses/Numia API   | ✅ Real |
+| **Distribution Params** | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
+| **Restricted Supply**   | 100% (1441/1441) | Dev vesting addresses  | ✅ Real |
+| **Community Supply**    | 100% (1441/1441) | Community pool balance | ✅ Real |
 
-### Known Limitations
+### Data Storage Strategy
 
-#### 1. Limited Historical Range
+The application uses a **three-tier fallback system**:
 
-- **Current**: June 21, 2024 - November 12, 2025 (~17 months)
-- **Target**: June 2021 - Present (~4 years / 1,460 days)
-- **Missing**: ~950 days of data from June 2021 - June 2024
+1. **Vercel Postgres** (Priority 1) - Primary production database with Prisma ORM
+2. **GitHub Storage** (Priority 2) - Backup via Octokit REST API
+3. **Local JSON Files** (Priority 3) - Development fallback
 
-To expand the historical data, we need:
+This ensures high availability and allows the app to work in any environment.
 
-- Burn/supply snapshots from chain archives or indexers
-- Historical inflation rates (adjustable via governance parameters)
-- Total staked values (may need to query archived nodes or use indexer data)
-- Revenue data is already available from DataLenses API back to 2021
+### Archive Node Data Population
 
-#### 2. Hardcoded Supply Values
+Historical data is populated from the Osmosis Archive Node using `yarn populate-from-archive`:
 
-**Restricted Supply** and **Community Supply** use static modeled values that don't change over time:
+**Features:**
 
-```typescript
-// From lib/osmosis-lcd.ts and scripts/backfill-modeled-values.ts
-MODELED_RESTRICTED_SUPPLY = 97046470; // Fixed value
-MODELED_COMMUNITY_SUPPLY = 89137083; // Fixed value
-```
+- Fetches data back to June 2021 (Osmosis genesis)
+- Queries historical blockchain state at specific block heights
+- Rate-limited to 1.5 requests/second to avoid node overload
+- Automatic block height interpolation search for each date
+- Fallback mechanism for missing data (tries nearby blocks)
+- Progress saved every 10 records for resumability
 
-These should ideally be:
+**What it fetches:**
 
-- **Restricted Supply**: Sum of locked/vesting addresses, which changes as tokens unlock
-- **Community Supply**: Community pool balance from chain queries, which changes with spending/accumulation
+- Total supply and burned supply from chain state
+- Developer vesting address balances (15 addresses)
+- Community pool holdings
+- Total bonded tokens from all validators
+- Distribution parameters and fee configurations
+- Inflation rate and epoch provisions
 
-**Current Workaround**: Using latest known values as static placeholders
-**Future Improvement**: Fetch historical balances for these addresses from chain archives
-
-#### 3. Historical Inflation Adjustments
-
-The `inflationRate` field includes two adjustments to model historical behavior:
-
-1. **50% Increase for Pre-June 21, 2025 Data**
-   - Applied to account for different emission models before this date
-   - Based on analysis of historical emission patterns
-
-2. **Circulating Proportion Adjustments**
-   - Adjusts for changes in distribution parameters over time
-   - Accounts for changes in staking/liquidity/developer allocations
-   - Formula: `adjusted_rate = base_rate × (historical_circulating_proportion / current_circulating_proportion)`
-   - Example: When staking rewards went from 50% → 8%, the effective inflation to circulating supply changed
-
-These adjustments are applied via `scripts/apply-historical-params.ts` and help maintain accurate historical comparisons despite parameter changes.
+Run `yarn populate-from-archive` to fill historical gaps. The script processes ~120 records/hour and saves progress automatically.
 
 ### Data Freshness
 
@@ -508,21 +467,20 @@ These adjustments are applied via `scripts/apply-historical-params.ts` and help 
 | Protocol Revenue                      | Daily snapshot     | 24 hours       |
 | Historical snapshots                  | Daily at 17:20 UTC | Permanent      |
 
-### Checking Data Coverage
+### Validating Data Integrity
 
-Run the data coverage script to see detailed field-by-field statistics:
+Run the validation script to check for data inconsistencies:
 
 ```bash
-node scripts/check-data-coverage.js
+yarn validate-history
 ```
 
-This shows:
+This validates:
 
-- Total number of records
-- Date range covered
-- Field coverage percentages
-- Missing data counts
-- Unique values for modeled fields
+- Required fields are present
+- Values are within expected ranges
+- No duplicate timestamps
+- Data consistency across fields
 
 ## 🌐 Deployment
 
@@ -612,8 +570,9 @@ Apache License 2.0 - see [LICENSE](LICENSE) file for details.
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/osmometer/issues)
+- **Issues**: [GitHub Issues](https://github.com/osmosis-labs/osmometer/issues)
 - **Next.js Docs**: [nextjs.org/docs](https://nextjs.org/docs)
+- **Osmosis**: [osmosis.zone](https://osmosis.zone/)
 
 ---
 
