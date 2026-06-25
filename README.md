@@ -22,8 +22,9 @@ All charts display raw daily values with configurable time range filters (7D, 30
 
 The following features are planned for future development:
 
-- **Extended Historical Data**: Expand historical data from current ~17 months back to 4 years (June 2021)
-- **Real Restricted/Community Supply Data**: Replace static modeled values with actual historical balances
+- **Native Restricted-Supply Query**: When the chain's `restricted_supply` /
+  `circulating_supply` mint endpoints reach mainnet, replace the mirrored
+  restricted address list with the native query.
 - **Taker Fee Composition Chart**: Daily Column chart breakdown showing taker fees by asset (USDC, USDT, ETH, BTC, etc.)
 - **ProtoRev Composition Chart**: Daily Column chart breakdown of ProtoRev profits by asset
 - **Community Pool Holdings Chart**: Breakdown of all assets held in the community pool
@@ -400,34 +401,52 @@ yarn migrate-json-to-db
 
 ### Automatic Daily Snapshots
 
-The dashboard automatically saves daily snapshots at 17:20 UTC when metrics are fetched. The snapshot is only saved if there are meaningful changes in the data.
+A Vercel Cron job calls `/api/cron/snapshot` once a day at 17:20 UTC (configured
+in `vercel.json`) and writes that day's historical record. Running on a schedule
+(rather than as a side effect of page traffic) keeps the historical series
+gap-free regardless of how many visitors the site gets. The cron route is
+secured by `CRON_SECRET`; Vercel sends it as a bearer token automatically.
+
+The public metrics endpoint (`/api/osmosis-metrics`) is read-only: it serves
+current live values on each request and no longer writes snapshots.
 
 ## 📋 Data Coverage & Storage
 
 ### Current Historical Data Coverage
 
-The dashboard has **1,441 records** of historical data spanning from **June 2021** to **December 2025** (~4+ years).
+The committed archive dataset (`data/history-archive.json`) spans **June 2021** to
+**December 2025** (~4+ years). The live snapshot file (`data/history.json`) was
+last updated **November 2025** and needs a fresh run before deploy.
 
-| Data Field              | Coverage         | Source                 | Status  |
-| ----------------------- | ---------------- | ---------------------- | ------- |
-| **Burned Supply**       | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
-| **Minted Supply**       | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
-| **Total Supply**        | 100% (1441/1441) | Calculated             | ✅ Real |
-| **Circulating Supply**  | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
-| **Inflation Rate**      | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
-| **Total Staked**        | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
-| **Staking APR**         | Partial          | Numia API              | ✅ Real |
-| **Protocol Revenue**    | Partial          | DataLenses/Numia API   | ✅ Real |
-| **Distribution Params** | 100% (1441/1441) | Osmosis Archive Node   | ✅ Real |
-| **Restricted Supply**   | 100% (1441/1441) | Dev vesting addresses  | ✅ Real |
-| **Community Supply**    | 100% (1441/1441) | Community pool balance | ✅ Real |
+Restricted and community supply are computed from the chain's own supply
+methodology (the restricted address set mirrored from
+`osmosis/x/mint/types/restricted_addresses.go`, the developer-vesting module
+account, and the community pool). Both the live path (`lib/osmosis-lcd.ts`) and
+the archive backfill (`scripts/lib/archive-fetchers.ts` +
+`populate-from-archive.ts`) use this methodology. Re-run the population scripts
+to refresh the committed data with current values before launch.
+
+| Data Field              | Source                              | Status            |
+| ----------------------- | ----------------------------------- | ----------------- |
+| **Burned Supply**       | Osmosis Archive Node (burn address) | ✅ Real           |
+| **Minted Supply**       | Osmosis Archive Node                | ✅ Real           |
+| **Total Supply**        | Calculated (minted − burned)        | ✅ Real           |
+| **Circulating Supply**  | Calculated (chain methodology)      | ✅ Real           |
+| **Inflation Rate**      | Osmosis Archive Node                | ✅ Real           |
+| **Total Staked**        | Osmosis Archive Node (validators)   | ✅ Real           |
+| **Staking APR**         | Numia API                           | ✅ Real (partial) |
+| **Protocol Revenue**    | DataLenses/Numia API                | ✅ Real (partial) |
+| **Distribution Params** | Osmosis Archive Node                | ✅ Real           |
+| **Restricted Supply**   | Restricted addrs + dev-vesting      | ✅ Real (re-run)  |
+| **Community Supply**    | Community pool balance              | ✅ Real (re-run)  |
 
 ### Data Storage Strategy
 
 The application uses a **two-tier fallback system**:
 
 1. **Vercel Postgres** (Priority 1) - Primary production database with Prisma ORM
-2. **Local JSON Files** (Priority 3) - Development fallback
+   (Prisma 7 with the `@prisma/adapter-pg` driver adapter)
+2. **Local JSON Files** (Priority 2) - Development fallback
 
 This ensures high availability and allows the app to work in any environment.
 

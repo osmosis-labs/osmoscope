@@ -1,8 +1,8 @@
 import fs from "fs/promises";
 import path from "path";
 import { logger } from "./logger";
+import { isDatabaseEnabled } from "./database";
 import {
-  isDatabaseEnabled,
   saveSnapshotToDatabase,
   getHistoryFromDatabase,
   getHistoryRangeFromDatabase,
@@ -27,8 +27,8 @@ export interface HistoricalRecord {
   mintedSupply: number;
   totalSupply: number; // Calculated as mintedSupply - burnedSupply
   circulatingSupply: number;
-  restrictedSupply?: number; // Modeled value (97046470)
-  communitySupply?: number; // Modeled value (89137083)
+  restrictedSupply?: number; // Live path: chain-methodology restricted supply. Archive backfill omits it (live-forward only).
+  communitySupply?: number; // Community pool OSMO (live + archive backfill).
   inflationRate: number;
   totalStaked?: number; // Total bonded tokens from staking pool
   stakingApr?: number; // Raw APR for this specific date

@@ -151,8 +151,21 @@ export async function queryArchiveNode<T>(
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
+      // The archive node sits behind Cloudflare, which can return an HTTP 200
+      // "Just a moment..." interstitial (HTML, not JSON) under load. Detect it
+      // by content type and back off + retry rather than crashing on JSON.parse.
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        const backoffMs = Math.pow(2, attempt) * 1000;
+        logger.warn(
+          `Non-JSON response (likely Cloudflare challenge), backing off ${backoffMs}ms...`
+        );
+        await sleep(backoffMs);
+        continue;
+      }
+
       return await response.json();
-    } catch (_error: unknown) {
+    } catch (error: unknown) {
       if (attempt === 3) {
         logger.error(`Failed after 3 attempts: ${url}`, error);
         throw error;
@@ -309,14 +322,16 @@ async function interpolationSearchBlockByTimestamp(
   let iterations = 0;
   const MAX_ITERATIONS = 20;
 
+  // Cache boundary timestamps: only re-query a boundary header when that
+  // boundary actually moves. Over the full chain range a naive search re-queried
+  // both boundaries every iteration (~3 header calls x 20 iters), which hammered
+  // the archive node hard enough to trip its Cloudflare rate limit; caching cuts
+  // this to roughly one header query per iteration.
+  let lowTime = new Date((await queryBlockHeader(low)).time);
+  let highTime = new Date((await queryBlockHeader(high)).time);
+
   while (low <= high && iterations < MAX_ITERATIONS) {
     iterations++;
-
-    // Use interpolation to guess position
-    const lowHeader = await queryBlockHeader(low);
-    const highHeader = await queryBlockHeader(high);
-    const lowTime = new Date(lowHeader.time);
-    const highTime = new Date(highHeader.time);
 
     logger.debug(
       `Iteration ${iterations}: Range ${low} (${lowTime.toISOString()}) to ${high} (${highTime.toISOString()})`
@@ -344,51 +359,40 @@ async function interpolationSearchBlockByTimestamp(
     const timeDiffMs = targetTime.getTime() - guessTime.getTime();
     const timeDiffSec = timeDiffMs / 1000;
 
+    // Track the best block at or before the target seen so far, regardless of
+    // which way the range narrows. Without this, a search that only ever moves
+    // `high` down (target consistently earlier than the guess) would never
+    // update `result` and would return the initial low bound (block 1) on
+    // max-iterations.
+    if (guessTime <= targetTime && clampedGuess > result) {
+      result = clampedGuess;
+    }
+
     logger.debug(
       `Block ${clampedGuess}: ${guessTime.toISOString()} (${timeDiffSec > 0 ? "+" : ""}${timeDiffSec.toFixed(0)}s from target)`
     );
 
-    // If we're very close (within 30 seconds), fine-tune with linear search
-    if (Math.abs(timeDiffSec) <= 30) {
-      // Find the last block <= target
-      let finalBlock = clampedGuess;
-      if (guessTime <= targetTime) {
-        // Search forward to find last block before target
-        for (
-          let i = clampedGuess;
-          i <= Math.min(clampedGuess + 10, high);
-          i++
-        ) {
-          const h = await queryBlockHeader(i);
-          const t = new Date(h.time);
-          if (t <= targetTime) {
-            finalBlock = i;
-          } else {
-            break;
-          }
-        }
-      } else {
-        // Search backward to find last block before target
-        for (let i = clampedGuess; i >= Math.max(clampedGuess - 10, low); i--) {
-          const h = await queryBlockHeader(i);
-          const t = new Date(h.time);
-          if (t <= targetTime) {
-            finalBlock = i;
-            break;
-          }
-        }
-      }
-      return finalBlock;
+    // Close enough: for a once-per-day snapshot, landing within ~10 minutes of
+    // end-of-day is more than precise enough (balances do not change meaningfully
+    // minute to minute), and it keeps the query count low under the archive
+    // node's rate limit. The guess is within the window on either side, so return
+    // it directly.
+    if (Math.abs(timeDiffSec) <= 600) {
+      return clampedGuess;
     }
 
-    // Adjust search range
+    // Adjust search range. Reuse guessTime as the new boundary timestamp (the
+    // one-block offset is negligible for interpolation and self-corrects), so we
+    // avoid an extra header query per iteration.
     if (guessTime < targetTime) {
       // Target is later, search higher
       result = clampedGuess;
       low = clampedGuess + 1;
+      lowTime = guessTime;
     } else {
       // Target is earlier, search lower
       high = clampedGuess - 1;
+      highTime = guessTime;
     }
   }
 
@@ -398,45 +402,46 @@ async function interpolationSearchBlockByTimestamp(
   return result;
 }
 
+/**
+ * Fetch the current chain tip height from the archive node.
+ */
+async function fetchLatestHeight(): Promise<number> {
+  const response = await queryArchiveNode<{
+    block: { header: BlockHeader };
+  }>("/cosmos/base/tendermint/v1beta1/blocks/latest");
+  return parseInt(response.block.header.height, 10);
+}
+
 async function findBlockHeightForDate(date: string): Promise<number> {
   // Target: end of day (23:59:59 UTC) to capture full day including downtime/upgrades
   const targetTime = new Date(date + "T23:59:59.999Z");
 
   logger.info(`Finding block height for ${date} (${targetTime.toISOString()})`);
 
-  // Get two reference blocks to estimate average block time
-  const genesisHeader = await queryBlockHeader(1);
-  const recentHeight = 50000; // Use a known recent block for estimation
-  const recentHeader = await queryBlockHeader(recentHeight);
-
-  const genesisTime = new Date(genesisHeader.time);
-  const recentTime = new Date(recentHeader.time);
-
-  // Calculate average block time from reference points
-  const timeDiffMs = recentTime.getTime() - genesisTime.getTime();
-  const blockDiff = recentHeight - 1;
-  const avgBlockTimeMs = timeDiffMs / blockDiff;
+  // Bound the interpolation search by the real chain range [1, latest].
+  //
+  // The previous approach extrapolated a single average block time measured over
+  // genesis..50,000 across all of history and then searched a tiny +/-5000-block
+  // window around that guess. Osmosis block time is NOT constant over its
+  // history, so that average was wildly off for recent dates (it placed
+  // mid-2026 near height ~24M when the chain was past ~62M), and the narrow
+  // window made the error unrecoverable. interpolationSearchBlockByTimestamp
+  // already does correct time-proportional interpolation and converges in a
+  // handful of iterations, so we just give it real bounds that bracket the
+  // target instead of a pre-guessed window.
+  const latestHeight = await fetchLatestHeight();
+  const minHeight = 1;
+  const maxHeight = latestHeight;
 
   logger.debug(
-    `Average block time: ${(avgBlockTimeMs / 1000).toFixed(2)}s per block`
+    `Searching for ${date} within real chain range ${minHeight}-${maxHeight}`
   );
-
-  // Estimate target block height
-  const targetTimeDiffMs = targetTime.getTime() - genesisTime.getTime();
-  const estimatedHeight = Math.floor(targetTimeDiffMs / avgBlockTimeMs);
-
-  logger.debug(`Estimated block height: ${estimatedHeight}`);
-
-  // Interpolation search with a window around the estimate
-  const searchWindow = 5000; // +/- 5000 blocks should be more than enough
-  const minHeight = Math.max(1, estimatedHeight - searchWindow);
-  const maxHeight = estimatedHeight + searchWindow;
 
   const blockHeight = await interpolationSearchBlockByTimestamp(
     targetTime,
     minHeight,
     maxHeight,
-    avgBlockTimeMs
+    0 // avgBlockTimeMs is unused by the search; interpolation is time-based
   );
 
   logger.info(`Found block ${blockHeight} for date ${date}`);

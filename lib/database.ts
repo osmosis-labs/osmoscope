@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { logger } from "./logger";
 
 // PrismaClient is attached to the `global` object in development to prevent
@@ -7,9 +8,19 @@ import { logger } from "./logger";
 
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
 
+// Prisma 7 requires a driver adapter for the database connection; the
+// connection URL is no longer read from the schema. Prefer the pooled
+// POSTGRES_PRISMA_URL (Vercel Postgres), falling back to DATABASE_URL for local
+// Docker development.
+const connectionString =
+  process.env.POSTGRES_PRISMA_URL || process.env.DATABASE_URL;
+
+const adapter = new PrismaPg({ connectionString });
+
 export const prisma =
   globalForPrisma.prisma ||
   new PrismaClient({
+    adapter,
     log:
       process.env.NODE_ENV === "development"
         ? ["query", "error", "warn"]

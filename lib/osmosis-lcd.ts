@@ -346,55 +346,105 @@ export async function fetchStakingApr(): Promise<{
 
 // Known addresses to exclude from circulating supply
 export const BURN_ADDRESS = "osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmcn030";
-export const LOCKED_ADDRESSES = [
-  "osmo1vqy8rqqlydj9wkcyvct9zxl3hc4eqgu3d7hd9k",
+
+// Restricted (non-circulating) wallet set, mirrored from the chain's own
+// supply methodology in osmosis/x/mint/types/restricted_addresses.go.
+// Source of truth is that compiled-in constant; keep this list in sync when it
+// changes. Composition: the foundation / strategic-reserve address plus the
+// original genesis developer-rewards receivers (now collapsed out of mint
+// params). For each, BOTH the liquid balance and the staked (delegated) amount
+// are excluded, since staked OSMO held by a restricted entity is not part of
+// the public float. The CURRENT weighted_developer_rewards_receivers entry is
+// intentionally NOT listed here: it is fetched separately from mint params and
+// de-duplicated in fetchRestrictedSupply, matching the keeper's param loop.
+export const RESTRICTED_ADDRESSES = [
+  // Foundation / strategic reserve.
   "osmo1ugku28hwyexpljrrmtet05nd6kjlrvr9jz6z00",
+  // Original genesis developer-rewards receivers (no longer in mint params).
+  "osmo14kjcwdwcqsujkdt8n5qwpd8x8ty2rys5rjrdjj",
+  "osmo1gw445ta0aqn26suz2rg3tkqfpxnq2hs224d7gq",
+  "osmo13lt0hzc6u3htsk7z5rs6vuurmgg4hh2ecgxqkf",
+  "osmo1kvc3he93ygc0us3ycslwlv2gdqry4ta73vk9hu",
+  "osmo19qgldlsk7hdv3ddtwwpvzff30pxqe9phq9evxf",
+  "osmo19fs55cx4594een7qr8tglrjtt5h9jrxg458htd",
+  "osmo1ssp6px3fs3kwreles3ft6c07mfvj89a544yj9k",
+  "osmo1c5yu8498yzqte9cmfv5zcgtl07lhpjrj0skqdx",
+  "osmo1yhj3r9t9vw7qgeg22cehfzj7enwgklw5k5v7lj",
+  "osmo18nzmtyn5vy5y45dmcdnta8askldyvehx66lqgm",
+  "osmo1z2x9z58cg96ujvhvu6ga07yv9edq2mvkxpgwmc",
+  "osmo1tvf3373skua8e6480eyy38avv8mw3hnt8jcxg9",
+  "osmo1zs0txy03pv5crj2rvty8wemd3zhrka2ne8u05n",
+  "osmo1djgf9p53n7m5a55hcn6gg0cm5mue4r5g3fadee",
+  "osmo1488zldkrn8xcjh3z40v2mexq7d088qkna8ceze",
 ];
-// Address that also needs staked balance excluded from circulating
-export const STAKED_ADDRESS = "osmo1ugku28hwyexpljrrmtet05nd6kjlrvr9jz6z00";
 
-// Modeled supply values (until we have historical data sources)
-export const MODELED_COMMUNITY_SUPPLY = 89137083;
-export const MODELED_RESTRICTED_SUPPLY = 97046470;
+// Compute the restricted (non-circulating) OSMO held by known foundation,
+// strategic-reserve, and developer-reward entities: liquid balance + staked
+// amount for each, summed. The current mint-param dev-rewards receiver is added
+// on top and de-duplicated against RESTRICTED_ADDRESSES so it is never counted
+// twice (mirrors GetRestrictedSupply in the mint keeper). Community pool and the
+// developer-vesting module account are handled separately by the caller, so they
+// are NOT included here.
+export async function fetchRestrictedSupply(): Promise<number> {
+  // Param dev-rewards receivers, de-duplicated against the static list.
+  const paramReceivers = await fetchMintParams();
+  const seen = new Set(RESTRICTED_ADDRESSES);
+  const extraReceivers = paramReceivers.filter((a) => !seen.has(a));
+  const addresses = [...RESTRICTED_ADDRESSES, ...extraReceivers];
 
-// Calculate all metrics
+  // Sequential to respect the same rate-limit posture as the rest of the lib.
+  let total = 0;
+  for (const addr of addresses) {
+    const liquid = await fetchBalance(addr);
+    const staked = await fetchDelegations(addr);
+    total += liquid + staked;
+  }
+  return total;
+}
+
+// Developer-vesting module account ("developer_vesting_unvested"). Holds OSMO
+// minted to the developer-rewards pool that has not yet vested out to receivers.
+// Verified via cosmos/auth/v1beta1/module_accounts. The chain's supply
+// methodology excludes this from circulating supply, so we count it as
+// restricted.
+export const DEVELOPER_VESTING_MODULE_ADDRESS =
+  "osmo1vqy8rqqlydj9wkcyvct9zxl3hc4eqgu3d7hd9k";
+
+// Calculate all metrics.
+//
+// Circulating (public float) follows the chain's own methodology
+// (mint keeper GetCirculatingSupply): circulating = total - restricted, where
+// restricted = developer-vesting module balance + community pool + the
+// restricted address set (liquid + staked). Osmometer keeps restricted and
+// community as separate reported columns, so restrictedSupply below EXCLUDES the
+// community pool (reported separately) but INCLUDES the dev-vesting module, and
+// circulating is computed as total - restricted - community to reconcile.
 export async function calculateOsmosisMetrics() {
   try {
-    // Fetch critical data first
+    // Fetch critical data first.
     const [mintedSupply, burnedAmount, inflationRate] = await Promise.all([
       fetchTotalSupply(),
       fetchBalance(BURN_ADDRESS),
       fetchInflation(),
     ]);
 
-    // Fetch locked addresses balances in parallel (kept for future use)
-    const _lockedBalances = await Promise.all(
-      LOCKED_ADDRESSES.map((addr) => fetchBalance(addr))
-    );
-
-    // Fetch staked balance, community pool, and dev addresses in parallel (kept for future use)
-    const [_stakedBalance, _communityPoolAmount, devAddresses] =
+    // Community pool, dev-vesting module balance, and the restricted entity set.
+    const [communitySupply, devVestingBalance, restrictedEntities] =
       await Promise.all([
-        fetchDelegations(STAKED_ADDRESS),
         fetchCommunityPool(),
-        fetchMintParams(),
+        fetchBalance(DEVELOPER_VESTING_MODULE_ADDRESS),
+        fetchRestrictedSupply(),
       ]);
 
-    // Fetch developer balances sequentially to avoid rate limiting
-    const _devBalances: number[] = [];
-    for (const addr of devAddresses) {
-      const balance = await fetchBalance(addr);
-      _devBalances.push(balance);
-    }
-
-    // Calculate total supply (minted - burned)
+    // Total supply (minted - burned). Burn is the balance sitting at the burn
+    // address; it is removed from supply.
     const totalSupply = mintedSupply - burnedAmount;
 
-    // Use modeled values for restricted and community supply
-    const restrictedSupply = MODELED_RESTRICTED_SUPPLY;
-    const communitySupply = MODELED_COMMUNITY_SUPPLY;
+    // Restricted supply excludes the community pool (reported separately) and
+    // includes the still-unvested developer-vesting module balance.
+    const restrictedSupply = restrictedEntities + devVestingBalance;
 
-    // Calculate circulating supply (total - restricted - community)
+    // Circulating supply (public float).
     const circulating = totalSupply - restrictedSupply - communitySupply;
 
     return {

@@ -4,6 +4,14 @@ import { isDatabaseEnabled } from "@/lib/database";
 import { getHistoryPaginated } from "@/lib/historical-file-db";
 import { logger } from "@/lib/logger";
 
+// Historical data only changes once a day (written by the snapshot cron at 17:20
+// UTC), so cache the response at the CDN for an hour and serve stale while
+// revalidating. This route reads query params (request.url) so it is inherently
+// dynamic; CDN caching is driven by the Cache-Control header below rather than
+// route-segment `revalidate` (which is incompatible with a dynamic route).
+const HISTORY_CACHE_CONTROL =
+  "public, s-maxage=3600, stale-while-revalidate=600";
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -23,7 +31,9 @@ export async function GET(request: Request) {
 
       const result = await getHistoryPaginated(pageNum, pageSizeNum, order);
 
-      return NextResponse.json(result);
+      return NextResponse.json(result, {
+        headers: { "Cache-Control": HISTORY_CACHE_CONTROL },
+      });
     }
 
     // Default: return all history
@@ -42,7 +52,9 @@ export async function GET(request: Request) {
       );
     }
 
-    return NextResponse.json(history);
+    return NextResponse.json(history, {
+      headers: { "Cache-Control": HISTORY_CACHE_CONTROL },
+    });
   } catch (error) {
     logger.error("Error fetching history:", error);
     return NextResponse.json(
@@ -50,7 +62,7 @@ export async function GET(request: Request) {
         error: "Failed to fetch historical data",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }

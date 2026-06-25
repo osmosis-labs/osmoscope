@@ -52,9 +52,17 @@ vercel env pull .env.local
 This creates `.env.local` with the following variables:
 
 - `POSTGRES_URL` - Direct connection string
-- `POSTGRES_PRISMA_URL` - Pooled connection string
+- `POSTGRES_PRISMA_URL` - Pooled connection string (read at runtime by `lib/database.ts`)
 - `POSTGRES_URL_NON_POOLING` - Non-pooled connection string
 - `POSTGRES_USER`, `POSTGRES_HOST`, `POSTGRES_PASSWORD`, `POSTGRES_DATABASE`
+
+> **Prisma 7 note:** `prisma.config.ts` reads `DATABASE_URL` for CLI operations
+> (`db:generate`, `db:migrate`), while the app runtime (`lib/database.ts`) reads
+> `POSTGRES_PRISMA_URL` (falling back to `DATABASE_URL`) and connects via the
+> `@prisma/adapter-pg` driver adapter. Vercel sets `POSTGRES_*` automatically;
+> you must ALSO set `DATABASE_URL` (to the pooled or non-pooled connection
+> string) in the Vercel project env and locally, or `db:generate`/`db:migrate`
+> will fail with a datasource validation error.
 
 ### 4. Generate Prisma Client
 
@@ -179,11 +187,16 @@ If database is not configured, the app falls back to JSON file storage in `data/
 
 ## Production Deployment
 
-No additional setup needed! Vercel automatically:
+Vercel automatically:
 
 1. Connects to the Postgres database
-2. Sets environment variables
-3. Generates Prisma Client during build
+2. Sets the `POSTGRES_*` environment variables
+3. Generates the Prisma Client during build (via the `postinstall` script)
+
+**One manual step (Prisma 7):** add `DATABASE_URL` to the Vercel project's
+environment variables (Settings → Environment Variables), set to the same
+connection string as `POSTGRES_PRISMA_URL`. The build's `prisma generate` reads
+it from `prisma.config.ts`; without it the build fails at client generation.
 
 ## Querying Examples
 

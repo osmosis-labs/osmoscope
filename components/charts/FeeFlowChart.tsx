@@ -491,6 +491,9 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
   };
 
   const getTooltipContent = (nodeId: string) => {
+    // No revenue data for the selected range: the overlay caller treats a null
+    // return as "render nothing", so bail before dereferencing revenueAvgs.
+    if (!revenueAvgs) return null;
     switch (nodeId) {
       case "taker_fees":
         return {
@@ -642,12 +645,14 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
   const getNodesByLevel = (level: number) =>
     nodes.filter((node) => node.level === level);
 
-  // Calculate total for proportional sizing (already 30-day totals from calculateRevenueTotals)
+  // Calculate total for proportional sizing (already 30-day totals from
+  // calculateRevenueTotals). Falls back to 0 when there is no revenue data for
+  // the selected range (revenueAvgs is null).
   const total30Days =
-    revenueAvgs.takerFees +
-    revenueAvgs.protorev +
-    revenueAvgs.txFees +
-    revenueAvgs.topOfBlock;
+    (revenueAvgs?.takerFees ?? 0) +
+    (revenueAvgs?.protorev ?? 0) +
+    (revenueAvgs?.txFees ?? 0) +
+    (revenueAvgs?.topOfBlock ?? 0);
 
   // Get final destinations
   const destinations = getNodesByLevel(3);
