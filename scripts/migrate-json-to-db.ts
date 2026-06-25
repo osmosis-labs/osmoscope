@@ -2,6 +2,7 @@
 import fs from "fs";
 import path from "path";
 import { prisma, isDatabaseEnabled } from "../lib/database";
+import { Prisma } from "@prisma/client";
 import type { HistoricalRecord as JsonRecord } from "../lib/historical-file";
 
 console.log("════════════════════════════════════════");
@@ -44,7 +45,16 @@ function loadJsonFile(filePath: string): JsonRecord[] {
 }
 
 // Transform JSON record to Prisma format
-function transformRecord(record: JsonRecord) {
+function transformRecord(
+  record: JsonRecord
+): Prisma.HistoricalRecordCreateInput {
+  // Json? columns: SQL NULL must be Prisma.JsonNull, present values must satisfy
+  // Prisma.InputJsonValue (a plain null is not a valid Json input).
+  const toJson = (
+    value: unknown
+  ): Prisma.InputJsonValue | typeof Prisma.JsonNull =>
+    value == null ? Prisma.JsonNull : (value as Prisma.InputJsonValue);
+
   return {
     timestamp: new Date(record.timestamp),
     burnedSupply: record.burnedSupply || record.burned || 0,
@@ -57,9 +67,9 @@ function transformRecord(record: JsonRecord) {
     totalStaked: record.totalStaked || null,
     stakingApr: record.stakingApr || null,
     stakingRate: record.stakingRate || null,
-    distributionProportions: record.distributionProportions || null,
-    osmoTakerFeeDistribution: record.osmoTakerFeeDistribution || null,
-    nonOsmoTakerFeeDistribution: record.nonOsmoTakerFeeDistribution || null,
+    distributionProportions: toJson(record.distributionProportions),
+    osmoTakerFeeDistribution: toJson(record.osmoTakerFeeDistribution),
+    nonOsmoTakerFeeDistribution: toJson(record.nonOsmoTakerFeeDistribution),
     communityPoolDenomWhitelist: record.communityPoolDenomWhitelist || [],
     communityPoolDenomToSwapNonWhitelistedAssetsTo:
       record.communityPoolDenomToSwapNonWhitelistedAssetsTo || null,

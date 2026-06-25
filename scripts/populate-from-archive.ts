@@ -2,11 +2,13 @@ import fs from "fs";
 import path from "path";
 import { logger } from "../lib/logger";
 import { type HistoricalRecord } from "../lib/historical-file";
-import { validateInflationRate, exportEpochCacheToCSV } from "./lib/archive-node";
+import {
+  validateInflationRate,
+  exportEpochCacheToCSV,
+} from "./lib/archive-node";
 import {
   fetchMintedSupply,
   fetchBurnedSupply,
-  fetchLockedBalances,
   fetchCommunityPool,
   fetchDistributionParams,
   fetchEpochProvisions,
@@ -82,7 +84,11 @@ Examples:
 
 const CLI_OPTIONS = parseCliArgs();
 const CHECKPOINT_INTERVAL = 10; // Save progress every 10 days
-const CHECKPOINT_FILE = path.join(process.cwd(), "data", "archive-progress.json");
+const CHECKPOINT_FILE = path.join(
+  process.cwd(),
+  "data",
+  "archive-progress.json"
+);
 const OUTPUT_FILE = path.join(process.cwd(), "data", "history-archive.json");
 
 interface Checkpoint {
@@ -102,7 +108,7 @@ function _loadCheckpoint(): Checkpoint | null {
       const content = fs.readFileSync(CHECKPOINT_FILE, "utf-8");
       return JSON.parse(content);
     }
-  } catch (_error: unknown) {
+  } catch (error: unknown) {
     logger.warn("Failed to load checkpoint:", error);
   }
   return null;
@@ -118,7 +124,7 @@ function _saveCheckpoint(checkpoint: Checkpoint): void {
 
     fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify(checkpoint, null, 2));
     logger.info(`✓ Checkpoint saved: ${checkpoint.recordsGenerated} records`);
-  } catch (_error: unknown) {
+  } catch (error: unknown) {
     logger.error("Failed to save checkpoint:", error);
   }
 }
@@ -128,7 +134,7 @@ function _clearCheckpoint(): void {
     if (fs.existsSync(CHECKPOINT_FILE)) {
       fs.unlinkSync(CHECKPOINT_FILE);
     }
-  } catch (_error: unknown) {
+  } catch (error: unknown) {
     logger.warn("Failed to clear checkpoint:", error);
   }
 }
@@ -200,7 +206,10 @@ function getDatesToProcess(): DateToProccess[] {
       dates.push({ date: dateStr, reason: "overwrite mode" });
     } else if (CLI_OPTIONS.parameter) {
       // Only process if parameter is missing or null
-      if (existing && !existing[CLI_OPTIONS.parameter as keyof HistoricalRecord]) {
+      if (
+        existing &&
+        !existing[CLI_OPTIONS.parameter as keyof HistoricalRecord]
+      ) {
         dates.push({
           date: dateStr,
           reason: `missing ${CLI_OPTIONS.parameter}`,
@@ -272,7 +281,9 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
   logger.info(
     `\n${"=".repeat(60)}\nStarting Historical Data Population\n${"=".repeat(60)}`
   );
-  logger.info(`Mode: ${CLI_OPTIONS.overwrite ? "OVERWRITE" : CLI_OPTIONS.parameter ? `PARAMETER (${CLI_OPTIONS.parameter})` : "FILL MISSING"}`);
+  logger.info(
+    `Mode: ${CLI_OPTIONS.overwrite ? "OVERWRITE" : CLI_OPTIONS.parameter ? `PARAMETER (${CLI_OPTIONS.parameter})` : "FILL MISSING"}`
+  );
   logger.info(`Date range: ${CLI_OPTIONS.startDate} to ${CLI_OPTIONS.endDate}`);
   logger.info(`Dates to process: ${datesToProcess.length}`);
 
@@ -289,9 +300,10 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
   let processedCount = 0;
 
   for (const { date: dateStr, reason } of datesToProcess) {
-
     try {
-      logger.info(`\n[${"=".repeat(3)} Processing ${dateStr} (${reason}) ${"=".repeat(3)}]`);
+      logger.info(
+        `\n[${"=".repeat(3)} Processing ${dateStr} (${reason}) ${"=".repeat(3)}]`
+      );
 
       // Step 1: Get block height for this date
       const height = await (async () => {
@@ -316,7 +328,9 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
           if (totalStaked !== null) {
             existingRecord.totalStaked = totalStaked;
             dataMap.set(dateStr, existingRecord);
-            logger.info(`  ✓ Updated totalStaked: ${totalStaked.toFixed(2)} OSMO`);
+            logger.info(
+              `  ✓ Updated totalStaked: ${totalStaked.toFixed(2)} OSMO`
+            );
           } else {
             throw new Error("Failed to fetch totalStaked");
           }
@@ -328,41 +342,36 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
         logger.info("  Fetching data...");
         const mintedSupply = await fetchMintedSupply(dateStr);
         const burnedSupply = await fetchBurnedSupply(dateStr);
-        const lockedBalances = await fetchLockedBalances(dateStr, height);
         const communityPool = await fetchCommunityPool(dateStr, height);
-        const distributionParams = await fetchDistributionParams(dateStr, height);
+        const distributionParams = await fetchDistributionParams(
+          dateStr,
+          height
+        );
         const epochProvisions = await fetchEpochProvisions(dateStr, height);
         const totalStaked = await fetchTotalStaked(dateStr, height);
 
         // Step 3: Calculate derived values
         const totalSupply = mintedSupply - burnedSupply;
 
-        // Sum locked balances
-        const totalLiquidLocked = Object.values(lockedBalances.liquid).reduce(
-          (a, b) => a + b,
-          0
-        );
-        const totalDevVestingLocked = Object.values(
-          lockedBalances.devVesting
-        ).reduce((a, b) => a + b, 0);
-        const totalLocked =
-          totalLiquidLocked +
-          lockedBalances.staked +
-          totalDevVestingLocked +
-          communityPool;
-        const circulatingSupply = totalSupply - totalLocked;
+        // NOTE on historical restricted supply: the archive node does NOT serve
+        // historical staking state (the staking/delegations endpoint returns the
+        // CURRENT delegation at every height), so the staked portion of the
+        // restricted address set cannot be reconstructed for past dates. Rather
+        // than write a partly-current, partly-historical (and therefore
+        // misleading) restricted figure, the backfill omits restricted supply
+        // entirely. Restricted supply is charted live-only, from launch forward,
+        // via lib/osmosis-lcd.ts which reads current state correctly.
+        //
+        // Community pool IS served historically (the distribution endpoint
+        // honours the height header), so it is backfilled truthfully here.
+        //
+        // Historical circulating is therefore total - community pool only. This
+        // is an upper bound on the true float (it does not subtract restricted),
+        // and is intentionally distinct from the live circulating figure, which
+        // does subtract restricted.
+        const circulatingSupply = totalSupply - communityPool;
 
-        logger.info(`  Locked breakdown:`);
-        logger.info(
-          `    Static addresses: ${totalLiquidLocked.toLocaleString()} OSMO`
-        );
-        logger.info(`    Staked: ${lockedBalances.staked.toLocaleString()} OSMO`);
-        logger.info(
-          `    Dev vesting: ${totalDevVestingLocked.toLocaleString()} OSMO (${
-            Object.keys(lockedBalances.devVesting).length
-          } addresses)`
-        );
-        logger.info(`    Community pool: ${communityPool.toLocaleString()} OSMO`);
+        logger.info(`  Community pool: ${communityPool.toLocaleString()} OSMO`);
 
         // Calculate inflation rate if we have params
         let inflationRate = 0;
@@ -385,6 +394,7 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
           burnedSupply,
           totalSupply,
           circulatingSupply,
+          communitySupply: communityPool,
           inflationRate,
           totalStaked: totalStaked || undefined,
           distributionProportions: distributionParams
@@ -398,7 +408,9 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
         };
 
         dataMap.set(dateStr, record);
-        logger.info(`  ✓ Record ${dataMap.has(dateStr) ? "updated" : "created"} for ${dateStr}`);
+        logger.info(
+          `  ✓ Record ${dataMap.has(dateStr) ? "updated" : "created"} for ${dateStr}`
+        );
         logger.info(`    Supply: ${totalSupply.toLocaleString()} OSMO`);
         logger.info(
           `    Circulating: ${circulatingSupply.toLocaleString()} OSMO`
@@ -417,11 +429,14 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
 
         // Also save records to file (incremental backup)
         fs.writeFileSync(OUTPUT_FILE, JSON.stringify(currentData, null, 2));
-        logger.info(`  ✓ Progress saved: ${processedCount}/${datesToProcess.length} processed, ${dataMap.size} total records\n`);
+        logger.info(
+          `  ✓ Progress saved: ${processedCount}/${datesToProcess.length} processed, ${dataMap.size} total records\n`
+        );
       }
-    } catch (_error: unknown) {
-      logger.error(`  ✗ Error processing ${dateStr}:`, error.message);
-      errors.push({ date: dateStr, error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`  ✗ Error processing ${dateStr}:`, message);
+      errors.push({ date: dateStr, error: message });
 
       // Continue to next date (don't stop entire process)
     }
@@ -429,8 +444,7 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
 
   // Convert map to sorted array
   const finalRecords = Array.from(dataMap.values()).sort(
-    (a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
 
   // Final save
@@ -482,7 +496,7 @@ async function main() {
     console.log("\nNext steps:");
     console.log("  1. Run validation: yarn validate-history");
     console.log("  2. Commit to GitHub: git add data/ && git commit");
-  } catch (_error: unknown) {
+  } catch (error: unknown) {
     console.error("\n✗ Fatal error:", error);
     process.exit(1);
   }

@@ -1,6 +1,7 @@
 // Database-backed implementation of historical data functions
 import { prisma, isDatabaseEnabled } from "./database";
 import { logger } from "./logger";
+import { Prisma } from "@prisma/client";
 import type { HistoricalRecord as PrismaRecord } from "@prisma/client";
 import type { HistoricalRecord as JsonRecord } from "./historical-file";
 
@@ -48,8 +49,18 @@ function prismaToJson(record: PrismaRecord): JsonRecord {
   };
 }
 
-// Convert JSON record to Prisma format
-function jsonToPrisma(record: JsonRecord) {
+// Convert JSON record to Prisma format.
+//
+// Json? columns need special handling under Prisma: a SQL NULL is written with
+// Prisma.JsonNull (a plain `null` is not a valid Json input value), and a
+// present value must satisfy Prisma.InputJsonValue. Scalar Decimal columns
+// accept a plain `number`, so those pass through unchanged.
+function jsonToPrisma(record: JsonRecord): Prisma.HistoricalRecordCreateInput {
+  const toJson = (
+    value: unknown
+  ): Prisma.InputJsonValue | typeof Prisma.JsonNull =>
+    value == null ? Prisma.JsonNull : (value as Prisma.InputJsonValue);
+
   return {
     timestamp: new Date(record.timestamp),
     burnedSupply: record.burnedSupply,
@@ -62,9 +73,9 @@ function jsonToPrisma(record: JsonRecord) {
     totalStaked: record.totalStaked ?? null,
     stakingApr: record.stakingApr ?? null,
     stakingRate: record.stakingRate ?? null,
-    distributionProportions: record.distributionProportions ?? null,
-    osmoTakerFeeDistribution: record.osmoTakerFeeDistribution ?? null,
-    nonOsmoTakerFeeDistribution: record.nonOsmoTakerFeeDistribution ?? null,
+    distributionProportions: toJson(record.distributionProportions),
+    osmoTakerFeeDistribution: toJson(record.osmoTakerFeeDistribution),
+    nonOsmoTakerFeeDistribution: toJson(record.nonOsmoTakerFeeDistribution),
     communityPoolDenomWhitelist: record.communityPoolDenomWhitelist || [],
     communityPoolDenomToSwapNonWhitelistedAssetsTo:
       record.communityPoolDenomToSwapNonWhitelistedAssetsTo ?? null,

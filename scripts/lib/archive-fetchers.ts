@@ -9,13 +9,45 @@ import {
 // Known addresses
 const BURN_ADDRESS = "osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmcn030";
 
+// Restricted (non-circulating) wallet set, mirrored from the chain's supply
+// methodology in osmosis/x/mint/types/restricted_addresses.go, plus the
+// developer-vesting module account ("developer_vesting_unvested"), which holds
+// the still-unvested developer-rewards OSMO and is also excluded from
+// circulating supply. Keep in sync with lib/osmosis-lcd.ts RESTRICTED_ADDRESSES
+// and the chain constant. For each, both liquid balance and staked amount are
+// excluded. The CURRENT weighted_developer_rewards_receivers entries are NOT
+// listed here: they are fetched dynamically per-height in fetchLockedBalances
+// (as devVesting) and de-duplicated against this set, matching the keeper.
 const STATIC_LOCKED_ADDRESSES = [
+  // Developer-vesting module account (verified via auth module_accounts).
   "osmo1vqy8rqqlydj9wkcyvct9zxl3hc4eqgu3d7hd9k",
+  // Foundation / strategic reserve.
   "osmo1ugku28hwyexpljrrmtet05nd6kjlrvr9jz6z00",
-  "osmo1pvxhtre74l37p6y2rs2e8xyek75z7xlc7g2trt",
+  // Original genesis developer-rewards receivers (no longer in mint params).
+  "osmo14kjcwdwcqsujkdt8n5qwpd8x8ty2rys5rjrdjj",
+  "osmo1gw445ta0aqn26suz2rg3tkqfpxnq2hs224d7gq",
+  "osmo13lt0hzc6u3htsk7z5rs6vuurmgg4hh2ecgxqkf",
+  "osmo1kvc3he93ygc0us3ycslwlv2gdqry4ta73vk9hu",
+  "osmo19qgldlsk7hdv3ddtwwpvzff30pxqe9phq9evxf",
+  "osmo19fs55cx4594een7qr8tglrjtt5h9jrxg458htd",
+  "osmo1ssp6px3fs3kwreles3ft6c07mfvj89a544yj9k",
+  "osmo1c5yu8498yzqte9cmfv5zcgtl07lhpjrj0skqdx",
+  "osmo1yhj3r9t9vw7qgeg22cehfzj7enwgklw5k5v7lj",
+  "osmo18nzmtyn5vy5y45dmcdnta8askldyvehx66lqgm",
+  "osmo1z2x9z58cg96ujvhvu6ga07yv9edq2mvkxpgwmc",
+  "osmo1tvf3373skua8e6480eyy38avv8mw3hnt8jcxg9",
+  "osmo1zs0txy03pv5crj2rvty8wemd3zhrka2ne8u05n",
+  "osmo1djgf9p53n7m5a55hcn6gg0cm5mue4r5g3fadee",
+  "osmo1488zldkrn8xcjh3z40v2mexq7d088qkna8ceze",
 ];
 
-const STAKED_ADDRESS = "osmo1ugku28hwyexpljrrmtet05nd6kjlrvr9jz6z00";
+// Restricted addresses whose STAKED (delegated) balance is also excluded.
+// The keeper counts staked for every restricted address; the dev-vesting module
+// account is a module account that cannot delegate, so it is omitted here to
+// avoid a pointless query.
+const STAKED_ADDRESSES = STATIC_LOCKED_ADDRESSES.filter(
+  (addr) => addr !== "osmo1vqy8rqqlydj9wkcyvct9zxl3hc4eqgu3d7hd9k"
+);
 
 // ===================================
 // Types
@@ -70,7 +102,11 @@ export async function fetchBurnedSupply(date: string): Promise<number> {
   try {
     const response = await queryArchiveNodeWithFallback<{
       balance: { denom: string; amount: string };
-    }>(`/cosmos/bank/v1beta1/balances/${BURN_ADDRESS}/by_denom?denom=uosmo`, date, height);
+    }>(
+      `/cosmos/bank/v1beta1/balances/${BURN_ADDRESS}/by_denom?denom=uosmo`,
+      date,
+      height
+    );
 
     if (!response) {
       logger.warn(`Could not fetch burned supply for ${date}, assuming 0`);
@@ -83,7 +119,10 @@ export async function fetchBurnedSupply(date: string): Promise<number> {
     return osmo;
   } catch (error) {
     // Before burn was enabled, balance might be 0 or endpoint might error
-    logger.warn(`Could not fetch burned supply for ${date}, assuming 0:`, error);
+    logger.warn(
+      `Could not fetch burned supply for ${date}, assuming 0:`,
+      error
+    );
     return 0;
   }
 }
@@ -111,10 +150,9 @@ export async function fetchDeveloperVestingAddresses(
       return [];
     }
 
-    const addresses =
-      response.params.weighted_developer_rewards_receivers.map(
-        (r) => r.address
-      );
+    const addresses = response.params.weighted_developer_rewards_receivers.map(
+      (r) => r.address
+    );
     return addresses;
   } catch (error) {
     logger.error(
@@ -129,6 +167,12 @@ export async function fetchDeveloperVestingAddresses(
 // 4. Locked Addresses Fetcher
 // ===================================
 
+// Retained but NOT currently used by populate-from-archive: it relies on the
+// staking/delegations endpoint for the staked portion, which the archive node
+// does not serve historically (it returns the current delegation at every
+// height). Historical restricted supply is therefore omitted from the backfill
+// and charted live-only via lib/osmosis-lcd.ts. Re-wire this into the backfill
+// if/when a node that serves historical staking state becomes available.
 export async function fetchLockedBalances(
   date: string,
   height: number
@@ -136,9 +180,14 @@ export async function fetchLockedBalances(
   const liquidBalances: Record<string, number> = {};
   const devVestingBalances: Record<string, number> = {};
 
-  // 1. Fetch developer vesting addresses (dynamic)
-  const devAddresses = await fetchDeveloperVestingAddresses(date, height);
-  logger.info(`Found ${devAddresses.length} developer vesting addresses`);
+  // 1. Fetch developer vesting addresses (dynamic), de-duplicated against the
+  //    static restricted set so an address counted there is not counted twice.
+  const allDevAddresses = await fetchDeveloperVestingAddresses(date, height);
+  const staticSet = new Set(STATIC_LOCKED_ADDRESSES);
+  const devAddresses = allDevAddresses.filter((addr) => !staticSet.has(addr));
+  logger.info(
+    `Found ${allDevAddresses.length} developer vesting addresses (${devAddresses.length} after de-dup vs static set)`
+  );
 
   // 2. Fetch liquid balance for each static locked address
   for (const address of STATIC_LOCKED_ADDRESSES) {
@@ -190,30 +239,38 @@ export async function fetchLockedBalances(
     }
   }
 
-  // 4. Fetch staked balance for the staked address
+  // 4. Fetch staked balance for every restricted address that can delegate,
+  //    summed. The keeper counts staked OSMO held by each restricted entity as
+  //    non-circulating.
   let stakedAmount = 0;
-  try {
-    const response = await queryArchiveNodeWithFallback<{
-      delegation_responses: Array<{
-        delegation: {
-          delegator_address: string;
-          validator_address: string;
-          shares: string;
-        };
-        balance: { denom: string; amount: string };
-      }>;
-    }>(`/cosmos/staking/v1beta1/delegations/${STAKED_ADDRESS}`, date, height);
+  for (const address of STAKED_ADDRESSES) {
+    try {
+      const response = await queryArchiveNodeWithFallback<{
+        delegation_responses: Array<{
+          delegation: {
+            delegator_address: string;
+            validator_address: string;
+            shares: string;
+          };
+          balance: { denom: string; amount: string };
+        }>;
+      }>(`/cosmos/staking/v1beta1/delegations/${address}`, date, height);
 
-    if (!response) {
-      logger.warn(`Could not fetch staked balance for ${date}`);
-    } else {
+      if (!response) {
+        logger.warn(`Could not fetch staked balance for ${address} on ${date}`);
+        continue;
+      }
+
       for (const delegation of response.delegation_responses || []) {
         const uosmo = parseInt(delegation.balance.amount);
         stakedAmount += uosmo / 1_000_000;
       }
+    } catch (error) {
+      logger.warn(
+        `Could not fetch staked balance for ${address} on ${date}:`,
+        error
+      );
     }
-  } catch (error) {
-    logger.warn(`Could not fetch staked balance for ${date}:`, error);
   }
 
   return {
@@ -360,7 +417,8 @@ export async function fetchTotalStaked(
     let nextKey: string | null = null;
 
     // Import the new function that returns both data and height
-    const { queryArchiveNodeWithFallbackAndHeight, queryArchiveNode } = await import("./archive-node");
+    const { queryArchiveNodeWithFallbackAndHeight, queryArchiveNode } =
+      await import("./archive-node");
 
     // Paginate through all bonded validators
     // First request: use fallback to find a working height
