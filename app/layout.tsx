@@ -5,22 +5,23 @@ import { Providers } from "./providers";
 
 const inter = Inter({ subsets: ["latin"] });
 
+const TITLE = "Osmoscope — OSMO Tokenomics";
+const DESCRIPTION =
+  "Live OSMO supply, inflation, burn, staking and protocol-revenue metrics for the Osmosis chain.";
+
 export const metadata: Metadata = {
-  title: "OSMO Tokenomics Dashboard",
-  description:
-    "Live OSMO supply, inflation, burn, staking and protocol-revenue metrics for the Osmosis chain.",
+  title: TITLE,
+  description: DESCRIPTION,
   openGraph: {
-    title: "OSMO Tokenomics Dashboard",
-    description:
-      "Live OSMO supply, inflation, burn, staking and protocol-revenue metrics for the Osmosis chain.",
+    title: TITLE,
+    description: DESCRIPTION,
     type: "website",
     images: ["/Osmosis_Icon.png"],
   },
   twitter: {
     card: "summary",
-    title: "OSMO Tokenomics Dashboard",
-    description:
-      "Live OSMO supply, inflation, burn, staking and protocol-revenue metrics for the Osmosis chain.",
+    title: TITLE,
+    description: DESCRIPTION,
     images: ["/Osmosis_Icon.png"],
   },
 };
