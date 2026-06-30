@@ -117,12 +117,25 @@ export interface OsmosisMetrics {
   mintedSupply: number; // Total minted supply
   totalSupply: number; // Minted supply - burned
   circulating: number; // Total supply - locked addresses
-  restrictedSupply: number; // Modeled restricted supply (97046470)
-  communitySupply: number; // Modeled community supply (89137083)
+  restrictedSupply: number; // Chain-methodology restricted (non-circulating) supply
+  communitySupply: number; // Community pool OSMO
+  totalStaked: number; // Total bonded OSMO
   inflationRate: number; // Current inflation rate
   burnRate: number; // Burn rate (change in burn address balance)
-  netInflation: number; // Inflation rate + burn rate
+  netInflation: number; // Inflation rate + burn rate (point-in-time)
+  netInflation90dAvg: number; // 90-day average net inflation (headline KPI)
   stakingApr: number; // 30-day average staking APR
+  stakingApr90dAvg: number; // 90-day average staking APR (headline KPI)
+  // Price-derived KPIs. price is the live OSMO spot (USD); marketCap and fdv are
+  // computed from it against OUR circulating/total supply (internally consistent
+  // with the dashboard's supply methodology, rather than trusting an external
+  // market cap that may use a different circulating definition). null when the
+  // price feed is unavailable — callers omit these KPIs rather than show $0.
+  price: number | null;
+  price24hChange: number | null; // 24h price change (%), from Numia
+  marketCap: number | null; // price * circulating
+  fdv: number | null; // price * totalSupply
+  stakingRatio: number | null; // totalStaked / circulating (% of float staked)
   timestamp: string;
 }
 

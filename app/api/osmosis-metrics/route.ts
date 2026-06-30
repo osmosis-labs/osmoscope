@@ -1,60 +1,126 @@
 import { NextResponse } from "next/server";
-import {
-  calculateOsmosisMetrics,
-  fetchInflation,
-  fetchStakingApr,
-} from "@/lib/osmosis-lcd";
-import { getBurnRateFromHistory, getHistoryStats } from "@/lib/historical-file";
+import { getHistory } from "@/lib/historical-file";
+import { fetchOsmoPrice } from "@/lib/osmosis-lcd";
 import { logger } from "@/lib/logger";
 import type { OsmosisMetrics } from "@/types/osmosis";
 
-// The live metrics change slowly (supply, inflation, and the staking pool update
-// once per daily epoch; staking APR is a 30-day average), so the response is
-// CDN-cached for 5 minutes via the Cache-Control header on the response below.
-// This matches the client's React Query refetch cadence and keeps serverless
-// invocations and LCD calls low under public traffic. The route is dynamic (it
-// reads live DB/LCD state), so caching is header-driven rather than via the
-// route-segment `revalidate` export.
-
+// This endpoint serves the MOST RECENT daily snapshot — it makes NO live LCD
+// calls. Every value it returns (supply, burn, inflation, restricted, community,
+// staking) is captured once per day by the snapshot cron (/api/cron/snapshot),
+// which fires right after the daily epoch completes. The chain's mint/inflation
+// figures only change at the epoch boundary, so the snapshot is epoch-fresh and
+// reading it back is near-instant (vs. the previous live computation that did
+// ~40 throttled LCD calls per cold load). Response is CDN-cached 5 minutes.
 export async function GET() {
   try {
-    // Fetch the live metrics this endpoint serves, in parallel. Distribution and
-    // pool-manager params and total-staked are only needed for the daily snapshot
-    // (now written by /api/cron/snapshot), so they are no longer fetched here.
-    const [metrics, inflationRate, aprData] = await Promise.all([
-      calculateOsmosisMetrics(),
-      fetchInflation(),
-      fetchStakingApr(),
-    ]);
-    const timestamp = new Date().toISOString();
+    const history = await getHistory();
+    if (history.length === 0) {
+      return NextResponse.json(
+        { error: "No snapshot data available yet" },
+        { status: 503, headers: { "Cache-Control": "no-store" } }
+      );
+    }
 
-    // NOTE: This endpoint is read-only. The daily historical snapshot is written
-    // by the scheduled cron route (/api/cron/snapshot, see vercel.json), not as a
-    // side effect of serving metrics, so the historical series stays gap-free
-    // regardless of page traffic.
+    // Latest snapshot row (history is stored chronologically).
+    const latest = history[history.length - 1];
+    const inflationRate = latest.inflationRate ?? 0;
 
-    // Calculate burn rate from historical data (30 days)
-    const burnRate = await getBurnRateFromHistory(30);
+    // Annualized burn rate (%) over the last `days`, computed inline from the
+    // already-loaded history. We do NOT call getBurnRateFromHistory here: that
+    // re-reads via the DB path, which can return 0 on a flaky connection and
+    // silently zero out the burn (making net inflation wrong). Computing from the
+    // history we already have keeps the KPI consistent with the charts.
+    const burnRateOver = (days: number): number => {
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+      const win = history.filter(
+        (r) => new Date(r.timestamp).getTime() > cutoff
+      );
+      if (win.length < 2) return 0;
+      const oldest = win[0];
+      const newest = win[win.length - 1];
+      const burnChange =
+        (newest.burnedSupply ?? newest.burned ?? 0) -
+        (oldest.burnedSupply ?? oldest.burned ?? 0);
+      const spanDays =
+        (new Date(newest.timestamp).getTime() -
+          new Date(oldest.timestamp).getTime()) /
+        (1000 * 60 * 60 * 24);
+      if (!(newest.totalSupply > 0) || spanDays <= 0) return 0;
+      return -(((burnChange / spanDays) * 365) / newest.totalSupply) * 100;
+    };
 
-    // Calculate net inflation (inflation + burn rate, burn rate is negative)
-    const netInflation = inflationRate + burnRate;
+    const burnRate = burnRateOver(30);
 
-    // Get history stats for debugging
-    const stats = await getHistoryStats();
-    logger.debug("Historical data:", stats);
+    // 90-day averages for the headline KPIs. Net inflation = avg gross inflation
+    // over the window + the 90-day annualized burn rate (burn is negative).
+    const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
+    const recent = history.filter(
+      (r) => new Date(r.timestamp).getTime() >= ninetyDaysAgo
+    );
+    const avg = (pick: (r: (typeof recent)[number]) => number | undefined) => {
+      const vals = recent.map(pick).filter((v): v is number => v != null);
+      return vals.length > 0
+        ? vals.reduce((s, v) => s + v, 0) / vals.length
+        : 0;
+    };
+    const avgInflation90d =
+      recent.length > 0 ? avg((r) => r.inflationRate) : inflationRate;
+    const netInflation90dAvg = avgInflation90d + burnRateOver(90);
+    // 90-day average staking APR (uses the raw daily APR; falls back to the
+    // 30-day average stored on the latest snapshot if no window data).
+    const stakingApr90dAvg = recent.some((r) => r.stakingApr != null)
+      ? avg((r) => r.stakingApr)
+      : (latest.stakingRate ?? latest.stakingApr ?? 0);
+
+    // Live OSMO spot price + 24h change (the volatile values not in the daily
+    // snapshot). Cheap single request; the response is CDN-cached 5 min below so
+    // it is at most ~5 min stale, which is fine for a tokenomics dashboard.
+    const priceData = await fetchOsmoPrice();
+    const price = priceData?.price ?? null;
+    const price24hChange = priceData?.price24hChange ?? null;
+
+    const circulating = latest.circulatingSupply ?? latest.circulating ?? 0;
+    const totalSupply = latest.totalSupply ?? 0;
+    const totalStaked = latest.totalStaked ?? 0;
+
+    // Market cap / FDV from our own supply figures (internally consistent with the
+    // dashboard). null when price is unavailable so the UI omits these vs faking $0.
+    const marketCap =
+      price != null && circulating > 0 ? price * circulating : null;
+    const fdv = price != null && totalSupply > 0 ? price * totalSupply : null;
+    // Staking ratio = bonded / total supply (the conventional PoS bond ratio).
+    // We divide by total supply, not circulating: totalStaked (bonded total from
+    // the staking pool) includes restricted-entity stake that is excluded from
+    // circulating, so staked/circulating would mix bases and overstate.
+    const stakingRatio =
+      totalStaked > 0 && totalSupply > 0
+        ? (totalStaked / totalSupply) * 100
+        : null;
 
     const response: OsmosisMetrics = {
-      burned: metrics.burned,
-      mintedSupply: metrics.mintedSupply,
-      totalSupply: metrics.totalSupply,
-      circulating: metrics.circulating,
-      restrictedSupply: metrics.restrictedSupply,
-      communitySupply: metrics.communitySupply,
-      inflationRate: inflationRate,
-      burnRate: burnRate,
-      netInflation: netInflation,
-      stakingApr: aprData.average,
-      timestamp: timestamp,
+      burned: latest.burnedSupply ?? latest.burned ?? 0,
+      mintedSupply: latest.mintedSupply ?? 0,
+      totalSupply,
+      circulating,
+      restrictedSupply: latest.restrictedSupply ?? 0,
+      communitySupply: latest.communitySupply ?? 0,
+      totalStaked,
+      inflationRate,
+      burnRate,
+      // Net inflation = inflation + burn rate (burn rate is negative).
+      netInflation: inflationRate + burnRate,
+      // 90-day average net inflation, used as the headline KPI.
+      netInflation90dAvg,
+      // stakingRate holds the 30-day average APR captured in the snapshot.
+      stakingApr: latest.stakingRate ?? latest.stakingApr ?? 0,
+      // 90-day average staking APR, used as the headline KPI.
+      stakingApr90dAvg,
+      price,
+      price24hChange,
+      marketCap,
+      fdv,
+      stakingRatio,
+      timestamp: latest.timestamp,
     };
 
     return NextResponse.json(response, {

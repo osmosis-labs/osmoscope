@@ -256,6 +256,38 @@ export async function fetchInflation(): Promise<number> {
   }
 }
 
+// Current "day" epoch info. The chain's daily mint/inflation values change at the
+// day-epoch boundary, so the snapshot cron uses this to fire as soon as a NEW
+// epoch is live and queryable (rather than at a fixed wall-clock time that might
+// precede a delayed epoch). NOT cached — the whole point is to read the current
+// epoch number fresh on each poll.
+export interface DayEpochInfo {
+  currentEpoch: number;
+  startTime: string;
+  startHeight: number;
+}
+export async function fetchDayEpoch(): Promise<DayEpochInfo> {
+  const resp = await fetchWithRetry(
+    `${LCD_BASE_URL}/osmosis/epochs/v1beta1/epochs`
+  );
+  if (!resp.ok) throw new Error(`Failed to fetch epochs: ${resp.status}`);
+  const data = (await resp.json()) as {
+    epochs: Array<{
+      identifier: string;
+      current_epoch: string;
+      current_epoch_start_time: string;
+      current_epoch_start_height: string;
+    }>;
+  };
+  const day = data.epochs.find((e) => e.identifier === "day");
+  if (!day) throw new Error("No 'day' epoch in epochs response");
+  return {
+    currentEpoch: parseInt(day.current_epoch, 10),
+    startTime: day.current_epoch_start_time,
+    startHeight: parseInt(day.current_epoch_start_height, 10),
+  };
+}
+
 // Fetch total bonded tokens (staked OSMO)
 // Use long cache since staking pool only changes once a day
 export async function fetchTotalStaked(): Promise<number> {
@@ -344,6 +376,50 @@ export async function fetchStakingApr(): Promise<{
   }
 }
 
+// Fetch the current OSMO spot price (USD) and 24h change from Numia's
+// /tokens/v2/OSMO endpoint, matched on the canonical denom `uosmo` (NOT the
+// "OSMO" symbol, which other chains share). Returns null on failure so the caller
+// can omit price-derived KPIs rather than surface a fake $0 — market cap / FDV are
+// computed from this price against our own supply figures, so a wrong price would
+// mislead. price24hChange is a percentage and may be null even when price is set.
+export async function fetchOsmoPrice(): Promise<{
+  price: number;
+  price24hChange: number | null;
+} | null> {
+  try {
+    const headers: HeadersInit = { Accept: "application/json" };
+    if (NUMIA_API_KEY) headers.Authorization = `Bearer ${NUMIA_API_KEY}`;
+
+    const response = await fetch(`${NUMIA_API_URL}/tokens/v2/OSMO`, {
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+
+    const data: Array<{
+      denom?: string;
+      price?: number;
+      price_24h_change?: number;
+    }> = await response.json();
+    const osmo = data.find((t) => t.denom === "uosmo");
+    if (!osmo || typeof osmo.price !== "number" || osmo.price <= 0) {
+      logger.warn("OSMO price not found or non-positive in Numia /tokens/v2");
+      return null;
+    }
+    return {
+      price: osmo.price,
+      price24hChange:
+        typeof osmo.price_24h_change === "number"
+          ? osmo.price_24h_change
+          : null,
+    };
+  } catch (error) {
+    logger.error("Error fetching OSMO price:", error);
+    return null;
+  }
+}
+
 // Known addresses to exclude from circulating supply
 export const BURN_ADDRESS = "osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmcn030";
 
@@ -360,6 +436,12 @@ export const BURN_ADDRESS = "osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmcn030";
 export const RESTRICTED_ADDRESSES = [
   // Foundation / strategic reserve.
   "osmo1ugku28hwyexpljrrmtet05nd6kjlrvr9jz6z00",
+  // Additional foundation strategic-reserve wallet (NOT in the chain's
+  // restricted_addresses.go genesis set; identified by the Osmosis team). Held
+  // the strategic reserve early on (~29M liquid in 2021-12) and was drawn down to
+  // dust (~1 OSMO) by mid-2023, so it materially raises restricted supply in
+  // 2021-2023 and contributes ~nothing today.
+  "osmo1pvxhtre74l37p6y2rs2e8xyek75z7xlc7g2trt",
   // Original genesis developer-rewards receivers (no longer in mint params).
   "osmo14kjcwdwcqsujkdt8n5qwpd8x8ty2rys5rjrdjj",
   "osmo1gw445ta0aqn26suz2rg3tkqfpxnq2hs224d7gq",
@@ -410,6 +492,32 @@ export async function fetchRestrictedSupply(): Promise<number> {
 export const DEVELOPER_VESTING_MODULE_ADDRESS =
   "osmo1vqy8rqqlydj9wkcyvct9zxl3hc4eqgu3d7hd9k";
 
+// Restricted supply for the live metrics endpoint. Prefer the most recent
+// snapshot value (the daily cron computes and stores it), which avoids the ~34
+// throttled LCD calls the live computation needs. Falls back to computing it
+// live (restricted address set + dev-vesting module) only when no snapshot value
+// exists yet. Dynamic import of historical-file to avoid pulling the DB/storage
+// layer into modules that only need the LCD client.
+async function getLatestRestrictedSupply(): Promise<number> {
+  try {
+    const { getHistory } = await import("./historical-file");
+    const history = await getHistory();
+    for (let i = history.length - 1; i >= 0; i--) {
+      const r = history[i].restrictedSupply;
+      if (r != null && r > 0) return r;
+    }
+  } catch (error) {
+    logger.warn("Could not read restricted supply from history:", error);
+  }
+  // Fallback: compute live (slower).
+  logger.info("No snapshot restricted supply; computing live");
+  const [restrictedEntities, devVestingBalance] = await Promise.all([
+    fetchRestrictedSupply(),
+    fetchBalance(DEVELOPER_VESTING_MODULE_ADDRESS),
+  ]);
+  return restrictedEntities + devVestingBalance;
+}
+
 // Calculate all metrics.
 //
 // Circulating (public float) follows the chain's own methodology
@@ -428,21 +536,22 @@ export async function calculateOsmosisMetrics() {
       fetchInflation(),
     ]);
 
-    // Community pool, dev-vesting module balance, and the restricted entity set.
-    const [communitySupply, devVestingBalance, restrictedEntities] =
-      await Promise.all([
-        fetchCommunityPool(),
-        fetchBalance(DEVELOPER_VESTING_MODULE_ADDRESS),
-        fetchRestrictedSupply(),
-      ]);
+    // Community pool (live, one cheap call) and restricted supply.
+    //
+    // Restricted is NOT computed live here: doing so meant ~34 sequential,
+    // throttled LCD calls (balance + delegations for ~17 restricted addresses),
+    // which dominated cold page-load time (~12s). Restricted changes slowly, so
+    // we read the most recent value from the daily snapshot history instead
+    // (written by the snapshot cron), and only fall back to the live computation
+    // if history has no restricted value yet.
+    const [communitySupply, restrictedSupply] = await Promise.all([
+      fetchCommunityPool(),
+      getLatestRestrictedSupply(),
+    ]);
 
     // Total supply (minted - burned). Burn is the balance sitting at the burn
     // address; it is removed from supply.
     const totalSupply = mintedSupply - burnedAmount;
-
-    // Restricted supply excludes the community pool (reported separately) and
-    // includes the still-unvested developer-vesting module balance.
-    const restrictedSupply = restrictedEntities + devVestingBalance;
 
     // Circulating supply (public float).
     const circulating = totalSupply - restrictedSupply - communitySupply;
