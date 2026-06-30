@@ -3,39 +3,156 @@
 // scheduled cron route (/api/cron/snapshot) and any other caller share one
 // definition of "what a snapshot contains".
 import {
-  calculateOsmosisMetrics,
+  fetchTotalSupply,
+  fetchBalance,
+  fetchCommunityPool,
+  fetchRestrictedSupply,
   fetchInflation,
   fetchStakingApr,
   fetchFullMintParams,
   fetchPoolManagerParams,
   fetchTotalStaked,
+  BURN_ADDRESS,
+  DEVELOPER_VESTING_MODULE_ADDRESS,
 } from "./osmosis-lcd";
-import { saveSnapshot } from "./historical-file";
+import { saveSnapshot, getHistory } from "./historical-file";
 import { logger } from "./logger";
 
 export interface SnapshotResult {
   saved: boolean;
   timestamp: string;
+  dayEpoch?: number;
 }
 
-// Fetch current metrics and persist a snapshot. saveSnapshot internally guards
-// against duplicate same-day writes, so this is safe to call more than once.
-export async function buildAndSaveSnapshot(): Promise<SnapshotResult> {
+// Thrown when a snapshot's freshly-fetched values look implausible (likely a
+// partial fetch failure). We refuse to persist rather than bake bad financial
+// data into the daily series. The caller surfaces this; the next cron retries.
+export class SnapshotSanityError extends Error {}
+
+// Reject a snapshot whose core supply figures are missing or move implausibly
+// vs. the previous snapshot. Several fetchers (fetchBalance for burn/dev-vesting,
+// fetchCommunityPool) return 0 on a transient LCD error instead of throwing, so a
+// partial failure would otherwise be persisted as if it were clean. Mint adds at
+// most ~0.5M OSMO/day and burn/community move slowly, so a day-over-day jump
+// beyond a wide tolerance signals a bad read, not a real event.
+const MAX_DAILY_SUPPLY_DELTA = 5_000_000; // OSMO; ~10x a generous daily mint
+const MAX_DAILY_RESTRICTED_DELTA = 40_000_000; // OSMO; allows real unlock events
+function assertSnapshotSane(metrics: {
+  mintedSupply: number;
+  totalSupply: number;
+  burned: number;
+  circulating: number;
+  restrictedSupply: number;
+  communitySupply: number;
+  prev?: {
+    totalSupply: number;
+    restrictedSupply?: number;
+    communitySupply?: number;
+  };
+}): void {
+  // Absolute floors: supply can never be zero/negative on a live chain.
+  if (!(metrics.mintedSupply > 0))
+    throw new SnapshotSanityError(
+      `minted supply not positive (${metrics.mintedSupply})`
+    );
+  if (!(metrics.totalSupply > 0))
+    throw new SnapshotSanityError(
+      `total supply not positive (${metrics.totalSupply})`
+    );
+  if (metrics.burned < 0)
+    throw new SnapshotSanityError(`burned negative (${metrics.burned})`);
+  if (metrics.restrictedSupply <= 0)
+    throw new SnapshotSanityError(
+      `restricted supply not positive (${metrics.restrictedSupply}) — likely a failed balance read`
+    );
+  if (metrics.communitySupply <= 0)
+    throw new SnapshotSanityError(
+      `community supply not positive (${metrics.communitySupply}) — likely a failed pool read`
+    );
+  if (metrics.circulating <= 0)
+    throw new SnapshotSanityError(
+      `circulating not positive (${metrics.circulating})`
+    );
+
+  // Day-over-day deltas vs. the previous snapshot.
+  const prev = metrics.prev;
+  if (prev) {
+    if (
+      Math.abs(metrics.totalSupply - prev.totalSupply) > MAX_DAILY_SUPPLY_DELTA
+    )
+      throw new SnapshotSanityError(
+        `total supply moved ${(metrics.totalSupply - prev.totalSupply).toFixed(0)} OSMO vs prior — implausible, refusing to persist`
+      );
+    if (
+      prev.restrictedSupply != null &&
+      Math.abs(metrics.restrictedSupply - prev.restrictedSupply) >
+        MAX_DAILY_RESTRICTED_DELTA
+    )
+      throw new SnapshotSanityError(
+        `restricted supply moved ${(metrics.restrictedSupply - prev.restrictedSupply).toFixed(0)} OSMO vs prior — likely a failed read`
+      );
+  }
+}
+
+// Fetch current metrics LIVE and persist a snapshot. This is the ONE place that
+// computes restricted supply live (the read-side endpoint reads it back from the
+// snapshot), so the supply figures here must come from live chain state, not
+// from a previously stored snapshot. `dayEpoch` is the verified current day-epoch
+// number (the cron resolves it and gates on it advancing) and is stored on the
+// record so the next run can tell whether the epoch has moved on.
+export async function buildAndSaveSnapshot(
+  dayEpoch?: number
+): Promise<SnapshotResult> {
   const [
-    metrics,
+    mintedSupply,
+    burnedAmount,
+    communitySupply,
+    restrictedEntities,
+    devVestingBalance,
     inflationRate,
     aprData,
     mintParams,
     poolManagerParams,
     totalStaked,
   ] = await Promise.all([
-    calculateOsmosisMetrics(),
+    fetchTotalSupply(),
+    fetchBalance(BURN_ADDRESS),
+    fetchCommunityPool(),
+    fetchRestrictedSupply(),
+    fetchBalance(DEVELOPER_VESTING_MODULE_ADDRESS),
     fetchInflation(),
     fetchStakingApr(),
     fetchFullMintParams(),
     fetchPoolManagerParams(),
     fetchTotalStaked(),
   ]);
+
+  const totalSupply = mintedSupply - burnedAmount;
+  const restrictedSupply = restrictedEntities + devVestingBalance;
+  const circulating = totalSupply - restrictedSupply - communitySupply;
+  const metrics = {
+    burned: burnedAmount,
+    mintedSupply,
+    totalSupply,
+    circulating,
+    restrictedSupply,
+    communitySupply,
+  };
+
+  // Sanity-gate before persisting: refuse partial-failure snapshots (a fetcher
+  // returning 0 on a transient error) rather than baking bad data into the series.
+  const history = await getHistory();
+  const prevSnapshot = history[history.length - 1];
+  assertSnapshotSane({
+    ...metrics,
+    prev: prevSnapshot
+      ? {
+          totalSupply: prevSnapshot.totalSupply,
+          restrictedSupply: prevSnapshot.restrictedSupply,
+          communitySupply: prevSnapshot.communitySupply,
+        }
+      : undefined,
+  });
 
   const timestamp = new Date().toISOString();
 
@@ -46,6 +163,7 @@ export async function buildAndSaveSnapshot(): Promise<SnapshotResult> {
 
   await saveSnapshot({
     timestamp,
+    dayEpoch,
     burnedSupply: metrics.burned,
     mintedSupply: metrics.mintedSupply,
     totalSupply: metrics.totalSupply,
@@ -97,5 +215,5 @@ export async function buildAndSaveSnapshot(): Promise<SnapshotResult> {
   });
 
   logger.info(`Snapshot persisted for ${timestamp}`);
-  return { saved: true, timestamp };
+  return { saved: true, timestamp, dayEpoch };
 }

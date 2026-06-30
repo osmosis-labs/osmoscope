@@ -23,11 +23,13 @@ function lockWrite<T>(fn: () => Promise<T>): Promise<T> {
 
 export interface HistoricalRecord {
   timestamp: string;
+  dayEpoch?: number; // Chain "day" epoch number this snapshot was taken for (set by the live snapshot; absent on archive-backfilled rows).
   burnedSupply: number;
   mintedSupply: number;
   totalSupply: number; // Calculated as mintedSupply - burnedSupply
-  circulatingSupply: number;
-  restrictedSupply?: number; // Live path: chain-methodology restricted supply. Archive backfill omits it (live-forward only).
+  circulatingSupply?: number; // Unset for the 2023 upgrade window where staked (hence restricted/circulating) can't be read; interpolated post-backfill.
+  restrictedSupply?: number; // Chain-methodology restricted supply (dev-vesting + restricted-address liquid+staked).
+  restrictedStakedPending?: boolean; // True when the staked portion couldn't be read (2023 invalid-denom window); the value holds liquid+devVesting only until the reconstructed staked ramp is overlaid.
   communitySupply?: number; // Community pool OSMO (live + archive backfill).
   inflationRate: number;
   totalStaked?: number; // Total bonded tokens from staking pool
@@ -58,14 +60,16 @@ export interface HistoricalRecord {
   protorevRevenue?: number;
   mevRevenue?: number;
   totalRevenue?: number;
+  // Data-provenance markers, set by the one-off migration scripts to make them
+  // idempotent. Persisted so a migration re-run over DB-exported JSON cannot
+  // double-apply (e.g. subtract the v27 supply offset twice).
+  supplyOffsetNormalized?: boolean;
+  genesisBackfilled?: boolean;
+  inflationRecomputed?: boolean;
   // Legacy fields for backwards compatibility
   burned?: number;
   circulating?: number;
 }
-
-// Target time for daily snapshot: 17:20 UTC
-const SNAPSHOT_HOUR = 17;
-const SNAPSHOT_MINUTE = 20;
 
 // Ensure data directory exists
 async function ensureDataDir() {
@@ -76,95 +80,47 @@ async function ensureDataDir() {
   }
 }
 
-// Check if two snapshots have meaningful differences
-function hasSignificantChange(
-  snapshot1: HistoricalRecord,
-  snapshot2: HistoricalRecord
-): boolean {
-  // Check if burned amount changed (even slightly)
-  const burnedChanged =
-    Math.abs(
-      (snapshot1.burnedSupply || snapshot1.burned || 0) -
-        (snapshot2.burnedSupply || snapshot2.burned || 0)
-    ) > 0.1;
-
-  // Check if total supply changed
-  const supplyChanged =
-    Math.abs(snapshot1.totalSupply - snapshot2.totalSupply) > 100;
-
-  return burnedChanged || supplyChanged;
-}
-
-// Check if we should save a snapshot
+// Decide whether to persist an incoming snapshot. Timing is now owned by the
+// epoch-aware cron (it only calls in once a new day-epoch is live), so this no
+// longer gates on wall-clock time. It just deduplicates:
+//   - if the record carries a dayEpoch: save unless a snapshot already exists for
+//     that exact epoch (robust to delayed/elongated epochs and midnight crossings);
+//   - otherwise (callers without an epoch): fall back to once-per-calendar-day.
 async function shouldSaveSnapshot(
   currentData: HistoricalRecord
 ): Promise<boolean> {
   const history = await getHistory();
-
-  // If no history, save first snapshot
   if (history.length === 0) {
     logger.info("No history found, saving first snapshot");
     return true;
   }
 
-  // Get the last snapshot
-  const lastSnapshot = history[history.length - 1];
-  const lastDate = new Date(lastSnapshot.timestamp);
-  const now = new Date();
-
-  // Check if we already have a snapshot from today
-  const isSameDay =
-    lastDate.getUTCFullYear() === now.getUTCFullYear() &&
-    lastDate.getUTCMonth() === now.getUTCMonth() &&
-    lastDate.getUTCDate() === now.getUTCDate();
-
-  const currentHour = now.getUTCHours();
-  const currentMinute = now.getUTCMinutes();
-
-  if (isSameDay) {
-    // We have a snapshot from today - check if it has meaningful changes
-    const hasChanges = hasSignificantChange(lastSnapshot, currentData);
-
-    if (!hasChanges) {
-      // Data hasn't changed - check if we should retry
-      const timeSinceLastSnapshot = now.getTime() - lastDate.getTime();
-      const minutesSinceLastSnapshot = timeSinceLastSnapshot / (1000 * 60);
-
-      // If it's been more than 10 minutes since last check, retry
-      if (minutesSinceLastSnapshot >= 10) {
-        logger.info(
-          `No change in last ${minutesSinceLastSnapshot.toFixed(1)} minutes, retrying snapshot`
-        );
-        return true;
-      }
-
+  if (currentData.dayEpoch != null) {
+    const exists = history.some((r) => r.dayEpoch === currentData.dayEpoch);
+    if (exists) {
       logger.info(
-        `No change yet, will retry in ${(10 - minutesSinceLastSnapshot).toFixed(1)} minutes`
+        `Snapshot for epoch ${currentData.dayEpoch} already exists, skipping`
       );
       return false;
     }
-
-    // Data has changed, we already have today's meaningful snapshot
-    logger.info("Already have meaningful snapshot for today, skipping");
-    return false;
-  }
-
-  // Different day - check if we're within or past the target time
-  const currentTotalMinutes = currentHour * 60 + currentMinute;
-  const targetTotalMinutes = SNAPSHOT_HOUR * 60 + SNAPSHOT_MINUTE;
-
-  // Save if we're at or past 17:20 UTC
-  if (currentTotalMinutes >= targetTotalMinutes - 5) {
-    logger.info(
-      `At or past target time (${currentHour}:${currentMinute} UTC), saving snapshot`
-    );
     return true;
   }
 
-  logger.info(
-    `Before target time (current: ${currentHour}:${currentMinute} UTC, target: ${SNAPSHOT_HOUR}:${SNAPSHOT_MINUTE} UTC), skipping`
-  );
-  return false;
+  // No epoch on the record: dedup by calendar day (UTC).
+  const now = new Date(currentData.timestamp);
+  const sameDayExists = history.some((r) => {
+    const d = new Date(r.timestamp);
+    return (
+      d.getUTCFullYear() === now.getUTCFullYear() &&
+      d.getUTCMonth() === now.getUTCMonth() &&
+      d.getUTCDate() === now.getUTCDate()
+    );
+  });
+  if (sameDayExists) {
+    logger.info("Snapshot for this day already exists, skipping");
+    return false;
+  }
+  return true;
 }
 
 // Save a new snapshot (checks if we should save first)
