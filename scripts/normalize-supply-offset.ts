@@ -71,7 +71,7 @@ import { type HistoricalRecord } from "../lib/historical-file";
  *  archive by_denom step 778,026,867.99 -> 695,060,074.83. */
 const V27_OFFSET_OSMO = 82_966_793.163_037;
 
-/** First UTC date on which the v27 offset is live on-chain (== upgrade date).
+/** First UTC date on which the v27 offset is live onchain (== upgrade date).
  *  Records on/after DATA_START and strictly before this get the offset subtracted. */
 const V27_DATE = "2024-11-19";
 

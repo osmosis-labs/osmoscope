@@ -200,13 +200,13 @@ export function OsmosisDashboard() {
           </a>
         </p>
         <p className="mt-2">
-          On-chain data as of{" "}
+          Onchain data snapshot as of{" "}
           {new Date(data.timestamp).toLocaleDateString("en-GB", {
             day: "numeric",
-            month: "short",
+            month: "long",
             year: "numeric",
-          })}{" "}
-          (daily snapshot); price is live.
+          })}
+          . Market data is live.
         </p>
       </footer>
     </div>
