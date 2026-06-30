@@ -7,15 +7,15 @@ export default function Home() {
         <header className="mb-6 mt-2 flex items-center gap-3 sm:gap-4">
           <img
             src="/Osmosis_Icon.png"
-            alt="Osmoscope logo"
+            alt="OSMOscope logo"
             className="h-12 w-12 shrink-0 sm:h-16 sm:w-16"
           />
           <div>
             <h1 className="text-2xl font-bold leading-tight text-white sm:text-4xl">
-              Osmoscope
+              OSMOscope
             </h1>
             <p className="text-sm text-osmo-200 sm:text-base">
-              OSMO supply, emissions, burn &amp; staking
+              Tokenomics in focus
             </p>
           </div>
         </header>
