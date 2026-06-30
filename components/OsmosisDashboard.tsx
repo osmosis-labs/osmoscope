@@ -1,39 +1,25 @@
 "use client";
 
 import { useOsmosisMetrics } from "@/lib/hooks/useOsmosisMetrics";
+import { useHistoricalData } from "@/lib/hooks/useHistoricalData";
 import { TokenBalancesChart } from "./charts/TokenBalancesChart";
 import { InflationRatesChart } from "./charts/InflationRatesChart";
 import { BurnChart } from "./charts/BurnChart";
 import { FeeFlowChart } from "./charts/FeeFlowChart";
+import { ProtocolRevenueChart } from "./charts/ProtocolRevenueChart";
 import { StakingAprChart } from "./charts/StakingAprChart";
+import { StakingRatioChart } from "./charts/StakingRatioChart";
+import { KpiSummary } from "./KpiSummary";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/Card";
 import { formatPercentage, formatNumberWithCommas } from "@/lib/utils";
-import { logger } from "@/lib/logger";
-import { useEffect, useState, useRef } from "react";
-import type { HistoricalRecord } from "@/lib/historical-file";
+import { useRef } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { ScreenshotButtons } from "./ScreenshotButtons";
 
 export function OsmosisDashboard() {
   const { data, isLoading, error } = useOsmosisMetrics();
-  const [historicalData, setHistoricalData] = useState<HistoricalRecord[]>([]);
+  const { data: historicalData = [] } = useHistoricalData();
   const burnedPieChartRef = useRef<HTMLDivElement>(null);
-
-  // Fetch historical data
-  useEffect(() => {
-    async function fetchHistory() {
-      try {
-        const response = await fetch("/api/history");
-        if (response.ok) {
-          const history = await response.json();
-          setHistoricalData(history);
-        }
-      } catch (error) {
-        logger.error("Failed to fetch historical data:", error);
-      }
-    }
-    fetchHistory();
-  }, []);
 
   if (isLoading) {
     return (
@@ -70,6 +56,9 @@ export function OsmosisDashboard() {
 
   return (
     <div className="space-y-6">
+      {/* KPI summary strip */}
+      <KpiSummary data={data} />
+
       {/* OSMO Inflation (full width) */}
       <div className="grid gap-6">
         <InflationRatesChart
@@ -100,44 +89,57 @@ export function OsmosisDashboard() {
             </div>
           </CardHeader>
           <CardContent className="relative flex items-center justify-center p-1">
-            <ResponsiveContainer width="100%" height={380}>
-              <PieChart>
-                <Pie
-                  data={[
-                    { name: "Burned", value: data.burned },
-                    { name: "Circulating Supply", value: data.circulating },
-                  ]}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius="40%"
-                  outerRadius="85%"
-                  paddingAngle={2}
-                  dataKey="value"
-                >
-                  <Cell fill="#FF6B6B" />
-                  <Cell fill="#95E1D3" />
-                </Pie>
-                <Tooltip
-                  formatter={(value: number) =>
-                    formatNumberWithCommas(value) + " OSMO"
-                  }
-                  contentStyle={{
-                    backgroundColor: "rgba(31, 10, 41, 0.95)",
-                    backdropFilter: "blur(12px)",
-                    border: "1px solid rgba(255, 255, 255, 0.2)",
-                    borderRadius: "8px",
-                    boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-                  }}
-                  labelStyle={{ color: "#fff" }}
-                  itemStyle={{ color: "#fff" }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-            {/* OSMO icon in center of doughnut */}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <div
+              className="w-full"
+              role="img"
+              aria-label={`OSMO burned vs circulating: ${formatNumberWithCommas(
+                data.burned
+              )} OSMO burned (${formatPercentage(
+                (data.burned / data.circulating) * 100
+              )}), ${formatNumberWithCommas(data.circulating)} OSMO circulating.`}
+            >
+              <ResponsiveContainer width="100%" height={380}>
+                <PieChart>
+                  <Pie
+                    data={[
+                      { name: "Burned", value: data.burned },
+                      { name: "Circulating Supply", value: data.circulating },
+                    ]}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius="40%"
+                    outerRadius="85%"
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    <Cell fill="#FF6B6B" />
+                    <Cell fill="#95E1D3" />
+                  </Pie>
+                  <Tooltip
+                    formatter={(value: number) =>
+                      formatNumberWithCommas(value) + " OSMO"
+                    }
+                    contentStyle={{
+                      backgroundColor: "rgba(31, 10, 41, 0.95)",
+                      backdropFilter: "blur(12px)",
+                      border: "1px solid rgba(255, 255, 255, 0.2)",
+                      borderRadius: "8px",
+                      boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+                    }}
+                    labelStyle={{ color: "#fff" }}
+                    itemStyle={{ color: "#fff" }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            {/* OSMO icon in center of doughnut (decorative) */}
+            <div
+              className="pointer-events-none absolute inset-0 flex items-center justify-center"
+              aria-hidden="true"
+            >
               <img
                 src="/Osmosis_Icon.png"
-                alt="Osmosis"
+                alt=""
                 className="h-36 w-36 opacity-80"
                 style={{ transform: "translate(-2%, 2%)" }}
               />
@@ -160,79 +162,23 @@ export function OsmosisDashboard() {
       {/* Fee Flow Chart */}
       <FeeFlowChart historicalData={historicalData} />
 
+      {/* Protocol Revenue Over Time */}
+      <ProtocolRevenueChart historicalData={historicalData} />
+
       {/* Staking APR Chart */}
       <StakingAprChart
         currentApr={data.stakingApr}
         historicalData={historicalData}
       />
 
-      {/* Coming Soon - Future Charts */}
-      {/* Temporarily disabled
-      <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Taker Fee Composition</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-center justify-center min-h-[300px]">
-            <div className="text-center">
-              <div className="mb-4 text-6xl">📊</div>
-              <div className="text-xl font-semibold text-white mb-2">Coming Soon</div>
-              <div className="text-sm text-osmo-200">
-                Breakdown of taker fees by asset
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>ProtoRev Composition</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-center justify-center min-h-[300px]">
-            <div className="text-center">
-              <div className="mb-4 text-6xl">📊</div>
-              <div className="text-xl font-semibold text-white mb-2">Coming Soon</div>
-              <div className="text-sm text-osmo-200">
-                Breakdown of ProtoRev by asset
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Protocol Revenue Over Time</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-center justify-center min-h-[300px]">
-            <div className="text-center">
-              <div className="mb-4 text-6xl">📈</div>
-              <div className="text-xl font-semibold text-white mb-2">Coming Soon</div>
-              <div className="text-sm text-osmo-200">
-                Historical revenue from all sources
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Community Pool Holdings</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-center justify-center min-h-[300px]">
-            <div className="text-center">
-              <div className="mb-4 text-6xl">🏦</div>
-              <div className="text-xl font-semibold text-white mb-2">Coming Soon</div>
-              <div className="text-sm text-osmo-200">
-                Breakdown of community pool assets
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-      */}
+      {/* Staking Ratio Chart */}
+      <StakingRatioChart
+        stakingRatio={data.stakingRatio}
+        historicalData={historicalData}
+      />
 
       {/* Footer Info */}
-      <div className="rounded-lg bg-white/5 p-4 text-center text-sm text-osmo-100">
+      <footer className="rounded-lg bg-white/5 p-4 text-center text-sm text-osmo-100">
         <p>
           Data Sources:{" "}
           <a
@@ -259,7 +205,7 @@ export function OsmosisDashboard() {
             hour12: false,
           })}
         </p>
-      </div>
+      </footer>
     </div>
   );
 }

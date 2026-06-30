@@ -4,7 +4,9 @@ import { useCallback, useState } from "react";
 import html2canvas from "html2canvas";
 
 interface ScreenshotButtonsProps {
-  targetRef: React.RefObject<HTMLElement>;
+  // Nullable to match what useRef<HTMLElement>(null) actually produces under
+  // current React types; guarded with `targetRef.current` before use.
+  targetRef: React.RefObject<HTMLElement | null>;
   filename: string;
 }
 
@@ -315,7 +317,7 @@ export function ScreenshotButtons({
 
   return (
     <div
-      className="relative flex gap-1 rounded-lg bg-white/5 p-1"
+      className="relative flex w-fit shrink-0 gap-1 self-start rounded-lg bg-white/5 p-1"
       data-screenshot-hide
     >
       {/* Copied feedback */}

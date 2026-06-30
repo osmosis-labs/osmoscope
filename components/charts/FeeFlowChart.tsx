@@ -1,14 +1,23 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
+import { Card, CardContent, CardHeader } from "../ui/Card";
 import { useMemo, useState, useRef } from "react";
 import type { HistoricalRecord } from "@/lib/historical-file";
 import {
-  TimeRangeSelector,
   TimeRange,
   filterDataByTimeRange,
+  timeRangeLabel,
 } from "../TimeRangeSelector";
-import { ScreenshotButtons } from "../ScreenshotButtons";
+import { ChartHeader } from "./ChartHeader";
+
+// Format a 0-1 proportion as a percentage label. Keeps one decimal so half-
+// percent splits read correctly and sum to 100 (e.g. 22.5% / 25% / 52.5%),
+// trimming a trailing ".0" so whole values stay clean (e.g. "30%").
+function pct(proportion: number): string {
+  const v = proportion * 100;
+  const s = v.toFixed(1);
+  return (s.endsWith(".0") ? s.slice(0, -2) : s) + "%";
+}
 
 // Assumptions for asset composition
 const TAKER_FEES_OSMO_PERCENT = 0.5; // 50% OSMO
@@ -72,10 +81,21 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<TimeRange>("30d");
+  const [timeRange, setTimeRange] = useState<TimeRange>("90d");
 
   // Show either the clicked node or the hovered node (clicked takes priority)
   const displayNode = selectedNode || hoveredNode;
+
+  // Toggle a node's detail overlay (shared by click and keyboard).
+  const toggleNode = (id: string) =>
+    setSelectedNode((cur) => (cur === id ? null : id));
+  // Enter/Space activate the node, matching native button behaviour.
+  const onNodeKeyDown = (e: React.KeyboardEvent, id: string) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleNode(id);
+    }
+  };
 
   // Filter data based on selected time range
   const filteredData = filterDataByTimeRange(historicalData, timeRange);
@@ -335,19 +355,19 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
         source: "taker_osmo",
         target: "staking",
         value: takerOsmoToStaking,
-        label: `${(osmoStakingPercent * 100).toFixed(0)}%`,
+        label: pct(osmoStakingPercent),
       },
       {
         source: "taker_osmo",
         target: "community_pool",
         value: takerOsmoToCommunity,
-        label: `${(osmoCommunityPercent * 100).toFixed(0)}%`,
+        label: pct(osmoCommunityPercent),
       },
       {
         source: "taker_osmo",
         target: "burn",
         value: takerOsmoToBurn,
-        label: `${(osmoBurnPercent * 100).toFixed(0)}%`,
+        label: pct(osmoBurnPercent),
       },
 
       // Taker non-OSMO distribution
@@ -357,7 +377,7 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
               source: "taker_non_osmo",
               target: "staking",
               value: takerNonOsmoToStaking,
-              label: `${(nonOsmoStakingPercent * 100).toFixed(0)}%`,
+              label: pct(nonOsmoStakingPercent),
             },
           ]
         : []),
@@ -367,7 +387,7 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
               source: "taker_non_osmo",
               target: "community_pool",
               value: takerNonOsmoToCommunity,
-              label: `${(nonOsmoCommunityPercent * 100).toFixed(0)}%`,
+              label: pct(nonOsmoCommunityPercent),
             },
           ]
         : []),
@@ -377,7 +397,7 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
               source: "taker_non_osmo",
               target: "burn",
               value: takerNonOsmoToBurn,
-              label: `${(nonOsmoBurnPercent * 100).toFixed(0)}%`,
+              label: pct(nonOsmoBurnPercent),
             },
           ]
         : []),
@@ -505,15 +525,15 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
           ],
           flows: [
             {
-              label: `→ Staking (${(osmoStakingPercent * 100).toFixed(0)}% OSMO, ${(nonOsmoStakingPercent * 100).toFixed(0)}% Non-OSMO)`,
+              label: `→ Staking (${pct(osmoStakingPercent)} OSMO, ${pct(nonOsmoStakingPercent)} Non-OSMO)`,
               value: formatUSD(takerOsmoToStaking + takerNonOsmoToStaking),
             },
             {
-              label: `→ Community Pool (${(osmoCommunityPercent * 100).toFixed(0)}% OSMO, ${(nonOsmoCommunityPercent * 100).toFixed(0)}% Non-OSMO)`,
+              label: `→ Community Pool (${pct(osmoCommunityPercent)} OSMO, ${pct(nonOsmoCommunityPercent)} Non-OSMO)`,
               value: formatUSD(takerOsmoToCommunity + takerNonOsmoToCommunity),
             },
             {
-              label: `→ Burn (${(osmoBurnPercent * 100).toFixed(0)}% OSMO, ${(nonOsmoBurnPercent * 100).toFixed(0)}% Non-OSMO)`,
+              label: `→ Burn (${pct(osmoBurnPercent)} OSMO, ${pct(nonOsmoBurnPercent)} Non-OSMO)`,
               value: formatUSD(takerOsmoToBurn + takerNonOsmoToBurn),
             },
           ],
@@ -667,42 +687,18 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
     historicalData.length === 0 ||
     !historicalData.slice(-30).some((r) => r.totalRevenue !== undefined);
 
-  // Get time range label for display
-  const getTimeRangeLabel = () => {
-    switch (timeRange) {
-      case "7d":
-        return "Last 7 days";
-      case "30d":
-        return "Last 30 days";
-      case "90d":
-        return "Last 90 days";
-      case "1y":
-        return "Last 1 year";
-      case "all":
-        return "All Time";
-      default:
-        return "All Time";
-    }
-  };
-
   // If no revenue data available, show error message
   if (!revenueAvgs) {
     return (
       <Card ref={cardRef}>
         <CardHeader>
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              <CardTitle>Protocol Revenue</CardTitle>
-              <TimeRangeSelector
-                selectedRange={timeRange}
-                onRangeChange={setTimeRange}
-              />
-              <ScreenshotButtons
-                targetRef={cardRef}
-                filename="protocol-revenue"
-              />
-            </div>
-          </div>
+          <ChartHeader
+            title="Protocol Revenue"
+            timeRange={timeRange}
+            onRangeChange={setTimeRange}
+            cardRef={cardRef}
+            screenshotFilename="protocol-revenue"
+          />
         </CardHeader>
         <CardContent>
           <div className="flex min-h-[400px] items-center justify-center">
@@ -723,30 +719,22 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
   return (
     <Card ref={cardRef}>
       <CardHeader>
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-4">
-            <CardTitle>Protocol Revenue</CardTitle>
-            <TimeRangeSelector
-              selectedRange={timeRange}
-              onRangeChange={setTimeRange}
-            />
-            <ScreenshotButtons
-              targetRef={cardRef}
-              filename="protocol-revenue"
-            />
-          </div>
-          <div className="text-right">
-            <div className="text-3xl font-bold text-white">
-              {formatUSD(total30Days)}
-            </div>
-            <div className="text-xs text-osmo-200">
-              {getTimeRangeLabel()}
+        <ChartHeader
+          title="Protocol Revenue"
+          timeRange={timeRange}
+          onRangeChange={setTimeRange}
+          cardRef={cardRef}
+          screenshotFilename="protocol-revenue"
+          headlineValue={formatUSD(total30Days)}
+          headlineLabel={
+            <>
+              {timeRangeLabel(timeRange)}
               {usingFallbackValues && (
                 <span className="ml-2 text-yellow-400">*</span>
               )}
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        />
       </CardHeader>
       <CardContent>
         <div className="relative">
@@ -772,17 +760,17 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
                       className="relative"
                     >
                       <div
-                        className="flex h-16 cursor-pointer flex-col items-center justify-center rounded transition-all hover:opacity-80 hover:ring-2 hover:ring-white"
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${node.label}: ${formatUSD(node.value)}. Activate for detail.`}
+                        className="flex h-16 cursor-pointer flex-col items-center justify-center rounded transition-all hover:opacity-80 hover:ring-2 hover:ring-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
                         style={{ backgroundColor: node.color }}
                         onMouseEnter={() =>
                           !selectedNode && setHoveredNode(node.id)
                         }
                         onMouseLeave={() => setHoveredNode(null)}
-                        onClick={() =>
-                          setSelectedNode(
-                            selectedNode === node.id ? null : node.id
-                          )
-                        }
+                        onClick={() => toggleNode(node.id)}
+                        onKeyDown={(e) => onNodeKeyDown(e, node.id)}
                       >
                         <div className="px-1 text-center text-xs font-semibold text-white">
                           {displayLabel}
@@ -815,17 +803,17 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
                       className="relative"
                     >
                       <div
-                        className="flex h-24 cursor-pointer flex-col items-center justify-center rounded transition-all hover:opacity-80 hover:ring-2 hover:ring-white"
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${node.label}: ${formatUSD(node.value)}. Activate for detail.`}
+                        className="flex h-24 cursor-pointer flex-col items-center justify-center rounded transition-all hover:opacity-80 hover:ring-2 hover:ring-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
                         style={{ backgroundColor: node.color }}
                         onMouseEnter={() =>
                           !selectedNode && setHoveredNode(node.id)
                         }
                         onMouseLeave={() => setHoveredNode(null)}
-                        onClick={() =>
-                          setSelectedNode(
-                            selectedNode === node.id ? null : node.id
-                          )
-                        }
+                        onClick={() => toggleNode(node.id)}
+                        onKeyDown={(e) => onNodeKeyDown(e, node.id)}
                       >
                         <div className="px-2 text-center text-sm font-bold text-white">
                           {node.label}
@@ -859,7 +847,7 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
                         <div className="mb-1 text-xl font-bold text-white">
                           {tooltipData.title}
                         </div>
-                        <div className="text-osmo-accent text-3xl font-bold">
+                        <div className="text-3xl font-bold text-osmo-accent">
                           {tooltipData.total}
                         </div>
                       </div>

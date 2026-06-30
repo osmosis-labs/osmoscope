@@ -1,9 +1,8 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
+import { Card, CardContent, CardHeader } from "../ui/Card";
 import { useMemo, useState, useRef } from "react";
 import {
-  LineChart,
   Line,
   XAxis,
   YAxis,
@@ -15,13 +14,17 @@ import {
   AreaChart,
 } from "recharts";
 import type { HistoricalRecord } from "@/lib/historical-file";
-import { formatPercentage } from "@/lib/utils";
 import {
-  TimeRangeSelector,
+  formatPercentage,
+  formatChartDate,
+  makeMonthlyTicks,
+} from "@/lib/utils";
+import {
   TimeRange,
   filterDataByTimeRange,
+  timeRangeLabel,
 } from "../TimeRangeSelector";
-import { ScreenshotButtons } from "../ScreenshotButtons";
+import { ChartHeader } from "./ChartHeader";
 
 // Custom tooltip component for APR breakdown
 function CustomTooltip({
@@ -102,57 +105,66 @@ export function StakingAprChart({
       return [];
     }
 
-    return filteredData.map((record) => {
-      // Use raw staking APR from record
-      const rawApr = record.stakingApr || null;
+    return (
+      filteredData
+        // Only plot days that have the staking-APR datapoint. Without it there is
+        // no Revenue APR (Revenue = Staking − Inflation), so the day would render
+        // as an incomplete/empty bar; drop it instead of showing a gap.
+        .filter((record) => record.stakingApr != null)
+        .map((record) => {
+          // Use raw staking APR from record
+          const rawApr = record.stakingApr || null;
 
-      // Calculate raw inflation APR for this specific day
-      let inflationApr = null;
-      if (
-        record.inflationRate != null &&
-        record.totalSupply != null &&
-        record.totalStaked != null &&
-        record.totalStaked > 0 &&
-        record.distributionProportions?.staking
-      ) {
-        const stakingProportion = parseFloat(
-          record.distributionProportions.staking
-        );
-        const developerProportion = parseFloat(
-          record.distributionProportions.developerRewards || "0"
-        );
-        const poolIncentivesProportion = parseFloat(
-          record.distributionProportions.poolIncentives || "0"
-        );
+          // Calculate raw inflation APR for this specific day
+          let inflationApr = null;
+          if (
+            record.inflationRate != null &&
+            record.totalSupply != null &&
+            record.totalStaked != null &&
+            record.totalStaked > 0 &&
+            record.distributionProportions?.staking
+          ) {
+            const stakingProportion = parseFloat(
+              record.distributionProportions.staking
+            );
+            const developerProportion = parseFloat(
+              record.distributionProportions.developerRewards || "0"
+            );
+            const poolIncentivesProportion = parseFloat(
+              record.distributionProportions.poolIncentives || "0"
+            );
 
-        // Total circulating emissions proportion (excludes community pool)
-        const circulatingProportion =
-          stakingProportion + developerProportion + poolIncentivesProportion;
+            // Total circulating emissions proportion (excludes community pool)
+            const circulatingProportion =
+              stakingProportion +
+              developerProportion +
+              poolIncentivesProportion;
 
-        // OSMO issued to stakers per year = (stakingProportion / circulatingProportion) × inflationRate × totalSupply
-        const osmoToStakersPerYear =
-          (stakingProportion / circulatingProportion) *
-          (record.inflationRate / 100) *
-          record.totalSupply;
+            // OSMO issued to stakers per year = (stakingProportion / circulatingProportion) × inflationRate × totalSupply
+            const osmoToStakersPerYear =
+              (stakingProportion / circulatingProportion) *
+              (record.inflationRate / 100) *
+              record.totalSupply;
 
-        // APR = (osmoToStakersPerYear / totalStaked) × 100
-        inflationApr = (osmoToStakersPerYear / record.totalStaked) * 100;
-      }
+            // APR = (osmoToStakersPerYear / totalStaked) × 100
+            inflationApr = (osmoToStakersPerYear / record.totalStaked) * 100;
+          }
 
-      // Calculate revenue APR as difference
-      const revenueApr =
-        rawApr != null && inflationApr != null ? rawApr - inflationApr : null;
+          // Calculate revenue APR as difference
+          const revenueApr =
+            rawApr != null && inflationApr != null
+              ? rawApr - inflationApr
+              : null;
 
-      return {
-        date: new Date(record.timestamp).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "short",
-        }),
-        "Staking APR": rawApr,
-        "Inflation APR": inflationApr,
-        "Revenue APR": revenueApr,
-      };
-    });
+          return {
+            date: formatChartDate(record.timestamp, timeRange),
+            timestamp: record.timestamp,
+            "Staking APR": rawApr,
+            "Inflation APR": inflationApr,
+            "Revenue APR": revenueApr,
+          };
+        })
+    );
   }, [filteredData]);
 
   // Calculate headline APR from the filtered time range
@@ -176,21 +188,16 @@ export function StakingAprChart({
   return (
     <Card ref={cardRef}>
       <CardHeader>
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-4">
-            <CardTitle>Staking APR</CardTitle>
-            <TimeRangeSelector
-              selectedRange={timeRange}
-              onRangeChange={setTimeRange}
-            />
-            <ScreenshotButtons targetRef={cardRef} filename="staking-apr" />
-          </div>
-          <div className="text-right">
-            <div className="text-3xl font-bold text-[#9C27B0]">
-              {formatPercentage(averageApr)}
-            </div>
-          </div>
-        </div>
+        <ChartHeader
+          title="Staking APR"
+          timeRange={timeRange}
+          onRangeChange={setTimeRange}
+          cardRef={cardRef}
+          screenshotFilename="staking-apr"
+          headlineValue={formatPercentage(averageApr, 2)}
+          headlineLabel={timeRangeLabel(timeRange)}
+          headlineColor="text-[#9C27B0]"
+        />
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={300}>
@@ -219,11 +226,20 @@ export function StakingAprChart({
               dataKey="date"
               stroke="#fff"
               tick={{ fill: "#e0d5f5" }}
+              ticks={makeMonthlyTicks(
+                chartData.map((d) => d.date),
+                chartData.map((d) => d.timestamp),
+                timeRange
+              )}
               angle={-45}
               textAnchor="end"
               height={80}
             />
-            <YAxis hide />
+            <YAxis
+              stroke="#fff"
+              tick={{ fill: "#e0d5f5" }}
+              tickFormatter={(value) => `${Math.round(value)}%`}
+            />
             <Tooltip content={<CustomTooltip />} />
             <Area
               type="monotone"

@@ -9,16 +9,17 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
-import { formatNumber, formatNumberWithCommas } from "@/lib/utils";
+import { Card, CardContent, CardHeader } from "../ui/Card";
+import {
+  formatNumber,
+  formatNumberWithCommas,
+  formatChartDate,
+  makeMonthlyTicks,
+} from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
 import { useState, useRef } from "react";
-import {
-  TimeRangeSelector,
-  TimeRange,
-  filterDataByTimeRange,
-} from "../TimeRangeSelector";
-import { ScreenshotButtons } from "../ScreenshotButtons";
+import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
+import { ChartHeader } from "./ChartHeader";
 
 interface BurnChartProps {
   burned: number;
@@ -27,39 +28,30 @@ interface BurnChartProps {
 
 export function BurnChart({ burned, historicalData }: BurnChartProps) {
   const cardRef = useRef<HTMLDivElement>(null);
-  const [timeRange, setTimeRange] = useState<TimeRange>("90d");
+  const [timeRange, setTimeRange] = useState<TimeRange>("1y");
 
   // Filter data based on selected time range
   const filteredData = filterDataByTimeRange(historicalData, timeRange);
 
   // Transform historical data for the chart
   const chartData = filteredData.map((record) => ({
-    date: new Date(record.timestamp).toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-    }),
+    date: formatChartDate(record.timestamp, timeRange),
     "OSMO Burned": record.burnedSupply || record.burned || 0,
   }));
 
   return (
     <Card ref={cardRef}>
       <CardHeader>
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-4">
-            <CardTitle>OSMO Burned</CardTitle>
-            <TimeRangeSelector
-              selectedRange={timeRange}
-              onRangeChange={setTimeRange}
-            />
-            <ScreenshotButtons targetRef={cardRef} filename="osmo-burned" />
-          </div>
-          <div className="text-right">
-            <div className="text-3xl font-bold text-[#FF7043]">
-              {formatNumberWithCommas(burned)}
-            </div>
-            <div className="text-xs text-osmo-200">Total Burned</div>
-          </div>
-        </div>
+        <ChartHeader
+          title="OSMO Burned"
+          timeRange={timeRange}
+          onRangeChange={setTimeRange}
+          cardRef={cardRef}
+          screenshotFilename="osmo-burned"
+          headlineValue={formatNumberWithCommas(burned)}
+          headlineLabel="Total Burned"
+          headlineColor="text-[#FF7043]"
+        />
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={400}>
@@ -72,6 +64,11 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
               dataKey="date"
               stroke="#fff"
               tick={{ fill: "#e0d5f5" }}
+              ticks={makeMonthlyTicks(
+                chartData.map((d) => d.date),
+                filteredData.map((r) => r.timestamp),
+                timeRange
+              )}
               angle={-45}
               textAnchor="end"
               height={80}

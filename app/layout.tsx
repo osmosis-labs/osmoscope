@@ -7,7 +7,22 @@ const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "OSMO Tokenomics Dashboard",
-  description: "Dashboard for displaying the main tokenomics of the OSMO token",
+  description:
+    "Live OSMO supply, inflation, burn, staking and protocol-revenue metrics for the Osmosis chain.",
+  openGraph: {
+    title: "OSMO Tokenomics Dashboard",
+    description:
+      "Live OSMO supply, inflation, burn, staking and protocol-revenue metrics for the Osmosis chain.",
+    type: "website",
+    images: ["/Osmosis_Icon.png"],
+  },
+  twitter: {
+    card: "summary",
+    title: "OSMO Tokenomics Dashboard",
+    description:
+      "Live OSMO supply, inflation, burn, staking and protocol-revenue metrics for the Osmosis chain.",
+    images: ["/Osmosis_Icon.png"],
+  },
 };
 
 export default function RootLayout({

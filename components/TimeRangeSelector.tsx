@@ -45,6 +45,25 @@ export function TimeRangeSelector({
   );
 }
 
+// Human-readable label for a time range, e.g. "Last 90 days" / "All Time".
+// Shared so chart headline subtexts read consistently across the dashboard.
+export function timeRangeLabel(range: TimeRange): string {
+  switch (range) {
+    case "7d":
+      return "Last 7 days";
+    case "30d":
+      return "Last 30 days";
+    case "90d":
+      return "Last 90 days";
+    case "1y":
+      return "Last 1 year";
+    case "all":
+      return "All Time";
+    default:
+      return "All Time";
+  }
+}
+
 // Helper function to filter data based on time range
 export function filterDataByTimeRange<T extends { timestamp: string }>(
   data: T[],

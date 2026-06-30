@@ -9,11 +9,12 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: "var(--background)",
-        foreground: "var(--foreground)",
         osmo: {
           purple: "#5E12A0",
           pink: "#FF66CC",
+          // Bright purple used for headline/primary metric figures (matches the
+          // circulating-supply accent in the charts).
+          accent: "#7C4DFF",
           50: "#F5EAFA",
           100: "#EBD6F5",
           200: "#D7ADEB",
