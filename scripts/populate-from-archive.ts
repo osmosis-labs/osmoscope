@@ -9,9 +9,11 @@ import {
 import {
   fetchMintedSupply,
   fetchBurnedSupply,
+  fetchLockedBalances,
   fetchCommunityPool,
   fetchDistributionParams,
   fetchEpochProvisions,
+  fetchChainInflation,
   fetchTotalStaked,
   type DistributionParams,
 } from "./lib/archive-fetchers";
@@ -143,20 +145,30 @@ function _clearCheckpoint(): void {
 // Inflation Rate Calculator
 // ===================================
 
+// Annualized inflation rate (%), matching the chain's mint keeper GetInflation:
+//
+//   inflation = epochProvisions * (1 - communityPoolProportion) * 365 / supply
+//
+// epochProvisions are the daily (per-epoch) provisions, so the * 365 annualizes
+// them. The (1 - communityPool) factor is the share of provisions that is NOT
+// sent to the community pool (i.e. staking + developer + pool-incentives); the
+// chain excludes the community-pool portion from the reported inflation. The
+// denominator is the supply base.
+//
+// Previously this omitted the * 365 (producing a daily rate ~1/365 of the real
+// value, e.g. 0.0054% instead of ~1.97%) and summed the three proportions
+// explicitly, which drifted across the chain's distribution-proportion changes.
+// Deriving (1 - communityPool) is robust to those param changes.
 function calculateInflationRate(
   params: DistributionParams,
   epochProvisions: number,
-  totalSupply: number
+  supply: number
 ): number {
-  // User formula: ((dev_vesting + staking + liquidity_incentives) * epoch_allocation) / total_supply
+  const communityPool = parseFloat(params.communityPool);
+  const nonCommunityShare = 1 - communityPool;
 
-  const devVesting = parseFloat(params.developerRewards);
-  const staking = parseFloat(params.staking);
-  const liquidityIncentives = parseFloat(params.poolIncentives);
-
-  const numerator =
-    (devVesting + staking + liquidityIncentives) * epochProvisions;
-  const rate = (numerator / totalSupply) * 100; // Convert to percentage
+  const annualizedProvisions = epochProvisions * nonCommunityShare * 365;
+  const rate = (annualizedProvisions / supply) * 100; // percentage
 
   if (!validateInflationRate(rate)) {
     logger.warn(`Inflation rate out of expected range: ${rate}%`);
@@ -348,42 +360,67 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
           height
         );
         const epochProvisions = await fetchEpochProvisions(dateStr, height);
+        const chainInflation = await fetchChainInflation(dateStr, height);
         const totalStaked = await fetchTotalStaked(dateStr, height);
+        const lockedBalances = await fetchLockedBalances(dateStr, height);
 
         // Step 3: Calculate derived values
         const totalSupply = mintedSupply - burnedSupply;
 
-        // NOTE on historical restricted supply: the archive node does NOT serve
-        // historical staking state (the staking/delegations endpoint returns the
-        // CURRENT delegation at every height), so the staked portion of the
-        // restricted address set cannot be reconstructed for past dates. Rather
-        // than write a partly-current, partly-historical (and therefore
-        // misleading) restricted figure, the backfill omits restricted supply
-        // entirely. Restricted supply is charted live-only, from launch forward,
-        // via lib/osmosis-lcd.ts which reads current state correctly.
-        //
-        // Community pool IS served historically (the distribution endpoint
-        // honours the height header), so it is backfilled truthfully here.
-        //
-        // Historical circulating is therefore total - community pool only. This
-        // is an upper bound on the true float (it does not subtract restricted),
-        // and is intentionally distinct from the live circulating figure, which
-        // does subtract restricted.
-        const circulatingSupply = totalSupply - communityPool;
+        // Restricted supply (chain methodology): restricted-address liquid +
+        // staked, plus the developer-vesting module balance (the dev-vesting
+        // module account is included in the static restricted address set, so it
+        // is captured in the liquid sum). The archive node serves historical
+        // delegations correctly (verified per-height), so the staked portion is
+        // accurate per-date, not a current-value approximation. Community pool is
+        // reported as its own bucket and excluded here.
+        const totalLiquidLocked = Object.values(lockedBalances.liquid).reduce(
+          (a, b) => a + b,
+          0
+        );
+        const totalDevVestingLocked = Object.values(
+          lockedBalances.devVesting
+        ).reduce((a, b) => a + b, 0);
+        // Restricted = real liquid + dev-vesting (both fetched per-date) + staked.
+        // When the staked portion can't be read (2023 "invalid denom" window),
+        // we STILL record the liquid+dev-vesting base (it's real and dominant)
+        // and flag restrictedStakedPending so the reconstructed staked ramps
+        // (foundation + strategic wallet) get overlaid onto these dates after the
+        // backfill. This avoids blanking the whole early window just because the
+        // smaller staked piece is unreadable.
+        const restrictedStakedPending = lockedBalances.stakedUnavailable;
+        const restrictedSupply =
+          totalLiquidLocked + lockedBalances.staked + totalDevVestingLocked;
 
+        // Circulating (public float) = total - restricted - community. When staked
+        // is pending it is provisional (slightly high) until the overlay adds it.
+        const circulatingSupply =
+          totalSupply - restrictedSupply - communityPool;
+
+        logger.info(
+          `  Restricted: ${restrictedSupply.toLocaleString()} OSMO (liquid ${totalLiquidLocked.toLocaleString()} + staked ${lockedBalances.staked.toLocaleString()}${restrictedStakedPending ? " [staked PENDING overlay]" : ""} + devVest ${totalDevVestingLocked.toLocaleString()})`
+        );
         logger.info(`  Community pool: ${communityPool.toLocaleString()} OSMO`);
 
-        // Calculate inflation rate if we have params
+        // Inflation: prefer the chain's OWN reported value (authoritative,
+        // matches what the chain uses and avoids any formula-reconstruction
+        // risk). Fall back to recomputing from provisions/params/supply only if
+        // the chain inflation query is unavailable at this height.
         let inflationRate = 0;
-        if (distributionParams && epochProvisions) {
+        if (chainInflation !== null) {
+          inflationRate = chainInflation;
+        } else if (distributionParams && epochProvisions) {
           inflationRate = calculateInflationRate(
             distributionParams,
             epochProvisions,
             totalSupply
           );
+          logger.info(
+            `  Chain inflation unavailable; recomputed = ${inflationRate.toFixed(3)}%`
+          );
         } else {
           logger.warn(
-            `  Missing params or provisions for ${dateStr}, inflation rate = 0`
+            `  No chain inflation and missing params/provisions for ${dateStr}, inflation rate = 0`
           );
         }
 
@@ -394,6 +431,8 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
           burnedSupply,
           totalSupply,
           circulatingSupply,
+          restrictedSupply,
+          restrictedStakedPending: restrictedStakedPending || undefined,
           communitySupply: communityPool,
           inflationRate,
           totalStaked: totalStaked || undefined,
@@ -413,7 +452,7 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
         );
         logger.info(`    Supply: ${totalSupply.toLocaleString()} OSMO`);
         logger.info(
-          `    Circulating: ${circulatingSupply.toLocaleString()} OSMO`
+          `    Circulating: ${circulatingSupply === undefined ? "(pending interpolation)" : circulatingSupply.toLocaleString() + " OSMO"}`
         );
         logger.info(`    Inflation: ${inflationRate.toFixed(2)}%`);
       }
@@ -494,8 +533,20 @@ async function main() {
     }
 
     console.log("\nNext steps:");
-    console.log("  1. Run validation: yarn validate-history");
-    console.log("  2. Commit to GitHub: git add data/ && git commit");
+    console.log(
+      "  1. Normalize supply offset: yarn tsx scripts/normalize-supply-offset.ts"
+    );
+    console.log(
+      "     (REQUIRED after any backfill: this script writes RAW pre-v27 by_denom"
+    );
+    console.log(
+      "      values; normalize applies the retroactive v27 offset + artifact repair"
+    );
+    console.log(
+      "      so the series matches the chain's current methodology. Idempotent.)"
+    );
+    console.log("  2. Run validation: yarn validate-history");
+    console.log("  3. Commit to GitHub: git add data/ && git commit");
   } catch (error: unknown) {
     console.error("\n✗ Fatal error:", error);
     process.exit(1);

@@ -12,6 +12,17 @@ import { logger } from "@/lib/logger";
 const HISTORY_CACHE_CONTROL =
   "public, s-maxage=3600, stale-while-revalidate=600";
 
+// First date charts display. The archive node is pruned before ~2021-12-15
+// (genesis -> 2021-12-14 returns no chain state), but the genesis..data-start gap
+// is reconstructed deterministically (scripts/backfill-genesis-2021.ts: 325M at
+// genesis = 275M restricted + 50M airdrop, ramping to the first real record), so
+// the charts now start at the chain genesis date.
+const DATA_START_DATE = "2021-06-19";
+
+function fromDataStart<T extends { timestamp: string }>(records: T[]): T[] {
+  return records.filter((r) => r.timestamp.slice(0, 10) >= DATA_START_DATE);
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -36,8 +47,8 @@ export async function GET(request: Request) {
       });
     }
 
-    // Default: return all history
-    const history = await getHistory();
+    // Default: return all history from the first reliable data point onward.
+    const history = fromDataStart(await getHistory());
 
     // Support simple ordering via query param even without pagination
     if (orderBy?.toLowerCase() === "asc") {
