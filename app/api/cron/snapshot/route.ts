@@ -49,13 +49,14 @@ export async function GET(request: Request) {
       }
     }
 
-    // If the newest record is already from today (UTC) — even one without a
-    // dayEpoch, e.g. a deploy-day backfilled row — the day is already captured;
-    // don't snapshot again. This guards the case where the epoch-only lastEpoch
-    // walk would otherwise ignore that row and re-trigger. (The DB save also
-    // replaces same-day rows, so a re-trigger is harmless, but skipping is cleaner.)
+    // If a PROPER epoch snapshot already exists for today (UTC), skip — the day is
+    // captured. We require dayEpoch to be set: a same-day row WITHOUT an epoch
+    // (e.g. a deploy-day migrated/backfilled row, possibly with incomplete LCD
+    // fields) must NOT block the real epoch-gated snapshot, or metrics would stay
+    // stale all day. If the epoch gate then fires, the DB save replaces the
+    // same-day row, so no duplicate accumulates.
     const newest = history[history.length - 1];
-    if (newest) {
+    if (newest && newest.dayEpoch != null) {
       const n = new Date(newest.timestamp);
       const now = new Date();
       const sameUtcDay =
@@ -63,7 +64,7 @@ export async function GET(request: Request) {
         n.getUTCMonth() === now.getUTCMonth() &&
         n.getUTCDate() === now.getUTCDate();
       if (sameUtcDay) {
-        logger.info("Today's snapshot already exists; skipping cron run");
+        logger.info("Today's epoch snapshot already exists; skipping cron run");
         return NextResponse.json({
           ok: true,
           saved: false,

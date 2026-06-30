@@ -71,25 +71,34 @@ export async function GET() {
     // average. Computing it as avg(gross) + a single endpoint burn rate would not
     // equal the chart's per-day average, so we compute per-day net here too. Each
     // day's burn rate is the annualized burn delta vs the previous record.
+    const burnDeltaAt = (i: number): number =>
+      (history[i].burnedSupply ?? history[i].burned ?? 0) -
+      (history[i - 1].burnedSupply ?? history[i - 1].burned ?? 0);
+
+    // Drop trailing days whose burn hasn't been measured yet (cumulative burn
+    // unchanged vs the prior day => delta 0). The inflation chart trims these
+    // before averaging its "Net Inflation", so the KPI must too or the two
+    // disagree. Trim from the end down to the first day with a real burn delta.
+    let netEnd = history.length; // exclusive
+    while (netEnd - 1 >= 1 && burnDeltaAt(netEnd - 1) === 0) {
+      netEnd--;
+    }
+
     let netSum = 0;
     let netCount = 0;
     // recentIdx < 0 means no records within the last 90 days — skip the loop and
     // fall back below rather than averaging all of history under a "90d" label.
     const netStart = recentIdx < 0 ? history.length : Math.max(1, recentIdx);
-    for (let i = netStart; i < history.length; i++) {
+    for (let i = netStart; i < netEnd; i++) {
       const cur = history[i];
-      const prev = history[i - 1];
       if (!(cur.totalSupply > 0)) continue;
-      const burnChange =
-        (cur.burnedSupply ?? cur.burned ?? 0) -
-        (prev.burnedSupply ?? prev.burned ?? 0);
       const spanDays =
         (new Date(cur.timestamp).getTime() -
-          new Date(prev.timestamp).getTime()) /
+          new Date(history[i - 1].timestamp).getTime()) /
         (1000 * 60 * 60 * 24);
       const dayBurnRate =
         spanDays > 0
-          ? -(((burnChange / spanDays) * 365) / cur.totalSupply) * 100
+          ? -(((burnDeltaAt(i) / spanDays) * 365) / cur.totalSupply) * 100
           : 0;
       netSum += (cur.inflationRate ?? 0) + dayBurnRate;
       netCount++;
