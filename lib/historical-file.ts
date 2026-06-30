@@ -80,14 +80,16 @@ async function ensureDataDir() {
   }
 }
 
-// Decide whether to persist an incoming snapshot. Timing is now owned by the
+// Decide whether to persist an incoming snapshot. Timing is owned by the
 // epoch-aware cron (it only calls in once a new day-epoch is live), so this no
-// longer gates on wall-clock time. It just deduplicates:
-//   - if the record carries a dayEpoch: skip if a snapshot for that exact epoch
-//     already exists (robust to delayed/elongated epochs and midnight crossings);
-//   - ALWAYS also skip if a snapshot already exists for the same calendar day —
-//     this catches a same-day row that lacks a dayEpoch (a backfilled/legacy row),
-//     which an epoch-only check would miss and then duplicate on the DB path.
+// longer gates on wall-clock time. Deduplication:
+//   - if the record carries a dayEpoch: skip only if a snapshot for that EXACT
+//     epoch already exists (a true duplicate). A same-calendar-day row with a
+//     DIFFERENT/absent epoch is allowed through — it's a refresh, and saveSnapshot
+//     replaces the existing same-day row (on both the file and DB paths) rather
+//     than appending, so no duplicate accumulates.
+//   - if the record has no dayEpoch: dedup by calendar day, since there is no
+//     other key to dedup on.
 async function shouldSaveSnapshot(
   currentData: HistoricalRecord
 ): Promise<boolean> {
@@ -105,10 +107,10 @@ async function shouldSaveSnapshot(
       );
       return false;
     }
-    // Fall through to the calendar-day check below rather than returning early.
+    return true; // new epoch — allow; same-day replacement happens at save time
   }
 
-  // Dedup by calendar day (UTC) — runs for every record, with or without epoch.
+  // No epoch on the record: dedup by calendar day (UTC).
   const now = new Date(currentData.timestamp);
   const sameDayExists = history.some((r) => {
     const d = new Date(r.timestamp);
@@ -125,8 +127,10 @@ async function shouldSaveSnapshot(
   return true;
 }
 
-// Save a new snapshot (checks if we should save first)
-export async function saveSnapshot(data: HistoricalRecord): Promise<void> {
+// Save a new snapshot (checks if we should save first). Returns true if a row was
+// persisted, false if the snapshot was skipped (dedup) or failed — so callers can
+// report accurate save status instead of assuming success.
+export async function saveSnapshot(data: HistoricalRecord): Promise<boolean> {
   // Use write lock to prevent race conditions
   return lockWrite(async () => {
     try {
@@ -140,14 +144,14 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<void> {
       // Check if we should save this snapshot
       const shouldSave = forceSave || (await shouldSaveSnapshot(data));
       if (!shouldSave) {
-        return; // Skip saving
+        return false; // Skipped (dedup)
       }
 
       // Use database if enabled (priority 1)
       if (isDatabaseEnabled()) {
         logger.info("Using database storage");
         await saveSnapshotToDatabase(data);
-        return;
+        return true;
       }
 
       // Fall back to local file storage (priority 2)
@@ -187,8 +191,10 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<void> {
       // Save back to file
       await fs.writeFile(HISTORY_FILE, JSON.stringify(history, null, 2));
       logger.info(`Saved snapshot. Total records: ${history.length}`);
+      return true;
     } catch (error) {
       logger.error("Failed to save snapshot:", error);
+      return false;
     }
   });
 }

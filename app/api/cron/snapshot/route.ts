@@ -49,6 +49,29 @@ export async function GET(request: Request) {
       }
     }
 
+    // If the newest record is already from today (UTC) — even one without a
+    // dayEpoch, e.g. a deploy-day backfilled row — the day is already captured;
+    // don't snapshot again. This guards the case where the epoch-only lastEpoch
+    // walk would otherwise ignore that row and re-trigger. (The DB save also
+    // replaces same-day rows, so a re-trigger is harmless, but skipping is cleaner.)
+    const newest = history[history.length - 1];
+    if (newest) {
+      const n = new Date(newest.timestamp);
+      const now = new Date();
+      const sameUtcDay =
+        n.getUTCFullYear() === now.getUTCFullYear() &&
+        n.getUTCMonth() === now.getUTCMonth() &&
+        n.getUTCDate() === now.getUTCDate();
+      if (sameUtcDay) {
+        logger.info("Today's snapshot already exists; skipping cron run");
+        return NextResponse.json({
+          ok: true,
+          saved: false,
+          reason: "already-captured-today",
+        });
+      }
+    }
+
     // Poll until a NEW epoch is live (current > last snapshot's epoch), then snap.
     const deadline = Date.now() + MAX_WAIT_MS;
     for (;;) {

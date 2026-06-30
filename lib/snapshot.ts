@@ -161,7 +161,7 @@ export async function buildAndSaveSnapshot(
       ? aprData.entries[aprData.entries.length - 1].apr
       : undefined;
 
-  await saveSnapshot({
+  const saved = await saveSnapshot({
     timestamp,
     dayEpoch,
     burnedSupply: metrics.burned,
@@ -214,6 +214,10 @@ export async function buildAndSaveSnapshot(
         .community_pool_denom_to_swap_non_whitelisted_assets_to,
   });
 
-  logger.info(`Snapshot persisted for ${timestamp}`);
-  return { saved: true, timestamp, dayEpoch };
+  logger.info(
+    saved
+      ? `Snapshot persisted for ${timestamp}`
+      : `Snapshot skipped (already captured) for ${timestamp}`
+  );
+  return { saved, timestamp, dayEpoch };
 }

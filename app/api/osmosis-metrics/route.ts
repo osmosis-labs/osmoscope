@@ -73,7 +73,10 @@ export async function GET() {
     // day's burn rate is the annualized burn delta vs the previous record.
     let netSum = 0;
     let netCount = 0;
-    for (let i = Math.max(1, recentIdx); i < history.length; i++) {
+    // recentIdx < 0 means no records within the last 90 days — skip the loop and
+    // fall back below rather than averaging all of history under a "90d" label.
+    const netStart = recentIdx < 0 ? history.length : Math.max(1, recentIdx);
+    for (let i = netStart; i < history.length; i++) {
       const cur = history[i];
       const prev = history[i - 1];
       if (!(cur.totalSupply > 0)) continue;

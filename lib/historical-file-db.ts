@@ -98,7 +98,12 @@ export function jsonToPrisma(
   };
 }
 
-// Save snapshot to database
+// Save snapshot to database. Replaces any existing rows for the same UTC calendar
+// day (mirroring the file path), so a same-day refresh updates rather than appends
+// and the table never accumulates duplicate-day rows. The delete + create run in a
+// single transaction, so overlapping cron invocations can't both insert a row for
+// the same day (closes the cross-invocation race that the process-local write lock
+// can't cover).
 export async function saveSnapshotToDatabase(data: JsonRecord): Promise<void> {
   if (!isDatabaseEnabled()) {
     throw new Error("Database is not configured");
@@ -106,13 +111,18 @@ export async function saveSnapshotToDatabase(data: JsonRecord): Promise<void> {
 
   try {
     const prismaData = jsonToPrisma(data);
+    const ts = prismaData.timestamp as Date;
+    const dayStart = new Date(
+      Date.UTC(ts.getUTCFullYear(), ts.getUTCMonth(), ts.getUTCDate())
+    );
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
-    // Upsert: update if exists (same day), insert if not
-    await prisma.historicalRecord.upsert({
-      where: { timestamp: prismaData.timestamp },
-      update: prismaData,
-      create: prismaData,
-    });
+    await prisma.$transaction([
+      prisma.historicalRecord.deleteMany({
+        where: { timestamp: { gte: dayStart, lt: dayEnd } },
+      }),
+      prisma.historicalRecord.create({ data: prismaData }),
+    ]);
 
     logger.info(`Saved snapshot to database: ${data.timestamp}`);
   } catch (error) {
