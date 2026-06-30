@@ -166,11 +166,14 @@ export async function getHistoryRangeFromDatabase(
   }
 }
 
-// Get paginated history
+// Get paginated history. `fromDate` (inclusive, YYYY-MM-DD) applies the same
+// data-start gate the non-paginated endpoint uses, so paginated clients never
+// receive pre-genesis / stub rows the charts exclude.
 export async function getHistoryPaginated(
   page: number = 1,
   pageSize: number = 100,
-  orderBy: "asc" | "desc" = "desc"
+  orderBy: "asc" | "desc" = "desc",
+  fromDate?: string
 ): Promise<{
   records: JsonRecord[];
   total: number;
@@ -184,14 +187,18 @@ export async function getHistoryPaginated(
 
   try {
     const skip = (page - 1) * pageSize;
+    const where = fromDate
+      ? { timestamp: { gte: new Date(`${fromDate}T00:00:00.000Z`) } }
+      : undefined;
 
     const [records, total] = await Promise.all([
       prisma.historicalRecord.findMany({
+        where,
         take: pageSize,
         skip,
         orderBy: { timestamp: orderBy },
       }),
-      prisma.historicalRecord.count(),
+      prisma.historicalRecord.count({ where }),
     ]);
 
     return {

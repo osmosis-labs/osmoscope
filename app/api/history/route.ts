@@ -40,7 +40,12 @@ export async function GET(request: Request) {
         | "asc"
         | "desc";
 
-      const result = await getHistoryPaginated(pageNum, pageSizeNum, order);
+      const result = await getHistoryPaginated(
+        pageNum,
+        pageSizeNum,
+        order,
+        DATA_START_DATE
+      );
 
       return NextResponse.json(result, {
         headers: { "Cache-Control": HISTORY_CACHE_CONTROL },

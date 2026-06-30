@@ -141,20 +141,24 @@ export function InflationRatesChart({
     // offset). Trim those from the end so the line stops at the last day with a
     // genuine burn measurement. (Only trims the tail; interior 0-burn days, e.g.
     // pre-2023 when no burn mechanism existed, are left intact.)
-    while (baseData.length > 1) {
-      const lastIdx = filteredData.length - 1;
-      const last = filteredData[lastIdx];
-      const prev = filteredData[lastIdx - 1];
+    //
+    // Compute how many trailing days to drop WITHOUT mutating filteredData — for
+    // the "all" range filterDataByTimeRange returns the cached historicalData
+    // reference, so popping it would corrupt the shared cache for every chart.
+    let trimmedLength = baseData.length;
+    while (trimmedLength > 1) {
+      const last = filteredData[trimmedLength - 1];
+      const prev = filteredData[trimmedLength - 2];
       const burnDelta =
         (last.burnedSupply || last.burned || 0) -
         (prev.burnedSupply || prev.burned || 0);
       if (burnDelta === 0) {
-        baseData.pop();
-        filteredData.pop();
+        trimmedLength--;
       } else {
         break;
       }
     }
+    baseData.length = trimmedLength; // baseData is a fresh array (from .map), safe to truncate
 
     // Second pass: split into blue and orange lines
     // Rule: If current OR previous is negative → orange, if BOTH are positive → blue
@@ -227,7 +231,9 @@ export function InflationRatesChart({
 
     return {
       chartData,
-      timestamps: filteredData.map((r) => r.timestamp),
+      // Slice to the trimmed length so ticks line up with the (possibly trimmed)
+      // chartData; do NOT mutate filteredData (it may be the shared cache array).
+      timestamps: filteredData.slice(0, trimmedLength).map((r) => r.timestamp),
       averageInflationRate,
       averageBurnRate,
       averageNetInflation,

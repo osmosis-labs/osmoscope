@@ -51,12 +51,12 @@ export async function GET() {
 
     const burnRate = burnRateOver(30);
 
-    // 90-day averages for the headline KPIs. Net inflation = avg gross inflation
-    // over the window + the 90-day annualized burn rate (burn is negative).
+    // 90-day averages for the headline KPIs.
     const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
-    const recent = history.filter(
+    const recentIdx = history.findIndex(
       (r) => new Date(r.timestamp).getTime() >= ninetyDaysAgo
     );
+    const recent = recentIdx >= 0 ? history.slice(recentIdx) : [];
     const avg = (pick: (r: (typeof recent)[number]) => number | undefined) => {
       const vals = recent.map(pick).filter((v): v is number => v != null);
       return vals.length > 0
@@ -65,7 +65,35 @@ export async function GET() {
     };
     const avgInflation90d =
       recent.length > 0 ? avg((r) => r.inflationRate) : inflationRate;
-    const netInflation90dAvg = avgInflation90d + burnRateOver(90);
+
+    // Net inflation = average of DAILY net (gross inflation + that day's annualized
+    // burn rate), matching how the inflation chart computes its "Net Inflation"
+    // average. Computing it as avg(gross) + a single endpoint burn rate would not
+    // equal the chart's per-day average, so we compute per-day net here too. Each
+    // day's burn rate is the annualized burn delta vs the previous record.
+    let netSum = 0;
+    let netCount = 0;
+    for (let i = Math.max(1, recentIdx); i < history.length; i++) {
+      const cur = history[i];
+      const prev = history[i - 1];
+      if (!(cur.totalSupply > 0)) continue;
+      const burnChange =
+        (cur.burnedSupply ?? cur.burned ?? 0) -
+        (prev.burnedSupply ?? prev.burned ?? 0);
+      const spanDays =
+        (new Date(cur.timestamp).getTime() -
+          new Date(prev.timestamp).getTime()) /
+        (1000 * 60 * 60 * 24);
+      const dayBurnRate =
+        spanDays > 0
+          ? -(((burnChange / spanDays) * 365) / cur.totalSupply) * 100
+          : 0;
+      netSum += (cur.inflationRate ?? 0) + dayBurnRate;
+      netCount++;
+    }
+    const netInflation90dAvg =
+      netCount > 0 ? netSum / netCount : avgInflation90d + burnRate;
+
     // 90-day average staking APR (uses the raw daily APR; falls back to the
     // 30-day average stored on the latest snapshot if no window data).
     const stakingApr90dAvg = recent.some((r) => r.stakingApr != null)

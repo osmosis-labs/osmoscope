@@ -112,8 +112,9 @@ export function StakingAprChart({
         // as an incomplete/empty bar; drop it instead of showing a gap.
         .filter((record) => record.stakingApr != null)
         .map((record) => {
-          // Use raw staking APR from record
-          const rawApr = record.stakingApr || null;
+          // Use raw staking APR from record. Already filtered to non-null above,
+          // so read directly — `|| null` would wrongly drop a legitimate 0 APR.
+          const rawApr = record.stakingApr as number;
 
           // Calculate raw inflation APR for this specific day
           let inflationApr = null;

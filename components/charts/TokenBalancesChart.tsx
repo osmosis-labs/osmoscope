@@ -40,12 +40,14 @@ export function TokenBalancesChart({
   // Filter data based on selected time range
   const filteredData = filterDataByTimeRange(historicalData, timeRange);
 
-  // Transform historical data for the chart
+  // Transform historical data for the chart. Use ?? (not ||) so a legitimate 0
+  // survives, and leave an intentionally-unset circulating (nullable for the 2023
+  // upgrade window) as null — Recharts renders a gap, not a misleading 0 floor.
   const chartData = filteredData.map((record) => {
     const circulatingSupply =
-      record.circulatingSupply || record.circulating || 0;
-    const restrictedSupply = record.restrictedSupply || 0;
-    const communitySupply = record.communitySupply || 0;
+      record.circulatingSupply ?? record.circulating ?? null;
+    const restrictedSupply = record.restrictedSupply ?? null;
+    const communitySupply = record.communitySupply ?? null;
 
     return {
       date: formatChartDate(record.timestamp, timeRange),

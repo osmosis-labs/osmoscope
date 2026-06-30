@@ -83,9 +83,11 @@ async function ensureDataDir() {
 // Decide whether to persist an incoming snapshot. Timing is now owned by the
 // epoch-aware cron (it only calls in once a new day-epoch is live), so this no
 // longer gates on wall-clock time. It just deduplicates:
-//   - if the record carries a dayEpoch: save unless a snapshot already exists for
-//     that exact epoch (robust to delayed/elongated epochs and midnight crossings);
-//   - otherwise (callers without an epoch): fall back to once-per-calendar-day.
+//   - if the record carries a dayEpoch: skip if a snapshot for that exact epoch
+//     already exists (robust to delayed/elongated epochs and midnight crossings);
+//   - ALWAYS also skip if a snapshot already exists for the same calendar day —
+//     this catches a same-day row that lacks a dayEpoch (a backfilled/legacy row),
+//     which an epoch-only check would miss and then duplicate on the DB path.
 async function shouldSaveSnapshot(
   currentData: HistoricalRecord
 ): Promise<boolean> {
@@ -103,10 +105,10 @@ async function shouldSaveSnapshot(
       );
       return false;
     }
-    return true;
+    // Fall through to the calendar-day check below rather than returning early.
   }
 
-  // No epoch on the record: dedup by calendar day (UTC).
+  // Dedup by calendar day (UTC) — runs for every record, with or without epoch.
   const now = new Date(currentData.timestamp);
   const sameDayExists = history.some((r) => {
     const d = new Date(r.timestamp);
