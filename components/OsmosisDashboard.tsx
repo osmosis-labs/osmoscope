@@ -200,10 +200,13 @@ export function OsmosisDashboard() {
           </a>
         </p>
         <p className="mt-2">
-          Last updated:{" "}
-          {new Date(data.timestamp).toLocaleString("en-GB", {
-            hour12: false,
-          })}
+          On-chain data as of{" "}
+          {new Date(data.timestamp).toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          })}{" "}
+          (daily snapshot); price is live.
         </p>
       </footer>
     </div>
