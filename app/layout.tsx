@@ -5,7 +5,7 @@ import { Providers } from "./providers";
 
 const inter = Inter({ subsets: ["latin"] });
 
-const TITLE = "OSMOscope — OSMO Tokenomics";
+const TITLE = "OSMOscope: Tokenomics";
 const DESCRIPTION =
   "Live OSMO supply, inflation, burn, staking and protocol-revenue metrics for the Osmosis chain.";
 
