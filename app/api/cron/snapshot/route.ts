@@ -23,7 +23,11 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300; // allow polling for a delayed epoch
 
 const POLL_INTERVAL_MS = 20_000; // re-check the epoch every 20s
-const MAX_WAIT_MS = 240_000; // stop polling after ~4 min (within maxDuration)
+// Stop polling with enough headroom under maxDuration (300s) for the snapshot
+// build itself: buildAndSaveSnapshot makes many sequential LCD calls (live
+// restricted supply is slow, ~60-90s). Polling to ~240s left too little and an
+// epoch that advanced late could be killed mid-build; 180s leaves ~120s to save.
+const MAX_WAIT_MS = 180_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

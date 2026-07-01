@@ -128,8 +128,10 @@ async function shouldSaveSnapshot(
 }
 
 // Save a new snapshot (checks if we should save first). Returns true if a row was
-// persisted, false if the snapshot was skipped (dedup) or failed — so callers can
-// report accurate save status instead of assuming success.
+// persisted, false ONLY when the snapshot was intentionally skipped (dedup). A
+// genuine storage error THROWS rather than returning false, so the caller/cron
+// can report a real failure (HTTP 500) instead of masking it as a deduped run —
+// otherwise a failed write is indistinguishable from a skip until the next epoch.
 export async function saveSnapshot(data: HistoricalRecord): Promise<boolean> {
   // Use write lock to prevent race conditions
   return lockWrite(async () => {
@@ -193,8 +195,10 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<boolean> {
       logger.info(`Saved snapshot. Total records: ${history.length}`);
       return true;
     } catch (error) {
+      // A storage error is NOT a dedup skip: log and rethrow so the cron surfaces
+      // it as a failure rather than a misleading saved:false.
       logger.error("Failed to save snapshot:", error);
-      return false;
+      throw error;
     }
   });
 }

@@ -166,7 +166,10 @@ export function StakingAprChart({
           };
         })
     );
-  }, [filteredData]);
+    // timeRange is a dep: formatChartDate() formats each label by range, and for
+    // the "all" range filterDataByTimeRange returns the same historicalData
+    // reference, so filteredData's identity alone wouldn't trigger a relabel.
+  }, [filteredData, timeRange]);
 
   // Calculate headline APR from the filtered time range
   const averageApr = useMemo(() => {

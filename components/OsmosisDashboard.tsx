@@ -83,7 +83,9 @@ export function OsmosisDashboard() {
               </div>
               <div className="text-right">
                 <div className="text-3xl font-bold text-[#FF6B6B]">
-                  {formatPercentage((data.burned / data.circulating) * 100)}
+                  {data.circulating > 0
+                    ? formatPercentage((data.burned / data.circulating) * 100)
+                    : "—"}
                 </div>
               </div>
             </div>
@@ -94,9 +96,11 @@ export function OsmosisDashboard() {
               role="img"
               aria-label={`OSMO burned vs circulating: ${formatNumberWithCommas(
                 data.burned
-              )} OSMO burned (${formatPercentage(
-                (data.burned / data.circulating) * 100
-              )}), ${formatNumberWithCommas(data.circulating)} OSMO circulating.`}
+              )} OSMO burned (${
+                data.circulating > 0
+                  ? formatPercentage((data.burned / data.circulating) * 100)
+                  : "n/a"
+              }), ${formatNumberWithCommas(data.circulating)} OSMO circulating.`}
             >
               <ResponsiveContainer width="100%" height={380}>
                 <PieChart>

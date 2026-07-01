@@ -111,18 +111,28 @@ export async function GET() {
     let netCount = 0;
     // recentIdx < 0 means no records within the last 90 days — skip the loop and
     // fall back below rather than averaging all of history under a "90d" label.
-    const netStart = recentIdx < 0 ? history.length : Math.max(1, recentIdx);
+    const netStart = recentIdx < 0 ? history.length : recentIdx;
     for (let i = netStart; i < netEnd; i++) {
       const cur = history[i];
       if (!(cur.totalSupply > 0)) continue;
-      const spanDays =
-        (new Date(cur.timestamp).getTime() -
-          new Date(history[i - 1].timestamp).getTime()) /
-        (1000 * 60 * 60 * 24);
-      const dayBurnRate =
-        spanDays > 0
-          ? -(((burnDeltaAt(i) / spanDays) * 365) / cur.totalSupply) * 100
-          : 0;
+      // Match the inflation chart's "Last 90 days" net-inflation basis exactly:
+      // it iterates the FILTERED (in-window) series and gives the FIRST visible
+      // day a burn rate of 0 (no prior in-window row), pairing every later day
+      // with the previous in-window row. So the first in-window day here (i ===
+      // recentIdx) contributes gross inflation only; others use burnDeltaAt(i).
+      // (Previously the first day paired with history[recentIdx-1], one row
+      // outside the window, so the two "Last 90 days" figures could diverge.)
+      let dayBurnRate = 0;
+      if (i > netStart) {
+        const spanDays =
+          (new Date(cur.timestamp).getTime() -
+            new Date(history[i - 1].timestamp).getTime()) /
+          (1000 * 60 * 60 * 24);
+        dayBurnRate =
+          spanDays > 0
+            ? -(((burnDeltaAt(i) / spanDays) * 365) / cur.totalSupply) * 100
+            : 0;
+      }
       netSum += (cur.inflationRate ?? 0) + dayBurnRate;
       netCount++;
     }
