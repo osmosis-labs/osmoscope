@@ -368,11 +368,12 @@ export function tokenColor(symbol: string): string | null {
 // symbol contains "OSMO", so there are no known false positives; if one ever
 // appears, add it to OSMO_EXPOSURE_EXCLUDE below.
 // ---------------------------------------------------------------------------
-// Symbols that CONTAIN "OSMO" but are not OSMO or an OSMO derivative, so the
-// substring match below must not treat them as OSMO exposure: WOSMO is an
-// unrelated memecoin; OSMO-YIELD-LP is an LP token, not OSMO itself.
+// Symbols that CONTAIN "OSMO" but are NOT OSMO or an OSMO derivative, so the
+// substring match below must not treat them as OSMO exposure. WOSMO is an
+// unrelated memecoin. (OSMO-YIELD-LP is intentionally NOT here: it's OSMO-side
+// exposure and should count as OSMO.)
 const OSMO_EXPOSURE_EXCLUDE = new Set<string>(
-  ["WOSMO", "OSMO-YIELD-LP"].map((s) => s.toUpperCase())
+  ["WOSMO"].map((s) => s.toUpperCase())
 );
 
 export function isOsmoExposure(symbol: string): boolean {

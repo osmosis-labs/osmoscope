@@ -44,7 +44,7 @@ function lookup(priceMap: PriceMap, denom: string): PriceInfo {
 // pick the one whose price is the MEDIAN — robust to a single bad outlier, so a
 // stray mispriced variant can't win. Falls back to any denom if none is priced;
 // null if the symbol isn't in the map at all.
-function bestDenomForSymbol(
+export function bestDenomForSymbol(
   priceMap: PriceMap,
   symbol: string,
   caseInsensitive = false

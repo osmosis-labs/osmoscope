@@ -139,7 +139,7 @@ async function mapLimit<T, R>(
 // with no market price; ORing the flag would wrongly mark the whole symbol
 // unpriced. So we track whether any priced holding contributed, and only flag the
 // line when none did.
-function aggregateBySymbol(holdings: Holding[]): AssetTotal[] {
+export function aggregateBySymbol(holdings: Holding[]): AssetTotal[] {
   type Acc = AssetTotal & { hasPriced: boolean };
   const bySymbol = new Map<string, Acc>();
   for (const h of holdings) {
@@ -172,7 +172,7 @@ function aggregateBySymbol(holdings: Holding[]): AssetTotal[] {
 // (contains "Vault", ending in a number); CL as "CL Pool - <id>" and CL rewards
 // as "... rewards" (both excluded here). `key` groups a position's rows; `poolRef`
 // is the trailing id/number.
-function classifyPosition(
+export function classifyPosition(
   info: string
 ): { kind: VaultPositionCard["kind"]; key: string; poolRef?: string } | null {
   const s = info.trim();
@@ -200,7 +200,7 @@ function quoteRank(symbol: string): number {
 
 // Order two symbols as "base / quote" (quote currency second). Used for both the
 // vault decomposition label and the pool-derived fallback label.
-function orderedPairLabel(sym0: string, sym1: string): string {
+export function orderedPairLabel(sym0: string, sym1: string): string {
   const [a, b] =
     quoteRank(sym0) <= quoteRank(sym1) ? [sym0, sym1] : [sym1, sym0];
   return `${a} / ${b}`;

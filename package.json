@@ -14,6 +14,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "type-check": "tsc --noEmit",
+    "test": "tsx --test lib/**/*.test.ts",
     "populate-from-archive": "tsx scripts/populate-from-archive.ts",
     "normalize-supply-offset": "tsx scripts/normalize-supply-offset.ts",
     "backfill-genesis-2021": "tsx scripts/backfill-genesis-2021.ts",
