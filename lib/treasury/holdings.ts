@@ -50,8 +50,14 @@ function bestDenomForSymbol(
   caseInsensitive = false
 ): string | null {
   const want = caseInsensitive ? symbol.toUpperCase() : symbol;
-  const symOf = (d: string) =>
-    caseInsensitive ? priceMap[d].symbol.toUpperCase() : priceMap[d].symbol;
+  // Guard the entry lookup: this is the shared symbol-match path for Magma + EVM
+  // (real money), so never assume priceMap[d] is defined even though today every
+  // key comes from Object.keys(priceMap).
+  const symOf = (d: string) => {
+    const s = priceMap[d]?.symbol;
+    if (s == null) return null;
+    return caseInsensitive ? s.toUpperCase() : s;
+  };
   const matches = Object.keys(priceMap).filter((d) => symOf(d) === want);
   if (matches.length === 0) return null;
   const priced = matches.filter((d) => priceMap[d].price > 0);

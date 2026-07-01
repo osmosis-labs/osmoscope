@@ -301,6 +301,15 @@ export const COINGECKO_ID_BY_SYMBOL: Record<string, string> = {
   ROAR: "lion-dao",
   ampOSMO: "eris-amplified-osmo",
   "DOT.pica": "polkadot",
+  // Explicit fallbacks for the EVM (Grants Ethereum treasury) majors, so a future
+  // change in Numia's symbol coverage can't silently value them at $0.
+  WETH: "ethereum",
+  ETH: "ethereum",
+  WBTC: "wrapped-bitcoin",
+  BTC: "bitcoin",
+  USDC: "usd-coin",
+  USDT: "tether",
+  DAI: "dai",
 };
 
 // Denoms to exclude from associated-address balances (spam / worthless).
@@ -359,7 +368,12 @@ export function tokenColor(symbol: string): string | null {
 // symbol contains "OSMO", so there are no known false positives; if one ever
 // appears, add it to OSMO_EXPOSURE_EXCLUDE below.
 // ---------------------------------------------------------------------------
-const OSMO_EXPOSURE_EXCLUDE = new Set<string>([]);
+// Symbols that CONTAIN "OSMO" but are not OSMO or an OSMO derivative, so the
+// substring match below must not treat them as OSMO exposure: WOSMO is an
+// unrelated memecoin; OSMO-YIELD-LP is an LP token, not OSMO itself.
+const OSMO_EXPOSURE_EXCLUDE = new Set<string>(
+  ["WOSMO", "OSMO-YIELD-LP"].map((s) => s.toUpperCase())
+);
 
 export function isOsmoExposure(symbol: string): boolean {
   const s = symbol.toUpperCase();

@@ -115,7 +115,12 @@ export async function resolveMissingPrices(
   );
   if (missing.length === 0) return;
 
-  // SQS pass.
+  // SQS pass. SQS returns USD per WHOLE display token, so it maps straight onto
+  // map[denom].price (same unit) with no exponent math — but that relies on our
+  // map[denom].exponent (incl. any EXPONENT_OVERRIDES) matching SQS's display
+  // convention for that denom. For the hand-set overrides (alloyed allOP=12,
+  // DOT.pica=10, allSHIB=12) confirm they agree with SQS, else the price is
+  // right but `amount` (scaled by exponent in makeHolding) is off.
   const sqsPrices = await fetchSqsPrices(missing);
   for (const denom of missing) {
     const p = sqsPrices[denom];

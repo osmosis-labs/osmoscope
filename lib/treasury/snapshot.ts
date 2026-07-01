@@ -140,18 +140,17 @@ async function mapLimit<T, R>(
 // unpriced. So we track whether any priced holding contributed, and only flag the
 // line when none did.
 function aggregateBySymbol(holdings: Holding[]): AssetTotal[] {
-  const bySymbol = new Map<string, AssetTotal & { hasPriced: boolean }>();
+  type Acc = AssetTotal & { hasPriced: boolean };
+  const bySymbol = new Map<string, Acc>();
   for (const h of holdings) {
-    const cur =
-      bySymbol.get(h.symbol) ??
-      ({
-        symbol: h.symbol,
-        amount: 0,
-        value: 0,
-        priceUnavailable: false,
-        isOsmo: isOsmoExposure(h.symbol),
-        hasPriced: false,
-      } as AssetTotal & { hasPriced: boolean });
+    const cur: Acc = bySymbol.get(h.symbol) ?? {
+      symbol: h.symbol,
+      amount: 0,
+      value: 0,
+      priceUnavailable: false,
+      isOsmo: isOsmoExposure(h.symbol),
+      hasPriced: false,
+    };
     cur.amount += h.amount;
     cur.value += h.value;
     if (!h.priceUnavailable) cur.hasPriced = true;

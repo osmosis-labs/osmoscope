@@ -64,5 +64,11 @@ export async function getLatestTreasurySnapshot(): Promise<TreasurySnapshotData 
     orderBy: { timestamp: "desc" },
   });
   if (!row) return null;
+  // UNVALIDATED cast: `data` is JSON written by a previous (possibly older)
+  // version of buildTreasurySnapshot, so a stored row may predate any field
+  // added to TreasurySnapshotData. Consumers MUST treat every field added after
+  // v1 as possibly-absent (see the `?.`/`?? []` guards in TreasuryView) until
+  // the next hourly cron overwrites the row. If this shape grows fields the UI
+  // hard-depends on, validate here (e.g. a zod parse) rather than asserting.
   return row.data as unknown as TreasurySnapshotData;
 }
