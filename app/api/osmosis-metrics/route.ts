@@ -21,8 +21,31 @@ export async function GET() {
       );
     }
 
-    // Latest snapshot row (history is stored chronologically).
-    const latest = history[history.length - 1];
+    // Most recent COMPLETE snapshot row. Don't just trust array position: pick
+    // the row with the greatest timestamp that actually carries core supply data,
+    // so a stray out-of-order or partial row (e.g. a migrate upsert at an odd time,
+    // or a legacy duplicate-day row predating the same-day-replace logic) can't
+    // override the real epoch-gated daily snapshot. (The DB save now keeps one row
+    // per day, so in normal operation this is simply the chronological latest.)
+    const latest = history.reduce(
+      (best, r) => {
+        const complete = r.totalSupply != null && r.mintedSupply != null;
+        if (!complete) return best;
+        if (!best) return r;
+        return new Date(r.timestamp).getTime() >=
+          new Date(best.timestamp).getTime()
+          ? r
+          : best;
+      },
+      undefined as (typeof history)[number] | undefined
+    );
+
+    if (!latest) {
+      return NextResponse.json(
+        { error: "No complete snapshot available yet" },
+        { status: 503, headers: { "Cache-Control": "no-store" } }
+      );
+    }
     const inflationRate = latest.inflationRate ?? 0;
 
     // Annualized burn rate (%) over the last `days`, computed inline from the
