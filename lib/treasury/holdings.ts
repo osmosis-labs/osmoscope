@@ -12,6 +12,7 @@ import {
   fetchErc20Balance,
 } from "./fetch";
 import type { PriceMap, PriceInfo } from "./prices";
+import { fetchClPositions, clPositionToHoldings } from "./cl";
 import {
   MAGMA_CONTRACTS,
   MAGMA_BALANCES_ARE_REVERSED,
@@ -83,6 +84,24 @@ function makeHolding(
   };
 }
 
+// Recompute a holding's value/priceUnavailable from the (possibly updated) price
+// map. Used after resolveMissingPrices() fills in held-but-unpriced denoms, so we
+// don't have to re-fetch and re-decompose everything. `amount` is already in
+// display units, so value = amount * price. Holdings whose denom isn't in the map
+// (EVM synthetic denoms like "evm:1:0x…", which were valued by symbol, not denom)
+// are returned unchanged — re-keying them by denom would wrongly zero them.
+export function revalueHolding(h: Holding, priceMap: PriceMap): Holding {
+  const p = priceMap[h.denom];
+  if (!p) return h; // not a real Osmosis denom (e.g. EVM) — keep as valued
+  const priceUnavailable = !(p.price > 0);
+  return {
+    ...h,
+    symbol: p.symbol,
+    value: priceUnavailable ? 0 : h.amount * p.price,
+    priceUnavailable,
+  };
+}
+
 // --- Standard bank holding -------------------------------------------------
 function standardHolding(
   denom: string,
@@ -100,28 +119,25 @@ async function gammHoldings(
   priceMap: PriceMap
 ): Promise<Holding[]> {
   const poolId = denom.split("/").pop();
-  try {
-    const shares = await fetchLcdJson<{ total_shares: { amount: string } }>(
-      `/osmosis/gamm/v1beta1/pools/${poolId}/total_shares`
-    );
-    const totalShares = parseFloat(shares.total_shares.amount);
-    const liq = await fetchLcdJson<{
-      liquidity: Array<{ denom: string; amount: string }>;
-    }>(`/osmosis/gamm/v1beta1/pools/${poolId}/total_pool_liquidity`);
+  // No catch: a failed pool query would silently drop this LP position's value.
+  // Let the fetch error propagate so the snapshot aborts rather than undercount.
+  const shares = await fetchLcdJson<{ total_shares: { amount: string } }>(
+    `/osmosis/gamm/v1beta1/pools/${poolId}/total_shares`
+  );
+  const totalShares = parseFloat(shares.total_shares.amount);
+  const liq = await fetchLcdJson<{
+    liquidity: Array<{ denom: string; amount: string }>;
+  }>(`/osmosis/gamm/v1beta1/pools/${poolId}/total_pool_liquidity`);
 
-    return (liq.liquidity || []).map((asset) => {
-      const userShare = (rawAmount / totalShares) * parseFloat(asset.amount);
-      return makeHolding(
-        asset.denom,
-        userShare,
-        priceMap,
-        `Classic Pool ${poolId}`
-      );
-    });
-  } catch (e) {
-    logger.warn(`GAMM query error for ${denom}: ${(e as Error).message}`);
-    return [];
-  }
+  return (liq.liquidity || []).map((asset) => {
+    const userShare = (rawAmount / totalShares) * parseFloat(asset.amount);
+    return makeHolding(
+      asset.denom,
+      userShare,
+      priceMap,
+      `Classic Pool ${poolId}`
+    );
+  });
 }
 
 // --- Margined vault (factory/<contract>/...vault...) -----------------------
@@ -138,28 +154,37 @@ async function marginedVaultHoldings(
   const vaultAmount = Math.floor(Number(rawAmount || 0));
   if (!vaultAmount || !contractAddress) return null;
 
-  try {
-    const vaultData = await fetchCosmwasmSmartData<
-      Array<{ denom: string; amount: string }>
-    >(contractAddress, {
-      vault_extension: {
-        vaultenator: {
-          estimate_vault_assets: { amount: vaultAmount.toString() },
-        },
+  // This IS a known Margined vault token. A null/non-array result means the
+  // estimate_vault_assets query failed after retries across every base. At least
+  // one vault (locust-vault-2285) has a contract query that errors 500/502 on
+  // ALL public nodes deterministically, so aborting the whole snapshot on it
+  // would mean no snapshot ever completes. Per an explicit product decision we
+  // DROP such a vault silently: return [] (an empty decomposition), NOT null.
+  // Returning [] tells decomposeBankDenom this was a vault (so it must NOT fall
+  // back to treating the unpriceable share token as a plain $0 balance, which
+  // would pollute the unpriced list) but it contributed no valued holdings.
+  const vaultData = await fetchCosmwasmSmartData<
+    Array<{ denom: string; amount: string }>
+  >(contractAddress, {
+    vault_extension: {
+      vaultenator: {
+        estimate_vault_assets: { amount: vaultAmount.toString() },
       },
-    });
-    if (!Array.isArray(vaultData)) return null;
-
-    const info = subdenom
-      .replace(/-/g, " ")
-      .replace(/\b\w/g, (c) => c.toUpperCase());
-    return vaultData.map((v) =>
-      makeHolding(v.denom, parseFloat(v.amount || "0"), priceMap, info)
+    },
+  });
+  if (!Array.isArray(vaultData)) {
+    logger.warn(
+      `Margined vault query failed for ${denom}; dropping this vault from the snapshot (silent per config)`
     );
-  } catch (e) {
-    logger.warn(`Vault query error for ${denom}: ${(e as Error).message}`);
-    return null;
+    return [];
   }
+
+  const info = subdenom
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return vaultData.map((v) =>
+    makeHolding(v.denom, parseFloat(v.amount || "0"), priceMap, info)
+  );
 }
 
 // --- Magma vaults ----------------------------------------------------------
@@ -172,64 +197,60 @@ export async function magmaHoldings(
   const holdings: Holding[] = [];
 
   for (const contract of MAGMA_CONTRACTS) {
-    try {
-      // A null result = the fetch failed after retries across all bases. Treat
-      // that as an ERROR (throw), never as a zero balance — silently coercing a
-      // failed read to 0 would drop the whole vault and undercount the treasury.
-      const balanceData = await fetchCosmwasmSmartData<{ balance?: string }>(
-        contract,
-        { balance: { address } }
-      );
-      if (balanceData === null) {
-        throw new Error(`balance query failed for ${contract}`);
+    // No swallowing catch: a null from fetchCosmwasmSmartData means the query
+    // failed after retries across every base, i.e. a sustained outage — not a
+    // zero balance. Throwing here propagates to buildTreasurySnapshot and aborts,
+    // so a transient CosmWasm outage can't silently drop a vault's value. A
+    // genuine zero balance is handled explicitly below (continue), not by error.
+    const balanceData = await fetchCosmwasmSmartData<{ balance?: string }>(
+      contract,
+      { balance: { address } }
+    );
+    if (balanceData === null) {
+      throw new Error(`Magma balance query failed for ${contract}`);
+    }
+    const addressBalance = parseFloat(balanceData.balance || "0");
+    // Genuine zero balance for this holder — nothing to add, move on.
+    if (addressBalance === 0) continue;
+
+    const tokenInfo = await fetchCosmwasmSmartData<{
+      symbol?: string;
+      total_supply?: string;
+    }>(contract, { token_info: {} });
+    if (tokenInfo === null) {
+      throw new Error(`Magma token_info query failed for ${contract}`);
+    }
+    const totalSupply = parseFloat(tokenInfo.total_supply || "0");
+    if (!totalSupply) continue;
+
+    const [sym0, sym1] = String(tokenInfo.symbol || "").split("/");
+    const label = `${tokenInfo.symbol} Magma`;
+
+    const vaultData = await fetchCosmwasmSmartData<{
+      bal0?: string;
+      bal1?: string;
+    }>(contract, { vault_balances: {} });
+    if (vaultData === null) {
+      throw new Error(`Magma vault_balances query failed for ${contract}`);
+    }
+
+    const userShare = addressBalance / totalSupply;
+    const bal0 = parseFloat(vaultData.bal0 || "0");
+    const bal1 = parseFloat(vaultData.bal1 || "0");
+    const reversed = !!MAGMA_BALANCES_ARE_REVERSED[contract];
+    const asset0Raw = (reversed ? bal1 : bal0) * userShare;
+    const asset1Raw = (reversed ? bal0 : bal1) * userShare;
+
+    for (const [sym, raw] of [
+      [sym0, asset0Raw],
+      [sym1, asset1Raw],
+    ] as const) {
+      const denom = bestDenomForSymbol(priceMap, sym);
+      if (!denom) {
+        logger.warn(`Magma ${label}: no denom for symbol "${sym}"`);
+        continue;
       }
-      const addressBalance = parseFloat(balanceData.balance || "0");
-      // Genuine zero balance for this holder — nothing to add, move on.
-      if (addressBalance === 0) continue;
-
-      const tokenInfo = await fetchCosmwasmSmartData<{
-        symbol?: string;
-        total_supply?: string;
-      }>(contract, { token_info: {} });
-      if (tokenInfo === null) {
-        throw new Error(`token_info query failed for ${contract}`);
-      }
-      const totalSupply = parseFloat(tokenInfo.total_supply || "0");
-      if (!totalSupply) continue;
-
-      const [sym0, sym1] = String(tokenInfo.symbol || "").split("/");
-      const label = `${tokenInfo.symbol} Magma`;
-
-      const vaultData = await fetchCosmwasmSmartData<{
-        bal0?: string;
-        bal1?: string;
-      }>(contract, { vault_balances: {} });
-      if (vaultData === null) {
-        throw new Error(`vault_balances query failed for ${contract}`);
-      }
-
-      const userShare = addressBalance / totalSupply;
-      const bal0 = parseFloat(vaultData.bal0 || "0");
-      const bal1 = parseFloat(vaultData.bal1 || "0");
-      const reversed = !!MAGMA_BALANCES_ARE_REVERSED[contract];
-      const asset0Raw = (reversed ? bal1 : bal0) * userShare;
-      const asset1Raw = (reversed ? bal0 : bal1) * userShare;
-
-      for (const [sym, raw] of [
-        [sym0, asset0Raw],
-        [sym1, asset1Raw],
-      ] as const) {
-        const denom = bestDenomForSymbol(priceMap, sym);
-        if (!denom) {
-          logger.warn(`Magma ${label}: no denom for symbol "${sym}"`);
-          continue;
-        }
-        holdings.push(makeHolding(denom, raw, priceMap, label));
-      }
-    } catch (e) {
-      logger.warn(
-        `Magma error for ${address} on ${contract}: ${(e as Error).message}`
-      );
+      holdings.push(makeHolding(denom, raw, priceMap, label));
     }
   }
 
@@ -237,50 +258,16 @@ export async function magmaHoldings(
 }
 
 // --- Concentrated-liquidity positions for an address -----------------------
+// Flat holdings for value aggregation, derived from the SAME structured fetch
+// (fetchClPositions) the display cards use — one source of truth, so the summed
+// value and the cards can't drift. The positions list endpoint already returns
+// asset0/asset1 + rewards, so no per-position detail call is needed.
 async function clPositionHoldings(
   address: string,
-  priceMap: PriceMap,
-  infoPrefix = "CL Pool"
+  priceMap: PriceMap
 ): Promise<Holding[]> {
-  const holdings: Holding[] = [];
-  try {
-    const posList = await fetchLcdJson<{
-      positions: Array<{ position: { position_id: string; pool_id: string } }>;
-    }>(`/osmosis/concentratedliquidity/v1beta1/positions/${address}`);
-
-    for (const pos of posList.positions || []) {
-      const { position_id: positionId, pool_id: poolId } = pos.position;
-      try {
-        const detail = await fetchLcdJson<{
-          position: {
-            asset0?: { denom: string; amount: string };
-            asset1?: { denom: string; amount: string };
-          };
-        }>(
-          `/osmosis/concentratedliquidity/v1beta1/position_by_id?position_id=${positionId}`
-        );
-        for (const asset of [detail.position.asset0, detail.position.asset1]) {
-          if (asset?.denom && asset.amount) {
-            holdings.push(
-              makeHolding(
-                asset.denom,
-                parseFloat(asset.amount),
-                priceMap,
-                `${infoPrefix} - ${poolId}`
-              )
-            );
-          }
-        }
-      } catch (e) {
-        logger.warn(
-          `CL position ${positionId} detail error: ${(e as Error).message}`
-        );
-      }
-    }
-  } catch (e) {
-    logger.warn(`CL positions error for ${address}: ${(e as Error).message}`);
-  }
-  return holdings;
+  const positions = await fetchClPositions(address, priceMap);
+  return positions.flatMap((p) => clPositionToHoldings(p));
 }
 
 // --- EVM (Ethereum) balances for a 0x... address ---------------------------
@@ -299,56 +286,51 @@ export async function evmHoldings(
     return denom ? priceMap[denom] : { symbol, price: 0, exponent: 0 };
   };
 
+  // No swallowing catches below: fetchEvmRpc throws only after every RPC
+  // endpoint has failed. Since this address (the Grants Program's Ethereum
+  // treasury) is almost entirely stablecoins, silently dropping a balance would
+  // be a large undercount, so let an RPC outage propagate and abort the snapshot.
+
   // Native ETH.
   if (native) {
-    try {
-      const amount = await fetchEvmNativeBalance(
-        chainId,
-        address,
-        native.decimals
-      );
-      if (amount > 0) {
-        const p = priceBySymbol(native.priceSymbol || native.symbol);
-        const priceUnavailable = !(p.price > 0);
-        holdings.push({
-          symbol: native.symbol,
-          info: "Ethereum",
-          amount,
-          value: priceUnavailable ? 0 : amount * p.price,
-          denom: `evm:${chainId}:native`,
-          priceUnavailable,
-        });
-      }
-    } catch (e) {
-      logger.warn(`EVM native balance error: ${(e as Error).message}`);
+    const amount = await fetchEvmNativeBalance(
+      chainId,
+      address,
+      native.decimals
+    );
+    if (amount > 0) {
+      const p = priceBySymbol(native.priceSymbol || native.symbol);
+      const priceUnavailable = !(p.price > 0);
+      holdings.push({
+        symbol: native.symbol,
+        info: "Ethereum",
+        amount,
+        value: priceUnavailable ? 0 : amount * p.price,
+        denom: `evm:${chainId}:native`,
+        priceUnavailable,
+      });
     }
   }
 
   // Allowlisted ERC20s.
   for (const token of EVM_TOKEN_ALLOWLIST[chainId] || []) {
-    try {
-      const amount = await fetchErc20Balance(
-        chainId,
-        address,
-        token.contract,
-        token.decimals
-      );
-      if (amount <= 0) continue;
-      const p = priceBySymbol(token.symbol);
-      const priceUnavailable = !(p.price > 0);
-      holdings.push({
-        symbol: token.symbol,
-        info: "Ethereum",
-        amount,
-        value: priceUnavailable ? 0 : amount * p.price,
-        denom: `evm:${chainId}:${token.contract}`,
-        priceUnavailable,
-      });
-    } catch (e) {
-      logger.warn(
-        `ERC20 balance error for ${token.symbol}: ${(e as Error).message}`
-      );
-    }
+    const amount = await fetchErc20Balance(
+      chainId,
+      address,
+      token.contract,
+      token.decimals
+    );
+    if (amount <= 0) continue;
+    const p = priceBySymbol(token.symbol);
+    const priceUnavailable = !(p.price > 0);
+    holdings.push({
+      symbol: token.symbol,
+      info: "Ethereum",
+      amount,
+      value: priceUnavailable ? 0 : amount * p.price,
+      denom: `evm:${chainId}:${token.contract}`,
+      priceUnavailable,
+    });
   }
 
   return holdings;
@@ -364,8 +346,12 @@ export async function decomposeBankDenom(
     return gammHoldings(denom, rawAmount, priceMap);
   }
   if (denom.startsWith("factory/")) {
+    // null => not a Margined vault token, fall through to a standard balance.
+    // A Holding[] (possibly EMPTY, when the vault query failed and was dropped)
+    // => this WAS a vault; use it as-is, don't treat the share token as a plain
+    // balance.
     const vault = await marginedVaultHoldings(denom, rawAmount, priceMap);
-    if (vault) return vault;
+    if (vault !== null) return vault;
   }
   return [standardHolding(denom, rawAmount, priceMap)];
 }
@@ -377,22 +363,20 @@ export async function addressHoldings(
 ): Promise<Holding[]> {
   const holdings: Holding[] = [];
 
-  try {
-    const bank = await fetchLcdJson<{
-      balances: Array<{ denom: string; amount: string }>;
-    }>(`/cosmos/bank/v1beta1/balances/${address}?pagination.limit=10000`);
-    for (const item of bank.balances || []) {
-      if (IGNORE_DENOMS.has(item.denom)) continue;
-      holdings.push(
-        ...(await decomposeBankDenom(
-          item.denom,
-          parseFloat(item.amount || "0"),
-          priceMap
-        ))
-      );
-    }
-  } catch (e) {
-    logger.warn(`Bank balances error for ${address}: ${(e as Error).message}`);
+  // No catch: a failed bank query would silently drop this address's entire
+  // balance. Let it propagate so the snapshot aborts rather than undercount.
+  const bank = await fetchLcdJson<{
+    balances: Array<{ denom: string; amount: string }>;
+  }>(`/cosmos/bank/v1beta1/balances/${address}?pagination.limit=10000`);
+  for (const item of bank.balances || []) {
+    if (IGNORE_DENOMS.has(item.denom)) continue;
+    holdings.push(
+      ...(await decomposeBankDenom(
+        item.denom,
+        parseFloat(item.amount || "0"),
+        priceMap
+      ))
+    );
   }
 
   holdings.push(...(await clPositionHoldings(address, priceMap)));

@@ -19,6 +19,17 @@ export interface AssociatedAddress {
   address: string;
   label: string;
   chain: "osmosis" | "ethereum";
+  // Optional grouping key. Addresses sharing a `group` are merged into one holder
+  // in the treasury breakdown (their values summed) under `groupLabel`, while each
+  // underlying address is still surfaced (e.g. for explorer links). Used to fold
+  // the Grants Program's Osmosis + Ethereum treasuries into a single "Grants" row.
+  group?: string;
+  groupLabel?: string;
+  // Curated one-paragraph explainer shown as a `?` hover on the holder card:
+  // what the address is, how it's funded, and what it does with the funds. On a
+  // grouped holder the group's members share one description (set it on any
+  // member; the first non-empty one wins).
+  description?: string;
 }
 
 export const ASSOCIATED_ADDRESSES: AssociatedAddress[] = [
@@ -26,76 +37,115 @@ export const ASSOCIATED_ADDRESSES: AssociatedAddress[] = [
     address: "osmo15dwvndrzndzy7nls57rvq379xeta3dlt467dxerxc4pvkul0thvq6umm9z",
     label: "Osmosis Grants Program",
     chain: "osmosis",
+    group: "grants",
+    groupLabel: "Osmosis Grants Program",
+    description:
+      "The community-funded grants treasury. Funded by community-pool spend proposals, it disburses grants to teams building on Osmosis. More information at grants.osmosis.zone",
   },
   {
     address: "osmo1fq3wmetv8xme6v0fn53ujdmtazgz5f04vz3ta9d7qdz8gmrxwpwsy9kelc",
     label: "Osmosis Support Lab",
     chain: "osmosis",
+    description:
+      "Deprecated, included for completeness. Its functionality has been taken over by the Osmosis Grants Program.",
   },
   {
     address: "osmo1rvq5cq2j35k7sqqz49e5e8zezl45fcywcawazh46qnc0g96d0d6sasqsgc",
     label: "Osmosis Liquidity subDAO",
     chain: "osmosis",
+    description:
+      "A subDAO funded by the community pool that executes on proposals requiring time-sensitive, multistep, or cross-chain transactions that governance itself cannot perform.",
   },
   {
     address: "osmo128laly00yvpr69usz6s9n7j8f8sx6780npyauyt9ku46mpwx2n5qsxapq6",
-    label: "Neutron Multisig — Proposal 700",
+    label: "Neutron Multisig: Proposal 700",
     chain: "osmosis",
+    description:
+      "A multisig funded by community-pool Proposal 700 to hold and deploy the allocation tied to that proposal. Manages those funds on behalf of the DAO.",
   },
   {
     address: "osmo1qzm2kyesqqpu4d7uaskkf023t4husm6vaan2gkc2xru0xcvzx23qq5f5c7",
-    label: "Levana Multisig — Proposal 655",
+    label: "Levana Multisig: Proposal 655",
     chain: "osmosis",
+    description:
+      "A multisig funded by community-pool Proposal 655 to hold and deploy the allocation tied to that proposal.",
   },
   {
     address: "osmo1y9fy0l9e9f3j2hqc30wpr6u3u6s6wwdzw2pnrlswr696v4n805xqe7kndr",
-    label: "USDN Yield — USDN Forwarder",
+    label: "USDN Yield: USDN Forwarder",
     chain: "osmosis",
+    description:
+      "Yield earned by the protocol for USDN usage on Osmosis, awaiting forward to the community pool.",
   },
   {
     address: "osmo1jayxmrajq8nzw2knatgsjdkdhnkw8flkgqs84pvphs3ut2hts5xq9hacch",
-    label: "Top of Block Auction — USDC Forwarder",
+    label: "Top of Block Auction: USDC Forwarder",
     chain: "osmosis",
+    description:
+      "Collects the USDC proceeds of the top-of-block (block-space) auction and forwards them to the community pool. Balances here are auction revenue awaiting forwarding.",
   },
   {
     address: "osmo1f3xhl0gqmyhnu49c8k3j7fkdv75ug0xjtaqu09",
-    label: "Non-Native Taker Fee Collector — to Community Pool",
+    label: "Taker Fees to Community Pool (Staging)",
     chain: "osmosis",
+    description:
+      "A txfees staging account holding taker fees paid in non-OSMO tokens. Each epoch the balance is swapped to the community-pool revenue token (BTC, set by Prop 952) and sent to the community pool. Balances here are fees awaiting that swap.",
   },
   {
     address: "osmo1yche2ydjamy8uwtg7tssm362467ku7rr7kwy2x",
-    label: "Non-Native Taker Fee Collector — to Stakers",
+    label: "Taker Fees to Stakers (Staging)",
     chain: "osmosis",
+    description:
+      "A txfees staging account holding the stakers' share of taker fees in non-OSMO tokens. Each epoch the balance is swapped to OSMO and distributed to stakers. Balances here are fees awaiting that swap.",
   },
   {
     address: "osmo1g7ajkk295vactngp74shkfrprvjrdwn662dg26",
-    label: "Non-Native Transaction Fee Collector — to Stakers",
+    label: "Gas Fees to Stakers (Staging)",
     chain: "osmosis",
+    description:
+      "A txfees staging account holding transaction (gas) fees paid in non-OSMO tokens. Each epoch the balance is swapped to OSMO and distributed to stakers. Balances here are fees awaiting that swap.",
   },
   {
     address: "osmo144drulmhd98y4cc2p9uper5ev2n2dzr5ms6xsz",
-    label: "Non-Native Taker Fee Collector — to Burn",
+    label: "Taker Fees to Burn (Staging)",
     chain: "osmosis",
+    description:
+      "A txfees staging account holding the burn share of taker fees in non-OSMO tokens. Each epoch the balance is swapped to OSMO and burned. Balances here are fees awaiting that swap.",
   },
   {
     address: "osmo1r9jc2234fljy93z80cevqjt3nmjycec8aj4cc6",
-    label: "Taker Fee Collector — epoch to epoch",
+    label: "Taker Fees (Epoch Staging)",
     chain: "osmosis",
+    description:
+      "An intermediate txfees account that accumulates taker fees within an epoch before they are split to their destinations (community pool, stakers, burn) at epoch end.",
+  },
+  {
+    address: "osmo1wd8rxw3j07jcj40en6q5dhcxlsr7c8ulrn29a3",
+    label: "Staking Rewards Buffer (Staging)",
+    chain: "osmosis",
+    description:
+      "The taker-fee staking-rewards buffer module account. Holds taker-fee revenue that has been converted to the staking-rewards denom, awaiting distribution to stakers. Balances here are revenue in transit.",
   },
   {
     address: "osmo17qdmjdumw4xawam4g46gtwzle5rd4zwyfqvvza",
     label: "ProtoRev Module",
     chain: "osmosis",
+    description:
+      "The x/protorev module account. It captures arbitrage (MEV) profit from cyclic trades against Osmosis pools. OSMO profit is burned; non-OSMO profit is sent to the community pool. Balances here are protorev profit awaiting that allocation.",
   },
   {
     address: "osmo1dqjqgxunr92wxhgq8twxjkyp0evrs9grst5q3dg59m4p3hmqr0gquguuzd",
-    label: "BABY Liquidity",
+    label: "BABY Liquidity: Proposal 919",
     chain: "osmosis",
+    description:
+      "Holds Bitcoin and Babylon-ecosystem liquidity under Proposal 919, which committed Osmosis to become a Bitcoin Secured Network via Babylon. Deploys BTC/BABY assets into Osmosis pools to make Osmosis the trading venue for Babylon assets.",
   },
   {
     address: "0xECbB8491952D77f54098876f3C937589A4B1c946",
     label: "Osmosis Grants Program (Ethereum)",
     chain: "ethereum",
+    group: "grants",
+    groupLabel: "Osmosis Grants Program",
   },
 ];
 
@@ -183,11 +233,11 @@ export const EVM_TOKEN_ALLOWLIST: Record<
 
 // ---------------------------------------------------------------------------
 // Price / symbol / exponent overrides. See the price engine for how they layer:
-//   PRICE_OVERRIDES_BY_DENOM  — absolute price for a denom (wins over all)
-//   SYMBOL_PRICE_ALIASES      — derivative denom borrows a base symbol's price
-//   DENOM_SYMBOL_OVERRIDES    — force the display symbol for a denom
-//   EXPONENT_OVERRIDES        — correct the decimals for a denom/symbol
-//   COINGECKO_ID_BY_SYMBOL    — manual CoinGecko id for the price fallback
+//   PRICE_OVERRIDES_BY_DENOM: absolute price for a denom (wins over all)
+//   SYMBOL_PRICE_ALIASES: derivative denom borrows a base symbol's price
+//   DENOM_SYMBOL_OVERRIDES: force the display symbol for a denom
+//   EXPONENT_OVERRIDES: correct the decimals for a denom/symbol
+//   COINGECKO_ID_BY_SYMBOL: manual CoinGecko id for the price fallback
 // ---------------------------------------------------------------------------
 export const PRICE_OVERRIDES_BY_DENOM: Record<
   string,
@@ -258,3 +308,79 @@ export const IGNORE_DENOMS = new Set<string>([
   // DEEN
   "ibc/108604FDBE97DAEF128FD4ECFEB2A8AFC2D04A7162C97EAA2FD5BCB0869D0BBC",
 ]);
+
+// ---------------------------------------------------------------------------
+// Brand colors for the "Value by Asset" pie, keyed by symbol (matched
+// case-insensitively). Hand-curated for the tokens the treasury actually holds;
+// anything not listed falls back to the generic OSMOscope palette. Sourced from
+// each project's brand/logo primary color.
+// ---------------------------------------------------------------------------
+export const TOKEN_COLORS: Record<string, string> = {
+  OSMO: "#750BC2",
+  ION: "#2E9BE6",
+  USDC: "#2775CA",
+  USDT: "#26A17B",
+  DAI: "#F5AC37",
+  BTC: "#F7931A",
+  WBTC: "#F09242",
+  ALLBTC: "#F7931A",
+  ETH: "#627EEA",
+  WETH: "#627EEA",
+  ATOM: "#6F7390",
+  TIA: "#7B2BF9",
+  BABY: "#CE6533",
+  SOL: "#14F195",
+  LINK: "#2A5ADA",
+  PEPE: "#4B9C3E",
+  NTRN: "#000000",
+  DYDX: "#6966FF",
+  INJ: "#00A5CF",
+  SAGA: "#8C4FF6",
+  STOSMO: "#E33093",
+  BOSMO: "#B45309",
+  AKT: "#E4432E",
+  SCRT: "#1B1B1B",
+  STARS: "#7C4DFF",
+  KAVA: "#FF433E",
+};
+
+// Case-insensitive lookup for a token's brand color (null -> use palette).
+export function tokenColor(symbol: string): string | null {
+  return TOKEN_COLORS[symbol.toUpperCase()] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// "OSMO exposure" classification. The treasury banner reports a total value and
+// a non-OSMO value; the pies can toggle OSMO in/out. OSMO exposure = OSMO and
+// ANY OSMO derivative (liquid-staking, amplified, quasar/squared, etc. — bOSMO,
+// stOSMO, ampOSMO, qOSMO, milkOSMO, sqOSMO, boneOSMO, and any future variant).
+// Rather than maintain a symbol list that always lags new LSTs, we match any
+// symbol whose name contains "OSMO" (case-insensitive). No non-derivative token
+// symbol contains "OSMO", so there are no known false positives; if one ever
+// appears, add it to OSMO_EXPOSURE_EXCLUDE below.
+// ---------------------------------------------------------------------------
+const OSMO_EXPOSURE_EXCLUDE = new Set<string>([]);
+
+export function isOsmoExposure(symbol: string): boolean {
+  const s = symbol.toUpperCase();
+  if (OSMO_EXPOSURE_EXCLUDE.has(s)) return false;
+  return s.includes("OSMO");
+}
+
+// ---------------------------------------------------------------------------
+// Block-explorer links surfaced next to each holder group on the treasury page.
+// Osmosis addresses -> Mintscan; Ethereum addresses -> Etherscan.
+// ---------------------------------------------------------------------------
+export const EXPLORER_BASE: Record<
+  "osmosis" | "ethereum",
+  { name: string; addressUrl: (address: string) => string }
+> = {
+  osmosis: {
+    name: "Mintscan",
+    addressUrl: (a) => `https://www.mintscan.io/osmosis/address/${a}`,
+  },
+  ethereum: {
+    name: "Etherscan",
+    addressUrl: (a) => `https://etherscan.io/address/${a}`,
+  },
+};

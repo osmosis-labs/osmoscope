@@ -22,6 +22,7 @@
     "populate-revenue": "tsx scripts/populate-revenue-history.ts",
     "validate-history": "tsx scripts/validate-history.ts",
     "migrate-json-to-db": "tsx scripts/migrate-json-to-db.ts",
+    "populate-treasury": "tsx scripts/populate-treasury.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
