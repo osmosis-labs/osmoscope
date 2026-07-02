@@ -68,3 +68,25 @@ model HistoricalRecord {
   @@index([createdAt(sort: Desc)])
   @@map("historical_records")
 }
+
+// Community-pool / DAO-treasury snapshot. Written hourly by the treasury cron and
+// read whole by the /treasury page (the full decomposed breakdown lives in `data`
+// as JSON; it is never queried by column). `totalValue` is duplicated out as a
+// Decimal so a plausibility gate / headline can be read without parsing the blob.
+model TreasurySnapshot {
+  id        BigInt   @id @default(autoincrement())
+  timestamp DateTime @unique @db.Timestamptz(6)
+
+  // Headline USD value across all holders, mirrored from `data.totalValue` for
+  // cheap querying. Decimal(20,2) — dollars, two places.
+  totalValue Decimal @db.Decimal(20, 2)
+
+  // Full TreasurySnapshotData payload (main pool + per-holder breakdown +
+  // unpriced-symbol diagnostics). Shape owned by lib/treasury/snapshot.ts.
+  data Json
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([timestamp(sort: Desc)])
+  @@map("treasury_snapshots")
+}

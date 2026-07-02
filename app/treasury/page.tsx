@@ -1,7 +1,29 @@
+import type { Metadata } from "next";
 import Link from "next/link";
-import { OsmosisDashboard } from "@/components/OsmosisDashboard";
+import { TreasuryView } from "@/components/treasury/TreasuryView";
 
-export default function Home() {
+const TITLE = "OSMOscope: Treasury";
+const DESCRIPTION =
+  "The Osmosis community pool and associated DAO treasury: holdings, associated addresses, and liquidity positions, valued live.";
+
+export const metadata: Metadata = {
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    type: "website",
+    images: ["/Osmosis_Icon.png"],
+  },
+  twitter: {
+    card: "summary",
+    title: TITLE,
+    description: DESCRIPTION,
+    images: ["/Osmosis_Icon.png"],
+  },
+};
+
+export default function TreasuryPage() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-osmo-900 via-osmo-800 to-osmo-900 p-4 sm:p-8">
       <div className="mx-auto max-w-7xl">
@@ -16,18 +38,18 @@ export default function Home() {
               <h1 className="text-2xl font-bold leading-tight text-white sm:text-4xl">
                 OSMOscope
               </h1>
-              <p className="text-sm text-osmo-200 sm:text-base">Tokenomics</p>
+              <p className="text-sm text-osmo-200 sm:text-base">Treasury</p>
             </div>
           </div>
           <Link
-            href="/treasury"
+            href="/"
             className="shrink-0 rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-white/20"
           >
-            Treasury
+            Tokenomics
           </Link>
         </header>
 
-        <OsmosisDashboard />
+        <TreasuryView />
       </div>
     </main>
   );
