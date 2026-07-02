@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { useTreasuryData } from "@/lib/hooks/useTreasuryData";
 import { Card } from "@/components/ui/Card";
-import { formatNumberWithCommas } from "@/lib/utils";
+import { formatNumberWithCommas, formatUsd as usd } from "@/lib/utils";
 import { EXPLORER_BASE, tokenColor } from "@/config/community-pool";
 import { EtherscanMark, MintscanMark } from "./ExplorerIcons";
 import type {
@@ -14,11 +14,6 @@ import type {
   VaultPositionCard,
   HolderAddress,
 } from "@/lib/treasury/snapshot";
-
-// Full USD with thousands separators, no M/B abbreviation.
-function usd(value: number): string {
-  return `$${formatNumberWithCommas(value)}`;
-}
 
 // Compact USD for chart labels / tight spots (e.g. $1.2M, $384K).
 function usdCompact(value: number): string {
@@ -737,7 +732,7 @@ export function TreasuryView() {
       )}
 
       <p className="pb-4 text-center text-xs text-osmo-300">
-        Onchain data snapshot as of {asOf}. Market data is live.
+        Holdings and prices as of {asOf}, refreshed hourly.
       </p>
     </div>
   );

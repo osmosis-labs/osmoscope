@@ -1,11 +1,7 @@
 "use client";
 
 import { Card } from "./ui/Card";
-import {
-  formatNumber,
-  formatNumberWithCommas,
-  formatPercentage,
-} from "@/lib/utils";
+import { formatNumber, formatUsdOrDash, formatPercentage } from "@/lib/utils";
 import type { OsmosisMetrics } from "@/types/osmosis";
 
 // Format a small spot price with enough precision to be meaningful (OSMO trades
@@ -14,12 +10,6 @@ function formatPrice(price: number | null): string {
   if (price == null) return "—";
   if (price >= 1) return `$${price.toFixed(2)}`;
   return `$${price.toPrecision(4)}`;
-}
-
-// Full USD figure with thousands separators (no M/B abbreviation), or a dash.
-function formatFullUsd(value: number | null): string {
-  if (value == null) return "—";
-  return `$${formatNumberWithCommas(value)}`;
 }
 
 // Signed percentage for a 24h change, e.g. "+4.10%" / "-1.23%".
@@ -60,12 +50,12 @@ export function KpiSummary({ data }: KpiSummaryProps) {
     },
     {
       label: "Market Cap",
-      value: formatFullUsd(data.marketCap),
+      value: formatUsdOrDash(data.marketCap),
       sub: "price × circulating",
     },
     {
       label: "FDV",
-      value: formatFullUsd(data.fdv),
+      value: formatUsdOrDash(data.fdv),
       sub: "price × total supply",
     },
     {

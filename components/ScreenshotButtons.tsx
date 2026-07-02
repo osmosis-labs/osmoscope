@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import html2canvas from "html2canvas";
+// html2canvas (~large) is only needed when the user actually captures a
+// screenshot, so it's dynamically imported inside the capture handler rather
+// than statically — keeping it out of the initial page bundle.
 
 interface ScreenshotButtonsProps {
   // Nullable to match what useRef<HTMLElement>(null) actually produces under
@@ -59,6 +61,9 @@ export function ScreenshotButtons({
 
       // Additional wait for rendering to settle and fonts to be applied
       await new Promise((resolve) => setTimeout(resolve, 800));
+
+      // Load html2canvas on demand (kept out of the initial bundle).
+      const html2canvas = (await import("html2canvas")).default;
 
       // Capture the element as canvas with onclone callback
       const originalCanvas = await html2canvas(targetRef.current, {

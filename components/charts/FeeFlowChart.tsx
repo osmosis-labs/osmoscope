@@ -9,6 +9,7 @@ import {
   timeRangeLabel,
 } from "../TimeRangeSelector";
 import { ChartHeader } from "./ChartHeader";
+import { formatUsd as formatUSD } from "@/lib/utils";
 
 // Format a 0-1 proportion as a percentage label. Keeps one decimal so half-
 // percent splits read correctly and sum to 100 (e.g. 22.5% / 25% / 52.5%),
@@ -489,10 +490,6 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
       revenueAvgs,
     };
   }, [historicalData, filteredData]);
-
-  const formatUSD = (value: number) => {
-    return `$${value.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-  };
 
   const formatUSDCompact = (value: number) => {
     if (value >= 1000000) {

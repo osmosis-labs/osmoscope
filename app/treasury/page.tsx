@@ -4,22 +4,21 @@ import { TreasuryView } from "@/components/treasury/TreasuryView";
 
 const TITLE = "OSMOscope: Treasury";
 const DESCRIPTION =
-  "The Osmosis community pool and associated DAO treasury: holdings, associated addresses, and liquidity positions, valued live.";
+  "The Osmosis community pool and associated DAO treasury: holdings, associated addresses, and liquidity positions, valued hourly.";
 
 export const metadata: Metadata = {
   title: TITLE,
   description: DESCRIPTION,
+  // Inherits the root 1200x630 opengraph-image (app/opengraph-image.tsx).
   openGraph: {
     title: TITLE,
     description: DESCRIPTION,
     type: "website",
-    images: ["/Osmosis_Icon.png"],
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: TITLE,
     description: DESCRIPTION,
-    images: ["/Osmosis_Icon.png"],
   },
 };
 

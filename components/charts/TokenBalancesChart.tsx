@@ -42,20 +42,27 @@ export function TokenBalancesChart({
 
   // Transform historical data for the chart. Use ?? (not ||) so a legitimate 0
   // survives, and leave an intentionally-unset circulating (nullable for the 2023
-  // upgrade window) as null — Recharts renders a gap, not a misleading 0 floor.
-  const chartData = filteredData.map((record) => {
-    const circulatingSupply =
-      record.circulatingSupply ?? record.circulating ?? null;
-    const restrictedSupply = record.restrictedSupply ?? null;
-    const communitySupply = record.communitySupply ?? null;
-
-    return {
+  // upgrade window) as null.
+  //
+  // These three series share a stackId, and Recharts treats a null band as 0 for
+  // the STACK OFFSET — so a row with some (but not all) series present would make
+  // the stacked total dip rather than show a true gap. Guard by dropping any row
+  // that doesn't have all three defined (today no live row is partially-null, but
+  // this future-proofs it), mirroring how StakingApr/StakingRatio filter first.
+  const chartData = filteredData
+    .map((record) => ({
       date: formatChartDate(record.timestamp, timeRange),
-      "Circulating Supply": circulatingSupply,
-      "Restricted Supply": restrictedSupply,
-      "Community Supply": communitySupply,
-    };
-  });
+      "Circulating Supply":
+        record.circulatingSupply ?? record.circulating ?? null,
+      "Restricted Supply": record.restrictedSupply ?? null,
+      "Community Supply": record.communitySupply ?? null,
+    }))
+    .filter(
+      (d) =>
+        d["Circulating Supply"] != null &&
+        d["Restricted Supply"] != null &&
+        d["Community Supply"] != null
+    );
 
   // Note: earlier versions annotated supply-offset "step-downs" (the 2024-11-19
   // v27 -83M reinstatement and a 2023-08 archive artifact). The history data is
