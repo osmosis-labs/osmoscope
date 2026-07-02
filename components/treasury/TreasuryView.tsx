@@ -177,12 +177,20 @@ function InfoTooltip({
   text: string;
   onOpen?: (open: boolean) => void;
 }) {
-  // Track hover and click-pin SEPARATELY, else they fight: on a mouse that's
-  // already hovering (open via hover), a single click would just toggle the
-  // shared flag back off. Visible when hovered OR pinned; click toggles the pin.
+  // Three independent inputs, because collapsing any two into one makes them
+  // fight:
+  //  - hovered: mouse is over the widget (open while true).
+  //  - focused: keyboard/programmatic focus is within the widget (open while
+  //    true) — this is what lets a keyboard user reach the tooltip's links.
+  //  - pinned:  an explicit click toggled it open (survives losing hover/focus).
+  // Only CLICK touches `pinned`. Focus must NOT set `pinned`, or a mouse click
+  // would toggle it twice — once via the focus that a click delivers, once via
+  // the click itself — and land back closed (defeating click-to-pin, worst on
+  // touch where there's no lingering hover to keep it visible).
   const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [pinned, setPinned] = useState(false);
-  const open = hovered || pinned;
+  const open = hovered || focused || pinned;
 
   // Report the effective open state up (drives the card's z-lift). useEffect so
   // the parent update happens after render, not during it.
@@ -199,14 +207,18 @@ function InfoTooltip({
       className="relative inline-flex shrink-0"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onFocus={() => setPinned(true)}
+      onFocus={() => setFocused(true)}
       onBlur={(e) => {
+        // Only close on focus LEAVING the whole widget (relatedTarget check), so
+        // a keyboard user can Tab from the `?` into the tooltip to reach its
+        // links without it closing.
         if (!e.currentTarget.contains(e.relatedTarget as Node | null))
-          setPinned(false);
+          setFocused(false);
       }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           setPinned(false);
+          setFocused(false);
           setHovered(false);
         }
       }}
@@ -215,7 +227,13 @@ function InfoTooltip({
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          setPinned((v) => !v);
+          // Toggle the pin. When unpinning, also drop `focused` — the click
+          // itself keeps the button focused, so without this the popover would
+          // stay open (focused===true) and the second click would appear inert.
+          setPinned((v) => {
+            if (v) setFocused(false);
+            return !v;
+          });
         }}
         aria-label="About this address"
         aria-expanded={open}
