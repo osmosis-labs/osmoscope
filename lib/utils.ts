@@ -57,6 +57,19 @@ export function formatNumberWithCommas(
   });
 }
 
+// Full USD with thousands separators, no M/B abbreviation (e.g. "$1,234,567").
+// The single source of truth for the "$" + comma-grouped-integer format that was
+// duplicated across KpiSummary, FeeFlowChart, and TreasuryView.
+export function formatUsd(value: number): string {
+  return `$${formatNumberWithCommas(value)}`;
+}
+
+// Same, but returns an em-dash for a null/undefined value — for KPI/price cells
+// where a missing feed must show "—" rather than "$0" (no-silent-zero).
+export function formatUsdOrDash(value: number | null | undefined): string {
+  return value == null ? "—" : formatUsd(value);
+}
+
 type ChartRange = "all" | "1y" | "90d" | "30d" | "7d";
 
 // Per-point x-axis label (also used as the chart's date key and in tooltips).

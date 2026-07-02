@@ -250,6 +250,15 @@ export function InflationRatesChart({
           onRangeChange={setTimeRange}
           cardRef={cardRef}
           screenshotFilename="osmo-inflation"
+          shareText="OSMO inflation over time"
+          csvRows={() =>
+            historicalData.map((r) => ({
+              date: r.timestamp,
+              inflation_rate_pct: r.inflationRate ?? null,
+              burned_supply: r.burnedSupply ?? r.burned ?? null,
+              total_supply: r.totalSupply ?? null,
+            }))
+          }
         />
       </CardHeader>
       <CardContent>

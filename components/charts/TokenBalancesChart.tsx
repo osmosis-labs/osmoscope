@@ -42,20 +42,32 @@ export function TokenBalancesChart({
 
   // Transform historical data for the chart. Use ?? (not ||) so a legitimate 0
   // survives, and leave an intentionally-unset circulating (nullable for the 2023
-  // upgrade window) as null — Recharts renders a gap, not a misleading 0 floor.
-  const chartData = filteredData.map((record) => {
-    const circulatingSupply =
-      record.circulatingSupply ?? record.circulating ?? null;
-    const restrictedSupply = record.restrictedSupply ?? null;
-    const communitySupply = record.communitySupply ?? null;
-
-    return {
+  // upgrade window) as null.
+  //
+  // These three series share a stackId, and Recharts treats a null band as 0 for
+  // the STACK OFFSET — so a row with some (but not all) series present would make
+  // the stacked total dip rather than show a true gap. Guard by dropping any row
+  // that doesn't have all three defined (today no live row is partially-null, but
+  // this future-proofs it), mirroring how StakingApr/StakingRatio filter first.
+  // Carry the raw timestamp through the map so it survives the filter: the
+  // monthly-tick builder needs labels and timestamps to stay index-aligned, and
+  // sourcing timestamps from the UNFILTERED filteredData while labels come from
+  // this (possibly shorter) list would mispair them once any row is dropped.
+  const chartData = filteredData
+    .map((record) => ({
       date: formatChartDate(record.timestamp, timeRange),
-      "Circulating Supply": circulatingSupply,
-      "Restricted Supply": restrictedSupply,
-      "Community Supply": communitySupply,
-    };
-  });
+      timestamp: record.timestamp,
+      "Circulating Supply":
+        record.circulatingSupply ?? record.circulating ?? null,
+      "Restricted Supply": record.restrictedSupply ?? null,
+      "Community Supply": record.communitySupply ?? null,
+    }))
+    .filter(
+      (d) =>
+        d["Circulating Supply"] != null &&
+        d["Restricted Supply"] != null &&
+        d["Community Supply"] != null
+    );
 
   // Note: earlier versions annotated supply-offset "step-downs" (the 2024-11-19
   // v27 -83M reinstatement and a 2023-08 archive artifact). The history data is
@@ -72,6 +84,16 @@ export function TokenBalancesChart({
           onRangeChange={setTimeRange}
           cardRef={cardRef}
           screenshotFilename="osmo-supply-distribution"
+          shareText="OSMO supply distribution over time"
+          csvRows={() =>
+            historicalData.map((r) => ({
+              date: r.timestamp,
+              circulating_supply: r.circulatingSupply ?? r.circulating ?? null,
+              restricted_supply: r.restrictedSupply ?? null,
+              community_supply: r.communitySupply ?? null,
+              total_supply: r.totalSupply ?? null,
+            }))
+          }
           headlineValue={formatNumberWithCommas(circulating)}
           headlineLabel="Circulating"
           headlineColor="text-[#7C4DFF]"
@@ -107,7 +129,7 @@ export function TokenBalancesChart({
               tick={{ fill: "#e0d5f5" }}
               ticks={makeMonthlyTicks(
                 chartData.map((d) => d.date),
-                filteredData.map((r) => r.timestamp),
+                chartData.map((d) => d.timestamp),
                 timeRange
               )}
               angle={-45}

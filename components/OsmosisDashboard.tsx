@@ -18,7 +18,11 @@ import { ScreenshotButtons } from "./ScreenshotButtons";
 
 export function OsmosisDashboard() {
   const { data, isLoading, error } = useOsmosisMetrics();
-  const { data: historicalData = [] } = useHistoricalData();
+  const {
+    data: historicalData = [],
+    error: historyError,
+    isLoading: historyLoading,
+  } = useHistoricalData();
   const burnedPieChartRef = useRef<HTMLDivElement>(null);
 
   if (isLoading) {
@@ -33,18 +37,33 @@ export function OsmosisDashboard() {
   }
 
   if (error) {
+    // The metrics endpoint 503s (via the hook) when no snapshot has been captured
+    // yet — a "pending" state, not a failure. Show a friendly message for that.
+    const pending =
+      error instanceof Error &&
+      error.message === "No snapshot data available yet";
     return (
       <div className="flex min-h-[400px] items-center justify-center">
-        <div className="rounded-lg bg-red-500/20 p-6 text-center">
+        <div
+          className={`rounded-lg p-6 text-center ${pending ? "bg-white/10" : "bg-red-500/20"}`}
+        >
           <p className="mb-2 text-lg font-semibold text-white">
-            Failed to load Osmosis metrics
+            {pending ? "Metrics pending" : "Failed to load Osmosis metrics"}
           </p>
-          <p className="text-sm text-red-200">
-            {error instanceof Error ? error.message : "Unknown error"}
+          <p
+            className={`text-sm ${pending ? "text-osmo-200" : "text-red-200"}`}
+          >
+            {pending
+              ? "The first daily snapshot has not been taken yet. Check back shortly."
+              : error instanceof Error
+                ? error.message
+                : "Unknown error"}
           </p>
-          <p className="mt-4 text-xs text-osmo-100">
-            Please check your internet connection and try again
-          </p>
+          {!pending && (
+            <p className="mt-4 text-xs text-osmo-100">
+              Please check your internet connection and try again
+            </p>
+          )}
         </div>
       </div>
     );
@@ -54,10 +73,23 @@ export function OsmosisDashboard() {
     return null;
   }
 
+  // The charts below all read historicalData. If it failed to load (the KPI
+  // strip comes from a different endpoint and may be fine), the charts would
+  // render empty with no explanation — surface a banner instead of silently
+  // showing flat/blank charts.
+  const historyUnavailable = !historyLoading && !!historyError;
+
   return (
     <div className="space-y-6">
       {/* KPI summary strip */}
       <KpiSummary data={data} />
+
+      {historyUnavailable && (
+        <div className="rounded-lg bg-amber-500/10 p-3 text-center text-sm text-amber-200">
+          Historical data is currently unavailable, so the charts below may be
+          empty. The headline metrics above are unaffected.
+        </div>
+      )}
 
       {/* OSMO Inflation (full width) */}
       <div className="grid gap-6">
@@ -79,6 +111,7 @@ export function OsmosisDashboard() {
                 <ScreenshotButtons
                   targetRef={burnedPieChartRef}
                   filename="osmo-burned-percentage"
+                  shareText="Share of OSMO supply burned"
                 />
               </div>
               <div className="text-right">
@@ -103,37 +136,43 @@ export function OsmosisDashboard() {
               }), ${formatNumberWithCommas(data.circulating)} OSMO circulating.`}
             >
               <ResponsiveContainer width="100%" height={380}>
-                <PieChart>
-                  <Pie
-                    data={[
-                      { name: "Burned", value: data.burned },
-                      { name: "Circulating Supply", value: data.circulating },
-                    ]}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius="40%"
-                    outerRadius="85%"
-                    paddingAngle={2}
-                    dataKey="value"
-                  >
-                    <Cell fill="#FF6B6B" />
-                    <Cell fill="#95E1D3" />
-                  </Pie>
-                  <Tooltip
-                    formatter={(value: number) =>
-                      formatNumberWithCommas(value) + " OSMO"
-                    }
-                    contentStyle={{
-                      backgroundColor: "rgba(31, 10, 41, 0.95)",
-                      backdropFilter: "blur(12px)",
-                      border: "1px solid rgba(255, 255, 255, 0.2)",
-                      borderRadius: "8px",
-                      boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-                    }}
-                    labelStyle={{ color: "#fff" }}
-                    itemStyle={{ color: "#fff" }}
-                  />
-                </PieChart>
+                {data.circulating > 0 ? (
+                  <PieChart>
+                    <Pie
+                      data={[
+                        { name: "Burned", value: data.burned },
+                        { name: "Circulating Supply", value: data.circulating },
+                      ]}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius="40%"
+                      outerRadius="85%"
+                      paddingAngle={2}
+                      dataKey="value"
+                    >
+                      <Cell fill="#FF6B6B" />
+                      <Cell fill="#95E1D3" />
+                    </Pie>
+                    <Tooltip
+                      formatter={(value: number) =>
+                        formatNumberWithCommas(value) + " OSMO"
+                      }
+                      contentStyle={{
+                        backgroundColor: "rgba(31, 10, 41, 0.95)",
+                        backdropFilter: "blur(12px)",
+                        border: "1px solid rgba(255, 255, 255, 0.2)",
+                        borderRadius: "8px",
+                        boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+                      }}
+                      labelStyle={{ color: "#fff" }}
+                      itemStyle={{ color: "#fff" }}
+                    />
+                  </PieChart>
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-osmo-300">
+                    Circulating supply unavailable
+                  </div>
+                )}
               </ResponsiveContainer>
             </div>
             {/* OSMO icon in center of doughnut (decorative) */}
