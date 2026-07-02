@@ -131,6 +131,14 @@ async function gammHoldings(
     `/osmosis/gamm/v1beta1/pools/${poolId}/total_shares`
   );
   const totalShares = parseFloat(shares.total_shares.amount);
+  // Guard against a zero / unparseable total-shares reading: dividing by it would
+  // make every underlying amount Infinity/NaN, which would skew the liquidity
+  // cards (they're built from these raw holdings, not just the value-filtered
+  // totals). A pool with no shares holds nothing for us — return no holdings.
+  if (!(totalShares > 0)) {
+    logger.warn(`GAMM pool ${poolId}: total_shares not positive; skipping`);
+    return [];
+  }
   const liq = await fetchLcdJson<{
     liquidity: Array<{ denom: string; amount: string }>;
   }>(`/osmosis/gamm/v1beta1/pools/${poolId}/total_pool_liquidity`);

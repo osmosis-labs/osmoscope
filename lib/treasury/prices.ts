@@ -66,6 +66,11 @@ export async function buildPriceMap(): Promise<PriceMap> {
   }
 
   const map: PriceMap = {};
+  // CoinGecko-id index for THIS build only (keyed off the map object in a
+  // WeakMap below), so overlapping builds (hourly cron / manual populate / dev
+  // live API) can't interleave writes into a shared module-level object and
+  // leave a stale denom->id mapping for resolveMissingPrices.
+  const cgIndex: Record<string, string> = {};
 
   for (const item of list) {
     const info = effectivePriceRow(item, symbolIndex);
@@ -75,8 +80,8 @@ export async function buildPriceMap(): Promise<PriceMap> {
       exponent: info.exponent,
     };
     // Remember a usable CoinGecko id per denom for the on-demand fallback.
-    const cgId = coingeckoId(info.symbol);
-    if (cgId) coingeckoIdByDenom[info.denom] = cgId;
+    const cgId = coingeckoId(info.denom, info.symbol);
+    if (cgId) cgIndex[info.denom] = cgId;
   }
 
   // Absolute per-denom overrides not present in the Numia list.
@@ -95,12 +100,14 @@ export async function buildPriceMap(): Promise<PriceMap> {
   // took ~90s and priced denoms no holder touches. Instead the snapshot builder
   // calls resolveMissingPrices() with ONLY the denoms the treasury actually
   // holds — a few dozen — after decomposition. See resolveMissingPrices below.
+  cgIndexByMap.set(map, cgIndex);
   return map;
 }
 
-// CoinGecko-id index built alongside the price map, so the on-demand fallback can
-// look up an id for a held denom without re-reading the Numia list.
-const coingeckoIdByDenom: Record<string, string> = {};
+// Per-build CoinGecko-id index, keyed by the PriceMap object it belongs to, so
+// resolveMissingPrices reads the index for THAT build (no shared mutable module
+// state that overlapping builds could corrupt). WeakMap => GC'd with the map.
+const cgIndexByMap = new WeakMap<PriceMap, Record<string, string>>();
 
 // Fill in prices for a SMALL set of specific denoms the treasury holds but that
 // Numia left unpriced. SQS (denom-keyed, Osmosis's own quote engine) first, then
@@ -127,16 +134,16 @@ export async function resolveMissingPrices(
     if (p != null && p > 0) map[denom].price = p;
   }
 
-  // CoinGecko pass for whatever SQS still couldn't price.
-  const cgWanted = missing.filter(
-    (d) => !(map[d].price > 0) && coingeckoIdByDenom[d]
-  );
+  // CoinGecko pass for whatever SQS still couldn't price. Use the id index built
+  // for THIS map (empty if the map didn't come from buildPriceMap).
+  const cgIndex = cgIndexByMap.get(map) ?? {};
+  const cgWanted = missing.filter((d) => !(map[d].price > 0) && cgIndex[d]);
   if (cgWanted.length > 0) {
     const cgPrices = await fetchCoinGeckoPrices([
-      ...new Set(cgWanted.map((d) => coingeckoIdByDenom[d])),
+      ...new Set(cgWanted.map((d) => cgIndex[d])),
     ]);
     for (const denom of cgWanted) {
-      const p = cgPrices[coingeckoIdByDenom[denom]];
+      const p = cgPrices[cgIndex[denom]];
       if (p != null && !(map[denom].price > 0))
         map[denom].price = Number(p) || 0;
     }
@@ -240,8 +247,10 @@ function effectivePriceRow(
   // 2) Force display symbol for this denom.
   const symbol = DENOM_SYMBOL_OVERRIDES[denom] || originalSymbol;
 
-  // 3) Derivative -> base symbol for price sourcing.
-  const aliasBase = SYMBOL_PRICE_ALIASES[symbol];
+  // 3) Derivative -> base symbol for price sourcing. SYMBOL_PRICE_ALIASES is
+  // keyed by DENOM (e.g. the YieldETH ibc/... denom -> "ETH"), so look up by
+  // denom first; fall back to the symbol so a symbol-keyed alias would also work.
+  const aliasBase = SYMBOL_PRICE_ALIASES[denom] ?? SYMBOL_PRICE_ALIASES[symbol];
   if (aliasBase) {
     const base = symbolIndex[aliasBase] || { price: 0, exponent: apiExp };
     return {
@@ -267,8 +276,10 @@ function effectivePriceRow(
 // each with a multi-second rate-limit sleep, to price denoms that never resolve.
 // SQS already covers everything the treasury materially holds, so CoinGecko is a
 // last resort reserved for the handful of assets we've explicitly listed.
-function coingeckoId(effectiveSymbol: string): string | null {
-  const aliasBase = SYMBOL_PRICE_ALIASES[effectiveSymbol];
+function coingeckoId(denom: string, effectiveSymbol: string): string | null {
+  // SYMBOL_PRICE_ALIASES is denom-keyed; look up by denom first, then symbol.
+  const aliasBase =
+    SYMBOL_PRICE_ALIASES[denom] ?? SYMBOL_PRICE_ALIASES[effectiveSymbol];
   if (aliasBase && COINGECKO_ID_BY_SYMBOL[aliasBase])
     return COINGECKO_ID_BY_SYMBOL[aliasBase];
   if (COINGECKO_ID_BY_SYMBOL[effectiveSymbol])
