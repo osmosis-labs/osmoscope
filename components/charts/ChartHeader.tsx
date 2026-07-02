@@ -3,6 +3,7 @@
 import { CardTitle } from "../ui/Card";
 import { TimeRangeSelector, TimeRange } from "../TimeRangeSelector";
 import { ScreenshotButtons } from "../ScreenshotButtons";
+import type { CsvRow } from "@/lib/csv";
 import type { RefObject, ReactNode } from "react";
 
 interface ChartHeaderProps {
@@ -13,6 +14,16 @@ interface ChartHeaderProps {
   cardRef: RefObject<HTMLDivElement | null>;
   /** Screenshot download filename (no extension). */
   screenshotFilename: string;
+  /** Context-aware caption prefilled into the X composer for this chart. */
+  shareText?: string;
+  /**
+   * Full-history rows for the CSV export (built lazily on click). Omit for
+   * sections with a single data point (e.g. the burn doughnut), where a CSV
+   * would be one row and isn't useful — the button is then hidden.
+   */
+  csvRows?: () => CsvRow[];
+  /** CSV download filename (no extension). Defaults to screenshotFilename. */
+  csvFilename?: string;
   /** Big headline figure shown at the right (e.g. a total / current value). */
   headlineValue?: ReactNode;
   /** Small label under the headline value. */
@@ -37,6 +48,9 @@ export function ChartHeader({
   onRangeChange,
   cardRef,
   screenshotFilename,
+  shareText,
+  csvRows,
+  csvFilename,
   headlineValue,
   headlineLabel,
   headlineColor = "text-white",
@@ -57,7 +71,13 @@ export function ChartHeader({
           />
           {extraControls}
         </div>
-        <ScreenshotButtons targetRef={cardRef} filename={screenshotFilename} />
+        <ScreenshotButtons
+          targetRef={cardRef}
+          filename={screenshotFilename}
+          shareText={shareText}
+          csvRows={csvRows}
+          csvFilename={csvFilename}
+        />
       </div>
       {headlineValue != null && (
         <div className="shrink-0 text-right">

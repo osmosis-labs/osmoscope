@@ -104,6 +104,26 @@ export function ProtocolRevenueChart({
           onRangeChange={setTimeRange}
           cardRef={cardRef}
           screenshotFilename="osmo-protocol-revenue-history"
+          shareText="Osmosis protocol revenue over time"
+          csvRows={() =>
+            historicalData
+              .filter((r) => r.totalRevenue != null)
+              .map((r) => {
+                const d = protocolDaily(r);
+                return {
+                  date: r.timestamp,
+                  taker_fees_usd: d["Taker Fees"],
+                  protorev_usd: d.ProtoRev,
+                  tx_fees_usd: d["Tx Fees"],
+                  top_of_block_usd: d["Top of Block"],
+                  protocol_revenue_usd:
+                    d["Taker Fees"] +
+                    d.ProtoRev +
+                    d["Tx Fees"] +
+                    d["Top of Block"],
+                };
+              })
+          }
           headlineValue={`$${formatNumberWithCommas(rangeTotal)}`}
           headlineLabel={timeRangeLabel(timeRange)}
           headlineColor="text-[#7C4DFF]"

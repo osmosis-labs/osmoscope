@@ -48,6 +48,13 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
           onRangeChange={setTimeRange}
           cardRef={cardRef}
           screenshotFilename="osmo-burned"
+          shareText="OSMO burned over time"
+          csvRows={() =>
+            historicalData.map((r) => ({
+              date: r.timestamp,
+              osmo_burned: r.burnedSupply ?? r.burned ?? null,
+            }))
+          }
           headlineValue={formatNumberWithCommas(burned)}
           headlineLabel="Total Burned"
           headlineColor="text-[#FF7043]"

@@ -63,6 +63,22 @@ export function StakingRatioChart({
           onRangeChange={setTimeRange}
           cardRef={cardRef}
           screenshotFilename="osmo-staking-ratio"
+          shareText="OSMO staking ratio over time"
+          csvRows={() =>
+            historicalData
+              .filter(
+                (r) =>
+                  r.totalStaked != null &&
+                  r.totalStaked > 0 &&
+                  r.totalSupply > 0
+              )
+              .map((r) => ({
+                date: r.timestamp,
+                staked_osmo: r.totalStaked as number,
+                total_supply: r.totalSupply,
+                staked_pct: ((r.totalStaked as number) / r.totalSupply) * 100,
+              }))
+          }
           headlineValue={
             stakingRatio != null ? formatPercentage(stakingRatio, 2) : "—"
           }

@@ -1,23 +1,68 @@
 "use client";
 
 import { useCallback, useState } from "react";
-// html2canvas (~large) is only needed when the user actually captures a
-// screenshot, so it's dynamically imported inside the capture handler rather
-// than statically — keeping it out of the initial page bundle.
+import { downloadCsv, type CsvRow } from "@/lib/csv";
+// The screenshot rasterizer (modern-screenshot) is only needed when the user
+// actually captures, so it's dynamically imported inside the capture handler
+// rather than statically, keeping it out of the initial page bundle.
 
 interface ScreenshotButtonsProps {
   // Nullable to match what useRef<HTMLElement>(null) actually produces under
   // current React types; guarded with `targetRef.current` before use.
   targetRef: React.RefObject<HTMLElement | null>;
   filename: string;
+  /**
+   * Context-aware caption prefilled into the X composer for THIS chart (e.g.
+   * "OSMO supply distribution on Osmosis"). Falls back to a generic line.
+   */
+  shareText?: string;
+  /**
+   * Full-history rows for CSV export, built lazily on click. When provided, a
+   * CSV icon-button appears inside this cluster next to X / copy. Omit for
+   * single-datapoint sections (e.g. the burn doughnut), where no button shows.
+   */
+  csvRows?: () => CsvRow[];
+  /** CSV download filename (no extension). Defaults to `filename`. */
+  csvFilename?: string;
 }
+
+// Generic fallback caption when a chart doesn't pass its own shareText.
+const DEFAULT_SHARE_TEXT = "Osmosis metrics via OSMOscope";
+// Suffix appended to every share caption so posts are attributed + discoverable.
+const SHARE_SUFFIX = "via OSMOscope";
 
 export function ScreenshotButtons({
   targetRef,
   filename,
+  shareText,
+  csvRows,
+  csvFilename,
 }: ScreenshotButtonsProps) {
   const [isCapturing, setIsCapturing] = useState(false);
   const [showCopiedFeedback, setShowCopiedFeedback] = useState(false);
+  // X-share toast: holds the intent URL once the chart has been copied. The user
+  // clicks its link to open the composer — a fresh user gesture, so it's never
+  // popup-blocked, and copying already happened while the page was focused (a
+  // single click can't both copy AND open a tab: opening steals the focus that
+  // clipboard.write requires). null = hidden.
+  const [shareIntentUrl, setShareIntentUrl] = useState<string | null>(null);
+  // Brief "no data" toast if a CSV export is triggered with an empty series.
+  const [showNoDataFeedback, setShowNoDataFeedback] = useState(false);
+
+  const handleCsvExport = useCallback(() => {
+    if (!csvRows) return;
+    try {
+      const ok = downloadCsv(csvFilename ?? filename, csvRows());
+      if (!ok) {
+        setShowNoDataFeedback(true);
+        setTimeout(() => setShowNoDataFeedback(false), 2000);
+      }
+    } catch (e) {
+      console.error("Failed to export CSV:", e);
+      setShowNoDataFeedback(true);
+      setTimeout(() => setShowNoDataFeedback(false), 2000);
+    }
+  }, [csvRows, csvFilename, filename]);
 
   const captureScreenshot = useCallback(async () => {
     if (!targetRef.current) {
@@ -26,8 +71,6 @@ export function ScreenshotButtons({
 
     try {
       setIsCapturing(true);
-
-      // No need to manipulate the original DOM - we'll do it all in onclone
 
       // Comprehensive font loading - wait for all fonts to be ready
       if (document.fonts && document.fonts.ready) {
@@ -62,60 +105,74 @@ export function ScreenshotButtons({
       // Additional wait for rendering to settle and fonts to be applied
       await new Promise((resolve) => setTimeout(resolve, 800));
 
-      // Load html2canvas on demand (kept out of the initial bundle).
-      const html2canvas = (await import("html2canvas")).default;
+      // Render via modern-screenshot (loaded on demand to keep it out of the
+      // initial bundle). Unlike html2canvas, it rasterizes through the browser's
+      // own engine (SVG foreignObject), so text position/metrics match the live
+      // DOM exactly — that fixes the legend numbers sinking below their names and
+      // the clipped title that no amount of html2canvas onclone CSS could correct.
+      // Because text is faithful, none of the old per-element line-height /
+      // tabular-nums / baseline workarounds are needed.
+      const { domToCanvas } = await import("modern-screenshot");
 
-      // Capture the element as canvas with onclone callback
-      const originalCanvas = await html2canvas(targetRef.current, {
-        backgroundColor: "#1f0a29",
-        scale: 2, // Higher quality
-        logging: false,
-        useCORS: true, // Enable cross-origin images
-        allowTaint: true, // Allow tainted canvas
-        onclone: (clonedDoc) => {
-          // Hide screenshot buttons in the cloned document
-          const clonedButtons = clonedDoc.querySelectorAll(
-            "[data-screenshot-hide]"
-          );
-          clonedButtons.forEach((btn) => {
-            (btn as HTMLElement).style.display = "none";
-          });
-
-          // Hide time range selectors in the cloned document
-          const clonedSelectors = clonedDoc.querySelectorAll(
-            "[data-screenshot-compact]"
-          );
-          clonedSelectors.forEach((selector) => {
-            (selector as HTMLElement).style.display = "none";
-          });
-
-          // Force font-family and proper rendering on all text elements in clone
-          const allElements = clonedDoc.body.getElementsByTagName("*");
-          for (let i = 0; i < allElements.length; i++) {
-            const el = allElements[i] as HTMLElement;
-            const computedStyle = window.getComputedStyle(el);
-
-            // Fix headline statistics specifically (large bold text)
-            const fontSize = parseFloat(computedStyle.fontSize);
-            if (fontSize >= 24) {
-              // Headline text
-              el.style.fontFamily =
-                "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-              el.style.fontStretch = "100%";
-              el.style.letterSpacing = "0";
-              el.style.wordSpacing = "0.25em"; // Add explicit word spacing
-              el.style.whiteSpace = "pre"; // Preserve all whitespace
-              el.style.textRendering = "geometricPrecision";
-            } else if (computedStyle.fontFamily.includes("Inter")) {
-              el.style.fontFamily =
-                "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-            }
+      // Reveal screenshot-only elements on the LIVE DOM before capture, not in a
+      // clone hook. modern-screenshot bakes each node's style from the ORIGINAL
+      // element during cloning (before onCloneEachNode runs), so a display:none
+      // set live can't be overridden on the clone afterward. So we flip them here
+      // and restore in `finally`. The flip is synchronous and immediately
+      // followed by the capture, so it isn't visible to the user.
+      const revealed: { el: HTMLElement; cssText: string }[] = [];
+      const reveal = (el: HTMLElement, display: string) => {
+        revealed.push({ el, cssText: el.style.cssText });
+        el.style.setProperty("display", display, "important");
+      };
+      const root = targetRef.current;
+      root
+        .querySelectorAll<HTMLElement>("[data-screenshot-only]")
+        .forEach((el) => reveal(el, "flex"));
+      root
+        .querySelectorAll<HTMLElement>("[data-screenshot-only-inline]")
+        .forEach((el) => {
+          reveal(el, "inline");
+          // The inline suffix sits inside a `truncate` <h2> (overflow:hidden +
+          // nowrap) that would clip the appended text; un-clip its ancestors.
+          let p = el.parentElement;
+          while (p && p !== root.parentElement) {
+            revealed.push({ el: p, cssText: p.style.cssText });
+            p.style.setProperty("overflow", "visible", "important");
+            p.style.setProperty("text-overflow", "clip", "important");
+            p.style.setProperty("white-space", "normal", "important");
+            p = p.parentElement;
           }
-        },
-      });
+        });
 
-      // Create a NEW canvas and copy the html2canvas result to it
-      // This allows us to modify it (html2canvas canvas might be readonly)
+      let originalCanvas: HTMLCanvasElement;
+      try {
+        originalCanvas = await domToCanvas(root, {
+          backgroundColor: "#1f0a29",
+          scale: 2, // Higher quality
+          // Drop interactive-only controls (share pill, time-range selector).
+          // `filter` returns false to exclude a node and its subtree.
+          filter: (node) => {
+            if (node instanceof HTMLElement) {
+              if (
+                node.hasAttribute("data-screenshot-hide") ||
+                node.hasAttribute("data-screenshot-compact")
+              ) {
+                return false;
+              }
+            }
+            return true;
+          },
+        });
+      } finally {
+        // Restore every element we touched to its exact prior inline style.
+        revealed.forEach(({ el, cssText }) => {
+          el.style.cssText = cssText;
+        });
+      }
+
+      // Copy into a fresh canvas we own, so we can composite the watermark onto
+      // it (the rasterizer's canvas may be read-only).
       const canvas = document.createElement("canvas");
       canvas.width = originalCanvas.width;
       canvas.height = originalCanvas.height;
@@ -158,9 +215,11 @@ export function ScreenshotButtons({
                 const watermarkWidth = Math.floor(canvas.width * 0.125);
                 const watermarkHeight = Math.floor(watermarkWidth * (60 / 223)); // Original SVG aspect ratio
 
-                // Position at top center with some margin
+                // Position at top center. Use a small margin tied to the
+                // watermark's OWN height (not a % of the card height, which sat
+                // too low on short cards and overlapped the title).
                 const x = (canvas.width - watermarkWidth) / 2;
-                const y = canvas.height * 0.05; // 5% from top
+                const y = Math.floor(watermarkHeight * 0.4);
 
                 // Draw the watermark with 80% opacity
                 ctx.globalAlpha = 0.8;
@@ -195,90 +254,49 @@ export function ScreenshotButtons({
     }
   }, [targetRef]);
 
-  const handleSave = useCallback(async () => {
-    const canvas = await captureScreenshot();
-    if (!canvas) return;
-
-    // Force a reflow to ensure canvas is fully rendered
-    canvas.offsetHeight;
-
-    // Wait for any pending canvas operations
-    await new Promise((resolve) =>
-      requestAnimationFrame(() => {
-        requestAnimationFrame(resolve);
-      })
-    );
-
-    // Convert to blob using promise
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob((b) => resolve(b), "image/png", 1.0);
-    });
-
-    if (!blob) return;
-
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${filename}-${new Date().toISOString().split("T")[0]}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }, [captureScreenshot, filename]);
-
+  // Share to X. The X intent URL can only carry text + a link (it can't upload
+  // a locally-generated image), and the link's rich preview is the generic
+  // OSMOscope OG card, not this specific chart. So to share the ACTUAL chart we
+  // copy its PNG to the clipboard first, then open the X composer prefilled with
+  // the text + page link; the user pastes the chart image (Ctrl+V) into the
+  // post. This replaced the old Web Share API button, which on desktop only
+  // surfaced the OS share sheet (rarely containing X).
   const handleShare = useCallback(async () => {
+    // A single click can't reliably BOTH copy the chart AND open the X tab:
+    // clipboard.write needs the page focused, but opening a tab steals focus,
+    // and the ~1s capture is too slow to open a tab after it without the popup
+    // being blocked. So we do the reliable half here — capture the chart and
+    // copy it to the clipboard while the page is still focused — then surface a
+    // toast with an "Open X composer" link. The user's click on that link is a
+    // fresh gesture, so the composer opens unblocked, and the chart is already
+    // on their clipboard to paste (Ctrl/Cmd+V).
     const canvas = await captureScreenshot();
     if (!canvas) return;
 
-    // Force a reflow to ensure canvas is fully rendered
-    canvas.offsetHeight;
-
-    // Wait for any pending canvas operations
-    await new Promise((resolve) =>
-      requestAnimationFrame(() => {
-        requestAnimationFrame(resolve);
-      })
-    );
-
-    // Convert to blob
     const blob = await new Promise<Blob | null>((resolve) => {
       canvas.toBlob((b) => resolve(b), "image/png", 1.0);
     });
 
-    if (!blob) return;
-
-    // Try to use Web Share API
-    if (navigator.share) {
+    if (blob) {
       try {
-        const file = new File(
-          [blob],
-          `${filename}-${new Date().toISOString().split("T")[0]}.png`,
-          {
-            type: "image/png",
-          }
-        );
-
-        await navigator.share({
-          files: [file],
-          title: "Osmosis Metrics",
-          text: "Check out these Osmosis metrics!",
-        });
+        await navigator.clipboard.write([
+          new ClipboardItem({ "image/png": blob }),
+        ]);
       } catch (error) {
-        // User cancelled or share failed
-        console.log("Share cancelled or failed:", error);
+        console.error("Failed to copy chart to clipboard for share:", error);
       }
-    } else {
-      // Fallback: download the image
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${filename}-${new Date().toISOString().split("T")[0]}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
     }
-  }, [captureScreenshot, filename]);
+
+    // Context-aware caption for this specific chart, always attributed.
+    const caption = shareText
+      ? `${shareText} ${SHARE_SUFFIX}`
+      : DEFAULT_SHARE_TEXT;
+    const pageUrl = window.location.href;
+    const intent = `https://twitter.com/intent/tweet?text=${encodeURIComponent(
+      caption
+    )}&url=${encodeURIComponent(pageUrl)}`;
+    setShareIntentUrl(intent);
+  }, [captureScreenshot, shareText]);
 
   const handleCopyToClipboard = useCallback(async () => {
     const canvas = await captureScreenshot();
@@ -332,58 +350,73 @@ export function ScreenshotButtons({
         </div>
       )}
 
-      {/* Save Image Button */}
-      <button
-        onClick={handleSave}
-        disabled={isCapturing}
-        className="rounded px-2 py-1 transition-colors hover:bg-white/10 disabled:opacity-50"
-        title="Save as image"
-        aria-label="Save as image"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="text-osmo-100"
-        >
-          {/* Camera icon */}
-          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-          <circle cx="12" cy="13" r="4" />
-        </svg>
-      </button>
+      {/* CSV empty-series feedback */}
+      {showNoDataFeedback && (
+        <div className="absolute -top-10 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-red-500/90 px-3 py-1 text-xs font-medium text-white shadow-lg">
+          No data to export
+        </div>
+      )}
 
-      {/* Share Button (Web Share API) */}
+      {/* Share-to-X: chart is on the clipboard; the user clicks this link to
+          open the composer (a fresh gesture, so it isn't popup-blocked) and
+          pastes the chart in. Dismisses on click or via the close button. */}
+      {shareIntentUrl && (
+        <div className="absolute -top-12 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded bg-osmo-purple px-3 py-1.5 text-xs font-medium text-white shadow-lg">
+          <span>Chart copied.</span>
+          <a
+            href={shareIntentUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setShareIntentUrl(null)}
+            className="inline-flex items-center gap-1 rounded bg-white/20 px-2 py-0.5 font-semibold underline-offset-2 hover:bg-white/30 hover:underline"
+          >
+            Open X composer
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M7 17 17 7M8 7h9v9" />
+            </svg>
+          </a>
+          <button
+            type="button"
+            onClick={() => setShareIntentUrl(null)}
+            aria-label="Dismiss"
+            className="ml-0.5 text-white/70 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Share to X: copies the chart to the clipboard and opens the X composer
+          prefilled with the page link (which carries the OG preview). */}
       <button
         onClick={handleShare}
         disabled={isCapturing}
         className="rounded px-2 py-1 transition-colors hover:bg-white/10 disabled:opacity-50"
-        title="Share image"
-        aria-label="Share image"
+        title="Share to X (copies chart to clipboard to paste)"
+        aria-label="Share to X"
       >
+        {/* X (formerly Twitter) logo */}
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="14"
           height="14"
           viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+          fill="currentColor"
           className="text-osmo-100"
+          aria-hidden="true"
         >
-          {/* Share icon */}
-          <circle cx="18" cy="5" r="3" />
-          <circle cx="6" cy="12" r="3" />
-          <circle cx="18" cy="19" r="3" />
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.66l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.45-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77Z" />
         </svg>
       </button>
 
@@ -412,6 +445,37 @@ export function ScreenshotButtons({
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </svg>
       </button>
+
+      {/* Export CSV: only rendered when the chart supplies a data series (single-
+          datapoint sections omit it). Icon-only, matching the sibling buttons. */}
+      {csvRows && (
+        <button
+          type="button"
+          onClick={handleCsvExport}
+          className="rounded px-2 py-1 transition-colors hover:bg-white/10"
+          title="Export this chart's full data as CSV"
+          aria-label="Export data as CSV"
+        >
+          {/* Download-to-tray icon */}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="text-osmo-100"
+            aria-hidden="true"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }

@@ -695,6 +695,7 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
             onRangeChange={setTimeRange}
             cardRef={cardRef}
             screenshotFilename="protocol-revenue"
+            shareText="How Osmosis protocol revenue is distributed"
           />
         </CardHeader>
         <CardContent>
@@ -722,6 +723,7 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
           onRangeChange={setTimeRange}
           cardRef={cardRef}
           screenshotFilename="protocol-revenue"
+          shareText="How Osmosis protocol revenue is distributed"
           headlineValue={formatUSD(total30Days)}
           headlineLabel={
             <>

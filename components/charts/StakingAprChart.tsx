@@ -198,6 +198,18 @@ export function StakingAprChart({
           onRangeChange={setTimeRange}
           cardRef={cardRef}
           screenshotFilename="staking-apr"
+          shareText="OSMO staking APR over time"
+          csvRows={() =>
+            historicalData
+              .filter((r) => r.stakingApr != null)
+              .map((r) => ({
+                date: r.timestamp,
+                staking_apr_pct: r.stakingApr as number,
+                inflation_rate_pct: r.inflationRate ?? null,
+                total_staked: r.totalStaked ?? null,
+                total_supply: r.totalSupply ?? null,
+              }))
+          }
           headlineValue={formatPercentage(averageApr, 2)}
           headlineLabel={timeRangeLabel(timeRange)}
           headlineColor="text-[#9C27B0]"

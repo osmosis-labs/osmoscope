@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { useTreasuryData } from "@/lib/hooks/useTreasuryData";
 import { Card } from "@/components/ui/Card";
+import { ScreenshotButtons } from "@/components/ScreenshotButtons";
 import { formatNumberWithCommas, formatUsd as usd } from "@/lib/utils";
 import { EXPLORER_BASE, tokenColor } from "@/config/community-pool";
 import { EtherscanMark, MintscanMark } from "./ExplorerIcons";
@@ -239,10 +240,22 @@ function HolderCard({
     // under them (each Card's backdrop-blur is its own stacking context).
     <Card className={`relative p-0 ${tipOpen ? "z-30" : ""}`}>
       <div className="flex w-full items-center justify-between gap-3 px-5 py-4">
-        <button
-          type="button"
+        {/* Collapse toggle. A role="button" DIV rather than a real <button>
+            because the title row contains other interactive elements (the `?`
+            InfoTooltip button and the explorer links); a <button> can't legally
+            nest a <button>, which triggered a hydration error. Keyboard support
+            (Enter/Space) is added to match native button behaviour. */}
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => setOpen((v) => !v)}
-          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setOpen((v) => !v);
+            }
+          }}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
           aria-expanded={open}
         >
           <span
@@ -268,7 +281,7 @@ function HolderCard({
               {holder.assets.length === 1 ? "" : "s"}
             </span>
           </span>
-        </button>
+        </div>
         <span className="shrink-0 text-lg font-bold tabular-nums text-white">
           {usd(holder.totalValue)}
         </span>
@@ -470,6 +483,8 @@ function ValuePie({
   full,
   exOsmo,
   brandColors,
+  shareText,
+  shareFilename,
 }: {
   title: string;
   full: Slice[];
@@ -477,10 +492,15 @@ function ValuePie({
   // When true, color each slice by its token's brand color (tokenColor),
   // falling back to the palette. Used for the by-token pie.
   brandColors?: boolean;
+  // When provided, a share pill (X + copy, no CSV) is shown; the caption is
+  // prefilled into the X composer and the whole card is the screenshot target.
+  shareText?: string;
+  shareFilename?: string;
 }) {
   const [includeOsmo, setIncludeOsmo] = useState(true);
   const source = !includeOsmo && exOsmo ? exOsmo : full;
   const { data: slices } = useMemo(() => foldSmall(source), [source]);
+  const cardRef = useRef<HTMLDivElement>(null);
   const colorFor = (name: string, i: number) => {
     if (name === "Other") return PIE_OTHER;
     if (brandColors)
@@ -489,14 +509,40 @@ function ValuePie({
   };
 
   return (
-    <Card className="flex h-full flex-col">
+    <Card ref={cardRef} className="flex h-full flex-col">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold text-white">{title}</h2>
+        {/* Title + share pill sit together on the left; the OSMO toggle stays
+            pinned to the right. */}
+        <div className="flex min-w-0 items-center gap-2">
+          <h2 className="truncate text-xl font-semibold text-white">
+            {title}
+            {/* Appended only in the screenshot (onclone reveals it) when OSMO is
+                excluded, so the exported title reads "Value by Asset (OSMO
+                Excluded)". Uses inline display so it flows after the title. */}
+            {exOsmo && !includeOsmo && (
+              <span data-screenshot-only-inline className="hidden">
+                {" "}
+                (OSMO Excluded)
+              </span>
+            )}
+          </h2>
+          {shareText && (
+            <ScreenshotButtons
+              targetRef={cardRef}
+              filename={shareFilename ?? "osmosis-treasury"}
+              shareText={shareText}
+            />
+          )}
+        </div>
         {exOsmo && (
+          // Interactive toggle: hidden from screenshots (a live button reads
+          // oddly as a static image). The screenshot-only "OSMO Excluded" label
+          // is rendered under the pie instead (see below).
           <button
             type="button"
             onClick={() => setIncludeOsmo((v) => !v)}
-            className="rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20"
+            data-screenshot-hide
+            className="shrink-0 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20"
           >
             {includeOsmo ? "Exclude OSMO" : "Include OSMO"}
           </button>
@@ -544,15 +590,15 @@ function ValuePie({
           {slices.map((s, i) => (
             <div
               key={s.name}
-              className={`grid items-baseline gap-x-3 ${
+              className={`grid items-start gap-x-3 ${
                 slices.some((x) => x.amount != null)
                   ? "grid-cols-[1fr_auto_4rem]"
                   : "grid-cols-[1fr_4rem]"
               }`}
             >
-              <span className="flex min-w-0 items-baseline gap-2">
+              <span className="flex min-w-0 items-start gap-2">
                 <span
-                  className="mt-1 h-2.5 w-2.5 shrink-0 self-start rounded-sm"
+                  className="mt-1 h-2.5 w-2.5 shrink-0 rounded-sm"
                   style={{ background: colorFor(s.name, i) }}
                 />
                 <span className="min-w-0 break-words text-white">{s.name}</span>
@@ -685,6 +731,8 @@ export function TreasuryView() {
           full={tokenFull}
           exOsmo={tokenExOsmo}
           brandColors
+          shareText="Osmosis community treasury by asset"
+          shareFilename="osmosis-treasury-by-asset"
         />
         <ValuePie
           title="Value by Address"

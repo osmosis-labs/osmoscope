@@ -111,6 +111,7 @@ export function OsmosisDashboard() {
                 <ScreenshotButtons
                   targetRef={burnedPieChartRef}
                   filename="osmo-burned-percentage"
+                  shareText="Share of OSMO supply burned"
                 />
               </div>
               <div className="text-right">

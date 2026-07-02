@@ -84,6 +84,16 @@ export function TokenBalancesChart({
           onRangeChange={setTimeRange}
           cardRef={cardRef}
           screenshotFilename="osmo-supply-distribution"
+          shareText="OSMO supply distribution over time"
+          csvRows={() =>
+            historicalData.map((r) => ({
+              date: r.timestamp,
+              circulating_supply: r.circulatingSupply ?? r.circulating ?? null,
+              restricted_supply: r.restrictedSupply ?? null,
+              community_supply: r.communitySupply ?? null,
+              total_supply: r.totalSupply ?? null,
+            }))
+          }
           headlineValue={formatNumberWithCommas(circulating)}
           headlineLabel="Circulating"
           headlineColor="text-[#7C4DFF]"
