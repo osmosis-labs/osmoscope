@@ -8,16 +8,36 @@
 //   npm run populate-treasury -- --dry   # build + print, do NOT save
 import "dotenv/config";
 import { buildTreasurySnapshot } from "../lib/treasury/snapshot";
-import { saveTreasurySnapshot } from "../lib/treasury/store";
+import {
+  saveTreasurySnapshot,
+  getLatestTreasurySnapshot,
+} from "../lib/treasury/store";
 import { isDatabaseEnabled, prisma } from "../lib/database";
 
 const DRY_RUN = process.argv.includes("--dry");
+// `--force` skips the proportional move guard (for an intentional large change
+// or the very first seed). Without it, the manual script applies the SAME guard
+// the hourly cron uses, so a partial build can't be persisted by hand either.
+const FORCE = process.argv.includes("--force");
 
 async function main() {
   console.log(
     "Building treasury snapshot (this fans out to many chain calls)…"
   );
-  const snapshot = await buildTreasurySnapshot();
+  // Pass the previous stored main-pool value so buildTreasurySnapshot's
+  // proportional move guard runs here too (unless --dry, which never saves, or
+  // --force). The cron does the same; without it the script could persist a
+  // partial build that the cron would refuse.
+  let previousMainPoolValue: number | null = null;
+  if (!DRY_RUN && !FORCE && isDatabaseEnabled()) {
+    try {
+      const prev = await getLatestTreasurySnapshot();
+      previousMainPoolValue = prev?.mainPool.totalValue ?? null;
+    } catch {
+      // no previous snapshot / DB not reachable — guard simply won't apply
+    }
+  }
+  const snapshot = await buildTreasurySnapshot({ previousMainPoolValue });
 
   const fmt = (n: number) =>
     "$" + n.toLocaleString("en-US", { maximumFractionDigits: 0 });

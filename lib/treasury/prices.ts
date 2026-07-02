@@ -84,13 +84,18 @@ export async function buildPriceMap(): Promise<PriceMap> {
     if (cgId) cgIndex[info.denom] = cgId;
   }
 
-  // Absolute per-denom overrides not present in the Numia list.
+  // Absolute per-denom overrides not present in the Numia list. EXPONENT_OVERRIDES
+  // is denom-keyed, so check the denom first (then the symbol) before falling
+  // back to the override's own exponent.
   for (const [denom, ov] of Object.entries(PRICE_OVERRIDES_BY_DENOM)) {
     if (!map[denom]) {
       map[denom] = {
         symbol: ov.symbol,
         price: ov.price,
-        exponent: EXPONENT_OVERRIDES[ov.symbol] ?? ov.exponent,
+        exponent:
+          EXPONENT_OVERRIDES[denom] ??
+          EXPONENT_OVERRIDES[ov.symbol] ??
+          ov.exponent,
       };
     }
   }
@@ -232,6 +237,13 @@ function effectivePriceRow(
     ? (item.exponent as number)
     : 0;
 
+  // EXPONENT_OVERRIDES is keyed by DENOM (factory/.../allOP, ibc/... etc.), so
+  // look up by denom first, then symbol as a fallback. The previous symbol-only
+  // lookups never matched the denom-keyed config, so the curated decimal fixes
+  // were skipped and makeHolding scaled with Numia's default exponent.
+  const expOverride = (sym: string): number | undefined =>
+    EXPONENT_OVERRIDES[denom] ?? EXPONENT_OVERRIDES[sym];
+
   // 1) Per-denom absolute override wins outright.
   const abs = PRICE_OVERRIDES_BY_DENOM[denom];
   if (abs) {
@@ -240,7 +252,7 @@ function effectivePriceRow(
       symbol: sym,
       price: abs.price,
       denom,
-      exponent: EXPONENT_OVERRIDES[sym] ?? abs.exponent ?? apiExp,
+      exponent: expOverride(sym) ?? abs.exponent ?? apiExp,
     };
   }
 
@@ -257,7 +269,7 @@ function effectivePriceRow(
       symbol,
       price: Number(base.price || 0),
       denom,
-      exponent: EXPONENT_OVERRIDES[symbol] ?? base.exponent ?? apiExp,
+      exponent: expOverride(symbol) ?? base.exponent ?? apiExp,
     };
   }
 
@@ -265,7 +277,7 @@ function effectivePriceRow(
     symbol,
     price: Number(apiPrice || 0),
     denom,
-    exponent: EXPONENT_OVERRIDES[symbol] ?? apiExp,
+    exponent: expOverride(symbol) ?? apiExp,
   };
 }
 
