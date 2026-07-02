@@ -141,8 +141,24 @@ export async function buildAndSaveSnapshot(
 
   // Sanity-gate before persisting: refuse partial-failure snapshots (a fetcher
   // returning 0 on a transient error) rather than baking bad data into the series.
+  // Compare against the latest COMPLETE prior row (greatest timestamp carrying
+  // core supply), not just history[last]: a partial or out-of-order tail row
+  // (e.g. a migrate upsert at an odd time, or a legacy duplicate-day row) would
+  // otherwise seed a bad baseline and could trigger a false SnapshotSanityError
+  // that blocks a valid daily snapshot. Mirrors the metrics route's "don't trust
+  // array position" selection.
   const history = await getHistory();
-  const prevSnapshot = history[history.length - 1];
+  const prevSnapshot = history.reduce<(typeof history)[number] | undefined>(
+    (best, r) => {
+      if (r.totalSupply == null || r.mintedSupply == null) return best;
+      if (!best) return r;
+      return new Date(r.timestamp).getTime() >=
+        new Date(best.timestamp).getTime()
+        ? r
+        : best;
+    },
+    undefined
+  );
   assertSnapshotSane({
     ...metrics,
     prev: prevSnapshot

@@ -74,8 +74,15 @@ export async function GET() {
 
     const burnRate = burnRateOver(30);
 
-    // 90-day averages for the headline KPIs.
-    const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
+    // 90-day averages for the headline KPIs. Use the SAME cutoff the charts'
+    // "Last 90 days" filter uses (filterDataByTimeRange: `new Date(now)` then
+    // `setDate(getDate() - 90)`), NOT `Date.now() - 90*86400*1000`. The two
+    // differ across a DST transition (a fixed 90*24h vs 90 calendar days at the
+    // same wall-clock time), which would put a boundary day in one set but not
+    // the other and make the KPI strip disagree with the default chart summary.
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 90);
+    const ninetyDaysAgo = cutoff.getTime();
     const recentIdx = history.findIndex(
       (r) => new Date(r.timestamp).getTime() >= ninetyDaysAgo
     );
