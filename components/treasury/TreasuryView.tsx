@@ -191,10 +191,25 @@ function InfoTooltip({
   }, [open, onOpen]);
 
   return (
+    // Focus/blur live on the WRAPPER, not the button, and blur only closes when
+    // focus leaves the whole widget (relatedTarget check) — so a keyboard user
+    // can Tab from the `?` into the tooltip to reach its links without it closing
+    // (the earlier button-onBlur trapped them). Escape closes it.
     <span
       className="relative inline-flex shrink-0"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onFocus={() => setPinned(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+          setPinned(false);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          setPinned(false);
+          setHovered(false);
+        }
+      }}
     >
       <button
         type="button"
@@ -202,16 +217,15 @@ function InfoTooltip({
           e.stopPropagation();
           setPinned((v) => !v);
         }}
-        onBlur={() => setPinned(false)}
         aria-label="About this address"
         aria-expanded={open}
         className="flex h-4 w-4 items-center justify-center rounded-full border border-white/30 text-[10px] font-bold leading-none text-osmo-200 transition-colors hover:bg-white/20 hover:text-white"
       >
         ?
       </button>
-      {/* Pointer-events enabled only when open, so links inside are clickable
-          (the wrapper's hover handlers keep it open while the pointer is on the
-          tooltip; click-to-pin covers the button->tooltip gap). */}
+      {/* Pointer-events enabled only when open, so links inside are clickable and
+          focusable; the wrapper's focus containment keeps it open while a link
+          inside has focus. */}
       <span
         role="tooltip"
         className={`absolute left-1/2 top-6 w-64 -translate-x-1/2 rounded-lg border border-white/20 bg-osmo-900 p-3 text-left text-xs font-normal leading-relaxed text-osmo-100 shadow-xl transition-opacity duration-150 ${
@@ -551,7 +565,16 @@ function ValuePie({
       {/* flex-1 + items-center vertically centers the chart+legend in the card,
           so a shorter pie sits centered against its taller grid-row sibling. */}
       <div className="flex flex-1 flex-col items-center gap-3 sm:flex-row sm:gap-5">
-        <div className="h-52 w-52 shrink-0">
+        <div
+          className="h-52 w-52 shrink-0"
+          role="img"
+          aria-label={`${title}: ${slices
+            .slice(0, 4)
+            .map((s) => `${s.name} ${usdCompact(s.value)}`)
+            .join(
+              ", "
+            )}${slices.length > 4 ? ", and others" : ""}. Full breakdown in the adjacent list.`}
+        >
           <ResponsiveContainer width="100%" height="100%">
             <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
               <Pie
