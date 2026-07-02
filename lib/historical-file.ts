@@ -203,12 +203,23 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<boolean> {
   });
 }
 
-// Get all historical records
+// Sort records ascending by timestamp. Consumers (metrics KPIs, burnRateOver,
+// recentIdx/findIndex, the net-inflation loop) all ASSUME ascending order, so we
+// guarantee it here at the read boundary rather than trusting each source: the DB
+// path already orders asc, but the file fallback returns parsed JSON as-is, and a
+// hand-edited or out-of-order file would otherwise miscompute window endpoints.
+function sortByTimestampAsc(records: HistoricalRecord[]): HistoricalRecord[] {
+  return [...records].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+}
+
+// Get all historical records (always ascending by timestamp).
 export async function getHistory(): Promise<HistoricalRecord[]> {
   // Use database if enabled (priority 1)
   if (isDatabaseEnabled()) {
     try {
-      return await getHistoryFromDatabase();
+      return sortByTimestampAsc(await getHistoryFromDatabase());
     } catch (error) {
       logger.error("Failed to fetch from database, falling back:", error);
       // Fall through to local file storage
@@ -218,7 +229,7 @@ export async function getHistory(): Promise<HistoricalRecord[]> {
   // Use local file storage (priority 2)
   try {
     const content = await fs.readFile(HISTORY_FILE, "utf-8");
-    return JSON.parse(content);
+    return sortByTimestampAsc(JSON.parse(content));
   } catch {
     // File doesn't exist yet
     return [];
