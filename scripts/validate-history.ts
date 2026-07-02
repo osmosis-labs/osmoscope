@@ -70,39 +70,50 @@ async function validateHistory(): Promise<ValidationResult> {
     const date = record.timestamp.split("T")[0];
 
     // Supply should be positive and within range
-    if (record.totalSupply < 100_000_000 || record.totalSupply > 1_000_000_000) {
+    if (
+      record.totalSupply < 100_000_000 ||
+      record.totalSupply > 1_000_000_000
+    ) {
       result.anomalies.push({
         date,
         issue: `Total supply out of range: ${record.totalSupply}`,
       });
     }
 
-    // Circulating should be less than total
-    if (record.circulatingSupply > record.totalSupply) {
+    // Circulating should be less than total (skip if unset/pending interpolation)
+    if (
+      record.circulatingSupply !== undefined &&
+      record.circulatingSupply > record.totalSupply
+    ) {
       result.anomalies.push({
         date,
         issue: "Circulating supply exceeds total supply",
       });
     }
 
-    // Inflation rate should be reasonable
-    if (record.inflationRate < 0 || record.inflationRate > 25) {
+    // Inflation rate should be reasonable. Genesis-era inflation is legitimately
+    // high (~88% at launch: ~822k OSMO/day minted against a small early supply),
+    // declining via thirdenings. The ceiling allows that real early range and
+    // only flags clearly-broken values (negative or absurd).
+    if (record.inflationRate < 0 || record.inflationRate > 100) {
       result.anomalies.push({
         date,
-        issue: `Inflation rate unusual: ${record.inflationRate}%`,
+        issue: `Inflation rate out of range: ${record.inflationRate}%`,
       });
     }
 
-    // Supply should generally increase over time (with small exceptions)
+    // MINTED supply is the real monotonic invariant — minting only ever adds.
+    // (totalSupply = minted - burned CAN legitimately decrease on days where the
+    // burn delta exceeds the mint delta, so checking totalSupply here would flag
+    // genuine burn-driven dips.) Flag only a real decrease in minted supply.
     if (i > 0) {
-      const prevSupply = history[i - 1].totalSupply;
-      const supplydiff = record.totalSupply - prevSupply;
+      const prevMinted = history[i - 1].mintedSupply;
+      const mintedDiff = record.mintedSupply - prevMinted;
 
-      if (supplydiff < -10000) {
-        // Allow small fluctuations
+      if (mintedDiff < -10000) {
         result.anomalies.push({
           date,
-          issue: `Supply decreased by ${Math.abs(supplydiff)} OSMO`,
+          issue: `Minted supply decreased by ${Math.abs(mintedDiff)} OSMO (mint should be monotonic)`,
         });
       }
     }

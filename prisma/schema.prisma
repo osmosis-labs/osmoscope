@@ -15,11 +15,18 @@ model HistoricalRecord {
   id        BigInt   @id @default(autoincrement())
   timestamp DateTime @unique @db.Timestamptz(6)
 
-  // Supply metrics
+  // Chain "day" epoch this snapshot was taken for. Set by the live snapshot cron;
+  // null on archive-backfilled rows. The epoch-aware cron gates on this advancing,
+  // so it MUST round-trip through the DB or the gate and per-day dedup break.
+  dayEpoch Int?
+
+  // Supply metrics. circulatingSupply is nullable: it is intentionally unset for
+  // the 2023 upgrade window where staked (hence restricted/circulating) can't be
+  // read; coercing it to 0 would surface a false "0 circulating".
   burnedSupply       Decimal  @db.Decimal(20, 6)
   mintedSupply       Decimal  @db.Decimal(20, 6)
   totalSupply        Decimal  @db.Decimal(20, 6)
-  circulatingSupply  Decimal  @db.Decimal(20, 6)
+  circulatingSupply  Decimal? @db.Decimal(20, 6)
   restrictedSupply   Decimal? @db.Decimal(20, 6)
   communitySupply    Decimal? @db.Decimal(20, 6)
 
@@ -28,6 +35,16 @@ model HistoricalRecord {
   totalStaked   Decimal? @db.Decimal(20, 6)
   stakingApr    Decimal? @db.Decimal(10, 6)
   stakingRate   Decimal? @db.Decimal(10, 6)
+
+  // Data-provenance markers. These make the one-off migration scripts idempotent
+  // (normalize-supply-offset / backfill-genesis-2021 / recompute-inflation) and
+  // flag the 2023 window where the restricted staked portion was reconstructed.
+  // They MUST persist so re-running a migration over DB-exported JSON cannot
+  // double-apply (e.g. subtracting the v27 supply offset twice).
+  supplyOffsetNormalized Boolean?
+  genesisBackfilled      Boolean?
+  inflationRecomputed    Boolean?
+  restrictedStakedPending Boolean?
 
   // Distribution parameters (stored as JSON for flexibility)
   distributionProportions            Json?

@@ -2,7 +2,7 @@
 import fs from "fs";
 import path from "path";
 import { prisma, isDatabaseEnabled } from "../lib/database";
-import { Prisma } from "@prisma/client";
+import { jsonToPrisma } from "../lib/historical-file-db";
 import type { HistoricalRecord as JsonRecord } from "../lib/historical-file";
 
 console.log("════════════════════════════════════════");
@@ -44,41 +44,16 @@ function loadJsonFile(filePath: string): JsonRecord[] {
   }
 }
 
-// Transform JSON record to Prisma format
-function transformRecord(
-  record: JsonRecord
-): Prisma.HistoricalRecordCreateInput {
-  // Json? columns: SQL NULL must be Prisma.JsonNull, present values must satisfy
-  // Prisma.InputJsonValue (a plain null is not a valid Json input).
-  const toJson = (
-    value: unknown
-  ): Prisma.InputJsonValue | typeof Prisma.JsonNull =>
-    value == null ? Prisma.JsonNull : (value as Prisma.InputJsonValue);
-
-  return {
-    timestamp: new Date(record.timestamp),
-    burnedSupply: record.burnedSupply || record.burned || 0,
-    mintedSupply: record.mintedSupply,
-    totalSupply: record.totalSupply,
-    circulatingSupply: record.circulatingSupply || record.circulating || 0,
-    restrictedSupply: record.restrictedSupply || null,
-    communitySupply: record.communitySupply || null,
-    inflationRate: record.inflationRate,
-    totalStaked: record.totalStaked || null,
-    stakingApr: record.stakingApr || null,
-    stakingRate: record.stakingRate || null,
-    distributionProportions: toJson(record.distributionProportions),
-    osmoTakerFeeDistribution: toJson(record.osmoTakerFeeDistribution),
-    nonOsmoTakerFeeDistribution: toJson(record.nonOsmoTakerFeeDistribution),
-    communityPoolDenomWhitelist: record.communityPoolDenomWhitelist || [],
-    communityPoolDenomToSwapNonWhitelistedAssetsTo:
-      record.communityPoolDenomToSwapNonWhitelistedAssetsTo || null,
-    txnFeesRevenue: record.txnFeesRevenue || null,
-    takerFeesRevenue: record.takerFeesRevenue || null,
-    protorevRevenue: record.protorevRevenue || null,
-    mevRevenue: record.mevRevenue || null,
-    totalRevenue: record.totalRevenue || null,
-  };
+// Transform JSON record to Prisma format. Reuses the canonical jsonToPrisma from
+// the DB layer so this migration and the live save path stay in lockstep (same
+// null-handling, same marker round-trip). Legacy fields (record.burned /
+// record.circulating) are mapped onto the canonical names first.
+function transformRecord(record: JsonRecord) {
+  return jsonToPrisma({
+    ...record,
+    burnedSupply: record.burnedSupply ?? record.burned ?? 0,
+    circulatingSupply: record.circulatingSupply ?? record.circulating,
+  });
 }
 
 async function migrate() {

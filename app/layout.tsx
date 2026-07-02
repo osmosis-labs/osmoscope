@@ -5,9 +5,25 @@ import { Providers } from "./providers";
 
 const inter = Inter({ subsets: ["latin"] });
 
+const TITLE = "OSMOscope: Tokenomics";
+const DESCRIPTION =
+  "Live OSMO supply, inflation, burn, staking and protocol-revenue metrics for the Osmosis chain.";
+
 export const metadata: Metadata = {
-  title: "OSMO Tokenomics Dashboard",
-  description: "Dashboard for displaying the main tokenomics of the OSMO token",
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    type: "website",
+    images: ["/Osmosis_Icon.png"],
+  },
+  twitter: {
+    card: "summary",
+    title: TITLE,
+    description: DESCRIPTION,
+    images: ["/Osmosis_Icon.png"],
+  },
 };
 
 export default function RootLayout({

@@ -6,6 +6,31 @@ import {
   validateSupply,
 } from "./archive-node";
 
+// Max concurrent address queries within a single date's fetchLockedBalances. The
+// archive node is slow per request (~2-4s); fetching its ~18 restricted addresses
+// serially took ~24s/date. A small concurrency bound overlaps them (~3-5s/date)
+// without hammering the node.
+const CONCURRENCY = 5;
+
+// Run `fn` over `items` with at most `limit` in flight at once; preserves order.
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
 // Known addresses
 const BURN_ADDRESS = "osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmcn030";
 
@@ -23,6 +48,10 @@ const STATIC_LOCKED_ADDRESSES = [
   "osmo1vqy8rqqlydj9wkcyvct9zxl3hc4eqgu3d7hd9k",
   // Foundation / strategic reserve.
   "osmo1ugku28hwyexpljrrmtet05nd6kjlrvr9jz6z00",
+  // Additional foundation strategic-reserve wallet (team-identified, not in the
+  // chain's genesis restricted set). ~29M liquid in 2021-12, drawn down to dust
+  // by mid-2023.
+  "osmo1pvxhtre74l37p6y2rs2e8xyek75z7xlc7g2trt",
   // Original genesis developer-rewards receivers (no longer in mint params).
   "osmo14kjcwdwcqsujkdt8n5qwpd8x8ty2rys5rjrdjj",
   "osmo1gw445ta0aqn26suz2rg3tkqfpxnq2hs224d7gq",
@@ -64,6 +93,10 @@ export interface LockedBalances {
   liquid: Record<string, number>;
   staked: number;
   devVesting: Record<string, number>;
+  // True when the staked portion could not be read at this height (the 2023
+  // SDK-upgrade "invalid denom" window). The caller should treat staked as
+  // unknown for this date and interpolate, not record the partial value.
+  stakedUnavailable?: boolean;
 }
 
 // ===================================
@@ -189,8 +222,8 @@ export async function fetchLockedBalances(
     `Found ${allDevAddresses.length} developer vesting addresses (${devAddresses.length} after de-dup vs static set)`
   );
 
-  // 2. Fetch liquid balance for each static locked address
-  for (const address of STATIC_LOCKED_ADDRESSES) {
+  // Fetch a single address's liquid balance (uosmo -> OSMO), 0 on failure.
+  const fetchLiquid = async (address: string): Promise<number> => {
     try {
       const response = await queryArchiveNodeWithFallback<{
         balance: { denom: string; amount: string };
@@ -199,84 +232,73 @@ export async function fetchLockedBalances(
         date,
         height
       );
-
-      if (!response) {
-        logger.warn(`Could not fetch balance for ${address}`);
-        liquidBalances[address] = 0;
-        continue;
-      }
-
-      const uosmo = parseInt(response.balance?.amount || "0");
-      liquidBalances[address] = uosmo / 1_000_000;
+      if (!response) return 0;
+      return parseInt(response.balance?.amount || "0") / 1_000_000;
     } catch (error) {
       logger.warn(`Could not fetch balance for ${address}:`, error);
-      liquidBalances[address] = 0;
+      return 0;
     }
-  }
+  };
 
-  // 3. Fetch liquid balance for each developer vesting address
-  for (const address of devAddresses) {
-    try {
-      const response = await queryArchiveNodeWithFallback<{
-        balance: { denom: string; amount: string };
-      }>(
-        `/cosmos/bank/v1beta1/balances/${address}/by_denom?denom=uosmo`,
-        date,
-        height
-      );
+  // 2+3. Liquid balances for static locked + dev-vesting addresses, fetched with
+  // bounded concurrency (the archive node is slow per request; serial was ~24s a
+  // date). Each call still uses queryArchiveNodeWithFallback's own retry logic.
+  const staticLiquids = await mapLimit(
+    STATIC_LOCKED_ADDRESSES,
+    CONCURRENCY,
+    (a) => fetchLiquid(a).then((v) => [a, v] as const)
+  );
+  for (const [a, v] of staticLiquids) liquidBalances[a] = v;
+  const devLiquids = await mapLimit(devAddresses, CONCURRENCY, (a) =>
+    fetchLiquid(a).then((v) => [a, v] as const)
+  );
+  for (const [a, v] of devLiquids) devVestingBalances[a] = v;
 
-      if (!response) {
-        logger.warn(`Could not fetch balance for dev address ${address}`);
-        devVestingBalances[address] = 0;
-        continue;
-      }
-
-      const uosmo = parseInt(response.balance?.amount || "0");
-      devVestingBalances[address] = uosmo / 1_000_000;
-    } catch (error) {
-      logger.warn(`Could not fetch balance for dev address ${address}:`, error);
-      devVestingBalances[address] = 0;
-    }
-  }
-
-  // 4. Fetch staked balance for every restricted address that can delegate,
-  //    summed. The keeper counts staked OSMO held by each restricted entity as
-  //    non-circulating.
+  // 4. Staked balance for every restricted address that can delegate, summed
+  //    (bounded concurrency). "invalid denom" at a height means staking state is
+  //    unreadable there (2023 upgrade window) — flag it so the caller interpolates
+  //    rather than recording a falsely-low staked.
   let stakedAmount = 0;
-  for (const address of STAKED_ADDRESSES) {
-    try {
-      const response = await queryArchiveNodeWithFallback<{
-        delegation_responses: Array<{
-          delegation: {
-            delegator_address: string;
-            validator_address: string;
-            shares: string;
-          };
-          balance: { denom: string; amount: string };
-        }>;
-      }>(`/cosmos/staking/v1beta1/delegations/${address}`, date, height);
-
-      if (!response) {
-        logger.warn(`Could not fetch staked balance for ${address} on ${date}`);
-        continue;
+  let stakedUnavailable = false;
+  const stakedResults = await mapLimit(
+    STAKED_ADDRESSES,
+    CONCURRENCY,
+    async (address) => {
+      try {
+        const response = await queryArchiveNodeWithFallback<{
+          delegation_responses: Array<{
+            balance: { denom: string; amount: string };
+          }>;
+        }>(`/cosmos/staking/v1beta1/delegations/${address}`, date, height);
+        if (!response) return 0;
+        let sum = 0;
+        for (const d of response.delegation_responses || [])
+          sum += parseInt(d.balance.amount) / 1_000_000;
+        return sum;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.includes("invalid denom")) {
+          stakedUnavailable = true;
+          logger.warn(
+            `Staked unavailable for ${address} on ${date} (invalid-denom upgrade window)`
+          );
+        } else {
+          logger.warn(
+            `Could not fetch staked for ${address} on ${date}:`,
+            error
+          );
+        }
+        return 0;
       }
-
-      for (const delegation of response.delegation_responses || []) {
-        const uosmo = parseInt(delegation.balance.amount);
-        stakedAmount += uosmo / 1_000_000;
-      }
-    } catch (error) {
-      logger.warn(
-        `Could not fetch staked balance for ${address} on ${date}:`,
-        error
-      );
     }
-  }
+  );
+  for (const s of stakedResults) stakedAmount += s;
 
   return {
     liquid: liquidBalances,
     staked: stakedAmount,
     devVesting: devVestingBalances,
+    stakedUnavailable,
   };
 }
 
@@ -394,6 +416,31 @@ export async function fetchEpochProvisions(
     return uosmo / 1_000_000;
   } catch (error) {
     logger.error(`Failed to fetch epoch provisions for ${date}:`, error);
+    return null;
+  }
+}
+
+// Fetch the chain's OWN reported inflation at a height, as a percentage.
+// This is the authoritative value (the same number `/osmosis/mint/v1beta1/
+// inflation` returns and that the chain uses), so it is preferred over
+// recomputing from provisions/params/supply. Returns null if unavailable, in
+// which case the caller falls back to calculateInflationRate.
+export async function fetchChainInflation(
+  date: string,
+  height: number
+): Promise<number | null> {
+  try {
+    const response = await queryArchiveNodeWithFallback<{
+      inflation: string;
+    }>("/osmosis/mint/v1beta1/inflation", date, height);
+
+    if (!response || response.inflation === undefined) return null;
+
+    const frac = parseFloat(response.inflation); // e.g. "0.0189..." = 1.89%
+    if (!isFinite(frac)) return null;
+    return frac * 100; // percentage
+  } catch (error) {
+    logger.warn(`Could not fetch chain inflation for ${date}:`, error);
     return null;
   }
 }

@@ -12,16 +12,16 @@ import {
   ReferenceLine,
   TooltipProps,
 } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
-import { formatPercentage } from "@/lib/utils";
+import { Card, CardContent, CardHeader } from "../ui/Card";
+import {
+  formatPercentage,
+  formatChartDate,
+  makeMonthlyTicks,
+} from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
 import { useState, useMemo, useRef } from "react";
-import {
-  TimeRangeSelector,
-  TimeRange,
-  filterDataByTimeRange,
-} from "../TimeRangeSelector";
-import { ScreenshotButtons } from "../ScreenshotButtons";
+import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
+import { ChartHeader } from "./ChartHeader";
 
 // Custom tooltip to show only one "Net Inflation" value
 function CustomTooltip({
@@ -90,6 +90,7 @@ export function InflationRatesChart({
   // Memoize expensive chart data calculations
   const {
     chartData,
+    timestamps,
     averageInflationRate,
     averageBurnRate,
     averageNetInflation,
@@ -126,15 +127,38 @@ export function InflationRatesChart({
       const netInflationValue = calculatedInflationRate + calculatedBurnRate;
 
       return {
-        date: new Date(record.timestamp).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "short",
-        }),
+        date: formatChartDate(record.timestamp, timeRange),
         inflationRate: calculatedInflationRate,
         burnRate: calculatedBurnRate,
         netInflation: netInflationValue,
       };
     });
+
+    // Drop trailing day(s) that don't yet have a real burn figure. The most
+    // recent days can carry forward the previous day's cumulative burn (delta
+    // 0) until the day's actual burn is recorded; a net-inflation point built on
+    // a zero burn delta would overstate net inflation (gross, with no burn
+    // offset). Trim those from the end so the line stops at the last day with a
+    // genuine burn measurement. (Only trims the tail; interior 0-burn days, e.g.
+    // pre-2023 when no burn mechanism existed, are left intact.)
+    //
+    // Compute how many trailing days to drop WITHOUT mutating filteredData — for
+    // the "all" range filterDataByTimeRange returns the cached historicalData
+    // reference, so popping it would corrupt the shared cache for every chart.
+    let trimmedLength = baseData.length;
+    while (trimmedLength > 1) {
+      const last = filteredData[trimmedLength - 1];
+      const prev = filteredData[trimmedLength - 2];
+      const burnDelta =
+        (last.burnedSupply || last.burned || 0) -
+        (prev.burnedSupply || prev.burned || 0);
+      if (burnDelta === 0) {
+        trimmedLength--;
+      } else {
+        break;
+      }
+    }
+    baseData.length = trimmedLength; // baseData is a fresh array (from .map), safe to truncate
 
     // Second pass: split into blue and orange lines
     // Rule: If current OR previous is negative → orange, if BOTH are positive → blue
@@ -207,6 +231,9 @@ export function InflationRatesChart({
 
     return {
       chartData,
+      // Slice to the trimmed length so ticks line up with the (possibly trimmed)
+      // chartData; do NOT mutate filteredData (it may be the shared cache array).
+      timestamps: filteredData.slice(0, trimmedLength).map((r) => r.timestamp),
       averageInflationRate,
       averageBurnRate,
       averageNetInflation,
@@ -217,20 +244,17 @@ export function InflationRatesChart({
   return (
     <Card ref={cardRef}>
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle>OSMO Inflation</CardTitle>
-          <div className="flex items-center gap-4">
-            <TimeRangeSelector
-              selectedRange={timeRange}
-              onRangeChange={setTimeRange}
-            />
-            <ScreenshotButtons targetRef={cardRef} filename="osmo-inflation" />
-          </div>
-        </div>
+        <ChartHeader
+          title="OSMO Inflation"
+          timeRange={timeRange}
+          onRangeChange={setTimeRange}
+          cardRef={cardRef}
+          screenshotFilename="osmo-inflation"
+        />
       </CardHeader>
       <CardContent>
         {/* Summary stats above chart */}
-        <div className="mb-6 grid grid-cols-3 gap-4 border-b border-white/10 pb-4">
+        <div className="mb-6 grid grid-cols-3 gap-2 border-b border-white/10 pb-4 sm:gap-4">
           <div className="text-center">
             <div
               className={`text-2xl font-bold ${hasNegativeNetInflation ? "text-[#81C784]" : "text-[#E53935]"}`}
@@ -263,6 +287,11 @@ export function InflationRatesChart({
               dataKey="date"
               stroke="#fff"
               tick={{ fill: "#e0d5f5" }}
+              ticks={makeMonthlyTicks(
+                chartData.map((d) => d.date),
+                timestamps,
+                timeRange
+              )}
               angle={-45}
               textAnchor="end"
               height={80}

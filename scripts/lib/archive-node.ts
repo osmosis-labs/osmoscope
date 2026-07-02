@@ -4,8 +4,81 @@ import { logger } from "../../lib/logger";
 
 // Archive node configuration
 const ARCHIVE_NODE_URL = "https://lcd.archive.osmosis.zone";
-const REQUESTS_PER_SECOND = 1.5; // Increased from 0.5 for faster processing
-const DELAY_MS = 1000 / REQUESTS_PER_SECOND; // ~667ms between requests
+// Global min spacing between requests. fetchLockedBalances now bounds concurrency
+// itself (CONCURRENCY workers), so the per-date cost was dominated by this global
+// throttle (18 addresses x 667ms ~= 12s). Raised to 5 req/s (~200ms spacing) to
+// cut that ~3x while staying polite to the archive node; if Cloudflare rate-limit
+// (429) / challenge responses reappear, the retry/backoff in queryArchiveNode
+// handles them and this can be dialed back.
+const REQUESTS_PER_SECOND = 5;
+const DELAY_MS = 1000 / REQUESTS_PER_SECOND; // 200ms between requests
+
+// Pruned-node fallback for RECENT heights the archive node cannot serve.
+//
+// The archive node is currently stuck at a frozen tip, so heights above that tip
+// (the recent ~month) 404 there. cosmos.directory is a load balancer that
+// rotates across many community nodes; collectively they retain a deep-enough
+// recent window to cover that gap. Individual nodes prune at different depths, so
+// a single request may hit a node that pruned the target height — but because
+// the balancer rotates per request, simply re-requesting the same height usually
+// lands on a node that has it. PRUNED_FALLBACK_RETRIES bounds that re-roll.
+const PRUNED_FALLBACK_URL = "https://rest.cosmos.directory/osmosis";
+// ~30% of rotated nodes lag a given recent height; 12 rerolls puts the
+// per-height failure probability near zero across a multi-hundred-height gap.
+const PRUNED_FALLBACK_RETRIES = 12;
+
+// Main (current) LCD, used only for the chain TIP and block-header lookups.
+// State queries go through the archive node (with pruned fallback); blocks and
+// headers are widely available and we need the REAL tip (not the archive node's
+// frozen one) so date->height interpolation can reach recent dates.
+const MAIN_LCD_URL = "https://lcd.osmosis.zone";
+
+// The archive node's frozen tip. For any height AT OR BELOW this, the archive
+// node is the source of truth and a failure is transient (retry the archive) —
+// we must NOT fall back to cosmos.directory there, because its pruned/current
+// nodes can silently return CURRENT state for a historical height (verified:
+// a 2021 height returned today's supply). The pruned fallback is ONLY safe for
+// heights ABOVE this tip (the recent gap), where any served value is genuinely
+// recent. This is set lazily from the archive's reported tip on first use.
+let archiveTipHeight: number | null = null;
+const ARCHIVE_TIP_FALLBACK = 62_655_964; // last known frozen tip (2026-05-27)
+
+async function getArchiveTip(): Promise<number> {
+  if (archiveTipHeight !== null) return archiveTipHeight;
+  try {
+    const r = await fetch(
+      `${ARCHIVE_NODE_URL}/cosmos/base/tendermint/v1beta1/blocks/latest`,
+      { headers: { Accept: "application/json" } }
+    );
+    const j = (await r.json()) as { block: { header: { height: string } } };
+    archiveTipHeight = parseInt(j.block.header.height, 10);
+  } catch {
+    archiveTipHeight = ARCHIVE_TIP_FALLBACK;
+  }
+  return archiveTipHeight;
+}
+
+// True only for heights ABOVE the archive's tip (the recent gap), where the
+// pruned-node fallback is safe to use.
+async function isHeightInRecentGap(height: number): Promise<boolean> {
+  return height > (await getArchiveTip());
+}
+
+// Substrings that indicate a node does not have state at the requested height
+// (pruned or beyond its tip), as opposed to a transient/transport error.
+function isPrunedOrMissingHeight(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("pruned") ||
+    m.includes("no commit info") ||
+    m.includes("lowest height") ||
+    m.includes("is not available") ||
+    m.includes("bigger then the chain length") ||
+    m.includes("failed to load state at height") ||
+    m.includes("version does not exist") || // IAVL: node lags this height
+    m.includes("height in the future") // archive's frozen tip sees gap as future
+  );
+}
 
 // Epoch cache file
 const EPOCH_CACHE_FILE = path.join(
@@ -136,46 +209,206 @@ export async function queryArchiveNode<T>(
 
   logger.debug(`Querying: ${endpoint}${height ? ` at height ${height}` : ""}`);
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const response = await throttledFetch(url, { headers });
 
-      if (response.status === 429) {
-        const backoffMs = Math.pow(2, attempt) * 1000;
-        logger.warn(`Rate limited, backing off ${backoffMs}ms...`);
-        await sleep(backoffMs);
-        continue;
-      }
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      // Rate limited or transient server/edge errors (502/503/521/522/523/524
+      // from Cloudflare when the archive node is briefly unreachable or
+      // overloaded). These are NOT a data problem — back off and retry rather
+      // than failing the date. On the last attempt, fall through to the
+      // pruned-node fallback (a healthy rotated node can usually serve it).
+      const transient =
+        response.status === 429 ||
+        response.status === 502 ||
+        response.status === 503 ||
+        (response.status >= 520 && response.status <= 524);
+      if (transient) {
+        if (attempt < MAX_ATTEMPTS) {
+          const backoffMs = Math.pow(2, attempt) * 1000;
+          logger.warn(
+            `Archive node ${response.status} (transient), backing off ${backoffMs}ms (attempt ${attempt}/${MAX_ATTEMPTS})...`
+          );
+          await sleep(backoffMs);
+          continue;
+        }
+        if (height && (await isHeightInRecentGap(height))) {
+          logger.warn(
+            `Archive node ${response.status} persisted; using pruned fallback for gap height ${height}`
+          );
+          return await queryPrunedFallback<T>(endpoint, height);
+        }
+        throw new Error(
+          `HTTP ${response.status} after ${MAX_ATTEMPTS} attempts`
+        );
       }
 
       // The archive node sits behind Cloudflare, which can return an HTTP 200
       // "Just a moment..." interstitial (HTML, not JSON) under load. Detect it
       // by content type and back off + retry rather than crashing on JSON.parse.
       const contentType = response.headers.get("content-type") || "";
-      if (!contentType.includes("application/json")) {
-        const backoffMs = Math.pow(2, attempt) * 1000;
-        logger.warn(
-          `Non-JSON response (likely Cloudflare challenge), backing off ${backoffMs}ms...`
-        );
-        await sleep(backoffMs);
-        continue;
+
+      if (!response.ok) {
+        const body = await response.text();
+        // Height beyond the archive's frozen tip (the recent gap): route to the
+        // rotating pruned-node fallback. Gated to gap heights ONLY — for heights
+        // the archive should have, the fallback is unsafe (it can return current
+        // state for a historical height), so we surface the error to retry the
+        // archive instead.
+        if (
+          height &&
+          isPrunedOrMissingHeight(body) &&
+          (await isHeightInRecentGap(height))
+        ) {
+          logger.debug(
+            `Archive node missing gap height ${height}; using pruned fallback`
+          );
+          return await queryPrunedFallback<T>(endpoint, height);
+        }
+        // The staking delegations endpoint returns 500 "invalid denom" across a
+        // 2023 SDK upgrade boundary where this archive node's current binary
+        // can't decode the old-format state. Do NOT route to the cosmos.directory
+        // rotation here: verified that the nodes which respond for these heights
+        // ignore the height header and return CURRENT staked (~61M) instead of the
+        // 2023 value (~50M) — i.e. a silent wrong-era lie. Mark non-retryable so
+        // the caller leaves the value unset and it gets honestly interpolated
+        // between real neighbours rather than corrupted with current-state data.
+        if (response.status === 500 && body.includes("invalid denom")) {
+          const e = new Error(
+            `Non-retryable: invalid denom at height ${height}`
+          );
+          (e as { nonRetryable?: boolean }).nonRetryable = true;
+          throw e;
+        }
+        throw new Error(`HTTP ${response.status}: ${body.slice(0, 120)}`);
       }
 
-      return await response.json();
-    } catch (error: unknown) {
-      if (attempt === 3) {
-        logger.error(`Failed after 3 attempts: ${url}`, error);
-        throw error;
+      if (!contentType.includes("application/json")) {
+        if (attempt < MAX_ATTEMPTS) {
+          const backoffMs = Math.pow(2, attempt) * 1000;
+          logger.warn(
+            `Non-JSON response (likely Cloudflare challenge), backing off ${backoffMs}ms (attempt ${attempt}/${MAX_ATTEMPTS})...`
+          );
+          await sleep(backoffMs);
+          continue;
+        }
+        if (height && (await isHeightInRecentGap(height))) {
+          logger.warn(
+            `Cloudflare challenge persisted; using pruned fallback for gap height ${height}`
+          );
+          return await queryPrunedFallback<T>(endpoint, height);
+        }
+        throw new Error(`Non-JSON response after ${MAX_ATTEMPTS} attempts`);
       }
-      logger.warn(`Attempt ${attempt} failed, retrying...`);
-      await sleep(1000);
+
+      const body = await response.text();
+      const json = JSON.parse(body);
+      // Some Cosmos LCDs return HTTP 200 with an error envelope for a missing
+      // height; route those to the fallback too.
+      if (
+        height &&
+        json &&
+        typeof json.message === "string" &&
+        json.code &&
+        isPrunedOrMissingHeight(json.message) &&
+        (await isHeightInRecentGap(height))
+      ) {
+        logger.debug(
+          `Archive node missing-height envelope for gap height ${height}; using pruned fallback`
+        );
+        return await queryPrunedFallback<T>(endpoint, height);
+      }
+      return json as T;
+    } catch (error: unknown) {
+      // Deterministic, non-retryable errors (e.g. "invalid denom" decode failure
+      // at an upgrade-boundary height): surface immediately so the caller skips
+      // the height fast instead of burning the full retry budget.
+      if ((error as { nonRetryable?: boolean })?.nonRetryable) throw error;
+      // Network-level exception (DNS, connection reset, JSON parse on a
+      // truncated body). Retry with backoff; on the last attempt fall back to a
+      // rotated node if we have a height, otherwise surface the error.
+      if (attempt < MAX_ATTEMPTS) {
+        logger.warn(
+          `Attempt ${attempt}/${MAX_ATTEMPTS} failed (${error instanceof Error ? error.message.slice(0, 80) : "error"}), retrying...`
+        );
+        await sleep(Math.pow(2, attempt) * 1000);
+        continue;
+      }
+      if (height && (await isHeightInRecentGap(height))) {
+        logger.warn(
+          `Archive query errored ${MAX_ATTEMPTS}x; using pruned fallback for gap height ${height}`
+        );
+        try {
+          return await queryPrunedFallback<T>(endpoint, height);
+        } catch (_fbErr: unknown) {
+          // fall through to throw the original error
+        }
+      }
+      logger.error(`Failed after ${MAX_ATTEMPTS} attempts: ${url}`, error);
+      throw error;
     }
   }
 
   throw new Error("Unreachable");
+}
+
+// Query a height the archive node cannot serve, via the rotating pruned-node
+// fallback. Re-requests the SAME height (each request hits a freshly rotated
+// node) until one has the state or the retry budget is exhausted. A pruned-miss
+// is retried; a transport error is retried with a short backoff. Throws if no
+// node in the rotation can serve the height within the budget.
+async function queryPrunedFallback<T>(
+  endpoint: string,
+  height: number
+): Promise<T> {
+  const url = `${PRUNED_FALLBACK_URL}${endpoint}`;
+  const headers: Record<string, string> = {
+    "x-cosmos-block-height": height.toString(),
+  };
+
+  let lastErr = "";
+  for (let attempt = 1; attempt <= PRUNED_FALLBACK_RETRIES; attempt++) {
+    try {
+      const response = await throttledFetch(url, { headers });
+
+      if (response.status === 429) {
+        await sleep(Math.pow(2, attempt) * 500);
+        continue;
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      const body = await response.text();
+
+      if (!response.ok || !contentType.includes("application/json")) {
+        lastErr = `HTTP ${response.status}: ${body.slice(0, 120)}`;
+        // Pruned/missing-height on this rotated node: re-roll immediately onto
+        // another node. Other failures: brief backoff then re-roll.
+        if (!isPrunedOrMissingHeight(body)) await sleep(500);
+        continue;
+      }
+
+      const json = JSON.parse(body);
+      // Some nodes return 200 with an error envelope; treat pruned envelopes as
+      // a miss and re-roll.
+      if (json && typeof json.message === "string" && json.code) {
+        lastErr = json.message;
+        if (!isPrunedOrMissingHeight(json.message)) await sleep(500);
+        continue;
+      }
+      logger.debug(
+        `Pruned-fallback served height ${height} on attempt ${attempt}`
+      );
+      return json as T;
+    } catch (error: unknown) {
+      lastErr = error instanceof Error ? error.message : String(error);
+      await sleep(500);
+    }
+  }
+
+  throw new Error(
+    `Pruned-fallback exhausted ${PRUNED_FALLBACK_RETRIES} rerolls for ${endpoint} at height ${height}: ${lastErr}`
+  );
 }
 
 /**
@@ -192,7 +425,11 @@ export async function queryArchiveNodeWithFallbackAndHeight<T>(
   try {
     const data = await queryArchiveNode<T>(endpoint, targetHeight);
     return { data, height: targetHeight };
-  } catch (_error: unknown) {
+  } catch (error: unknown) {
+    // Deterministic decode errors ("invalid denom" upgrade window) will fail at
+    // every nearby block too — propagate immediately so the caller can flag the
+    // height as unavailable rather than slowly trying neighbours that also 500.
+    if ((error as { nonRetryable?: boolean })?.nonRetryable) throw error;
     logger.warn(
       `Failed to query ${endpoint} at height ${targetHeight}, trying nearby blocks...`
     );
@@ -256,51 +493,71 @@ interface BlockHeader {
   time: string;
 }
 
-async function queryBlockHeader(height: number): Promise<BlockHeader> {
-  // Try the exact height first
-  try {
-    const response = await queryArchiveNode<{
-      block: { header: BlockHeader };
-    }>(`/cosmos/base/tendermint/v1beta1/blocks/${height}`);
-
-    return response.block.header;
-  } catch (_error: unknown) {
-    logger.warn(`Failed to query block ${height}, trying nearby blocks...`);
+// Fetch a single block header by height. Blocks (unlike state) are not
+// state-pruned the same way: the archive node has all OLD blocks, and the main
+// LCD has all RECENT blocks. We try the archive node first, then the main LCD,
+// so headers resolve across the whole range including the recent gap the archive
+// node's frozen tip cannot serve. Returns null if neither source has it.
+async function fetchBlockHeaderAt(height: number): Promise<BlockHeader | null> {
+  const path = `/cosmos/base/tendermint/v1beta1/blocks/${height}`;
+  // Archive node (good for old heights). Skip it for heights ABOVE the archive's
+  // frozen tip: it would 400 ("bigger than chain length") and burn the full
+  // retry budget on every interpolation that probes a high boundary. For those,
+  // go straight to the main LCD.
+  const aboveArchiveTip = height > (await getArchiveTip());
+  if (!aboveArchiveTip) {
+    try {
+      const r = await queryArchiveNode<{ block: { header: BlockHeader } }>(
+        path
+      );
+      return r.block.header;
+    } catch (_e: unknown) {
+      // fall through to main LCD
+    }
   }
+  // Main LCD (good for recent heights, but it block-prunes below a recent floor).
+  try {
+    const resp = await fetch(`${MAIN_LCD_URL}${path}`, {
+      headers: { Accept: "application/json" },
+    });
+    if (resp.ok) {
+      const j = (await resp.json()) as { block?: { header?: BlockHeader } };
+      if (j.block?.header) return j.block.header;
+    }
+  } catch (_e: unknown) {
+    // fall through to pruned fallback
+  }
+  // Pruned-node fallback (cosmos.directory rotation) for heights in the gap that
+  // sit below the main LCD's block-retention floor and above the archive's
+  // frozen tip. Block fetches don't take the height header; the rotation itself
+  // finds a node deep enough to have the block.
+  try {
+    const r = await queryPrunedFallback<{ block: { header: BlockHeader } }>(
+      path,
+      height
+    );
+    if (r.block?.header) return r.block.header;
+  } catch (_e: unknown) {
+    // give up below
+  }
+  return null;
+}
 
-  // Try nearby blocks with smaller offsets for block header queries
+async function queryBlockHeader(height: number): Promise<BlockHeader> {
+  // Try the exact height first, then nearby blocks as a fallback for any single
+  // missing block. Each lookup tries archive node then main LCD.
+  const exact = await fetchBlockHeaderAt(height);
+  if (exact) return exact;
+  logger.warn(`Failed to query block ${height}, trying nearby blocks...`);
+
   const offsets = [1, 5, 10, 50];
-
   for (const offset of offsets) {
-    // Try earlier block first
-    try {
-      const earlierHeight = height - offset;
-      if (earlierHeight > 0) {
-        logger.debug(
-          `  Trying block ${earlierHeight} (${offset} blocks earlier)`
-        );
-        const response = await queryArchiveNode<{
-          block: { header: BlockHeader };
-        }>(`/cosmos/base/tendermint/v1beta1/blocks/${earlierHeight}`);
-
-        return response.block.header;
-      }
-    } catch (_error: unknown) {
-      // Continue to next offset
+    if (height - offset > 0) {
+      const earlier = await fetchBlockHeaderAt(height - offset);
+      if (earlier) return earlier;
     }
-
-    // Try later block
-    try {
-      const laterHeight = height + offset;
-      logger.debug(`  Trying block ${laterHeight} (${offset} blocks later)`);
-      const response = await queryArchiveNode<{
-        block: { header: BlockHeader };
-      }>(`/cosmos/base/tendermint/v1beta1/blocks/${laterHeight}`);
-
-      return response.block.header;
-    } catch (_error: unknown) {
-      // Continue to next offset
-    }
+    const later = await fetchBlockHeaderAt(height + offset);
+    if (later) return later;
   }
 
   throw new Error(`All block header queries failed for height ${height}`);
@@ -320,7 +577,10 @@ async function interpolationSearchBlockByTimestamp(
   let high = maxHeight;
   let result = low;
   let iterations = 0;
-  const MAX_ITERATIONS = 20;
+  // The full chain range (genesis .. tip ~62M blocks) needs ~26 interpolation
+  // steps to converge to within the 600s window; 20 was too few and some dates
+  // exited early (returning a stale bound). 32 leaves comfortable headroom.
+  const MAX_ITERATIONS = 32;
 
   // Cache boundary timestamps: only re-query a boundary header when that
   // boundary actually moves. Over the full chain range a naive search re-queried
@@ -396,20 +656,33 @@ async function interpolationSearchBlockByTimestamp(
     }
   }
 
+  // Loop exhausted without landing inside the window. The search invariant keeps
+  // `high` as the largest block bound at/just-after the target, so `high` is the
+  // best "last block <= target" estimate (within a few minutes). Prefer it over
+  // the `result` accumulator, which can lag at minHeight when every probed guess
+  // fell after the target (search approached purely from above). Clamp to the
+  // valid range as a safety net.
+  const best = Math.max(minHeight, Math.min(high, maxHeight));
   logger.warn(
-    `Search reached max iterations (${MAX_ITERATIONS}), returning ${result}`
+    `Search reached max iterations (${MAX_ITERATIONS}); returning best bound ${best} (result acc=${result})`
   );
-  return result;
+  return best;
 }
 
 /**
- * Fetch the current chain tip height from the archive node.
+ * Fetch the current chain tip height from the MAIN LCD.
+ *
+ * Must use the main LCD, not the archive node: the archive node is stuck at a
+ * frozen tip, so using it here would cap the interpolation upper bound below the
+ * real chain head and make recent dates unreachable.
  */
 async function fetchLatestHeight(): Promise<number> {
-  const response = await queryArchiveNode<{
-    block: { header: BlockHeader };
-  }>("/cosmos/base/tendermint/v1beta1/blocks/latest");
-  return parseInt(response.block.header.height, 10);
+  const response = await fetch(
+    `${MAIN_LCD_URL}/cosmos/base/tendermint/v1beta1/blocks/latest`,
+    { headers: { Accept: "application/json" } }
+  );
+  const json = (await response.json()) as { block: { header: BlockHeader } };
+  return parseInt(json.block.header.height, 10);
 }
 
 async function findBlockHeightForDate(date: string): Promise<number> {

@@ -5,24 +5,28 @@ import { Prisma } from "@prisma/client";
 import type { HistoricalRecord as PrismaRecord } from "@prisma/client";
 import type { HistoricalRecord as JsonRecord } from "./historical-file";
 
-// Convert Prisma record to JSON format
+// Convert Prisma record to JSON format.
+//
+// Decimal columns are nullable, so use `!= null` rather than truthiness — a
+// legitimately-zero value (0 APR, 0 revenue, 0 circulating) must survive the
+// round-trip and not be coerced to `undefined`.
 function prismaToJson(record: PrismaRecord): JsonRecord {
+  const num = (v: Prisma.Decimal | null): number | undefined =>
+    v != null ? Number(v) : undefined;
+
   return {
     timestamp: record.timestamp.toISOString(),
+    dayEpoch: record.dayEpoch ?? undefined,
     burnedSupply: Number(record.burnedSupply),
     mintedSupply: Number(record.mintedSupply),
     totalSupply: Number(record.totalSupply),
-    circulatingSupply: Number(record.circulatingSupply),
-    restrictedSupply: record.restrictedSupply
-      ? Number(record.restrictedSupply)
-      : undefined,
-    communitySupply: record.communitySupply
-      ? Number(record.communitySupply)
-      : undefined,
+    circulatingSupply: num(record.circulatingSupply),
+    restrictedSupply: num(record.restrictedSupply),
+    communitySupply: num(record.communitySupply),
     inflationRate: Number(record.inflationRate),
-    totalStaked: record.totalStaked ? Number(record.totalStaked) : undefined,
-    stakingApr: record.stakingApr ? Number(record.stakingApr) : undefined,
-    stakingRate: record.stakingRate ? Number(record.stakingRate) : undefined,
+    totalStaked: num(record.totalStaked),
+    stakingApr: num(record.stakingApr),
+    stakingRate: num(record.stakingRate),
     distributionProportions: record.distributionProportions as
       | JsonRecord["distributionProportions"]
       | undefined,
@@ -35,17 +39,15 @@ function prismaToJson(record: PrismaRecord): JsonRecord {
     communityPoolDenomWhitelist: record.communityPoolDenomWhitelist,
     communityPoolDenomToSwapNonWhitelistedAssetsTo:
       record.communityPoolDenomToSwapNonWhitelistedAssetsTo || undefined,
-    txnFeesRevenue: record.txnFeesRevenue
-      ? Number(record.txnFeesRevenue)
-      : undefined,
-    takerFeesRevenue: record.takerFeesRevenue
-      ? Number(record.takerFeesRevenue)
-      : undefined,
-    protorevRevenue: record.protorevRevenue
-      ? Number(record.protorevRevenue)
-      : undefined,
-    mevRevenue: record.mevRevenue ? Number(record.mevRevenue) : undefined,
-    totalRevenue: record.totalRevenue ? Number(record.totalRevenue) : undefined,
+    txnFeesRevenue: num(record.txnFeesRevenue),
+    takerFeesRevenue: num(record.takerFeesRevenue),
+    protorevRevenue: num(record.protorevRevenue),
+    mevRevenue: num(record.mevRevenue),
+    totalRevenue: num(record.totalRevenue),
+    supplyOffsetNormalized: record.supplyOffsetNormalized ?? undefined,
+    genesisBackfilled: record.genesisBackfilled ?? undefined,
+    inflationRecomputed: record.inflationRecomputed ?? undefined,
+    restrictedStakedPending: record.restrictedStakedPending ?? undefined,
   };
 }
 
@@ -55,7 +57,9 @@ function prismaToJson(record: PrismaRecord): JsonRecord {
 // Prisma.JsonNull (a plain `null` is not a valid Json input value), and a
 // present value must satisfy Prisma.InputJsonValue. Scalar Decimal columns
 // accept a plain `number`, so those pass through unchanged.
-function jsonToPrisma(record: JsonRecord): Prisma.HistoricalRecordCreateInput {
+export function jsonToPrisma(
+  record: JsonRecord
+): Prisma.HistoricalRecordCreateInput {
   const toJson = (
     value: unknown
   ): Prisma.InputJsonValue | typeof Prisma.JsonNull =>
@@ -63,10 +67,13 @@ function jsonToPrisma(record: JsonRecord): Prisma.HistoricalRecordCreateInput {
 
   return {
     timestamp: new Date(record.timestamp),
+    dayEpoch: record.dayEpoch ?? null,
     burnedSupply: record.burnedSupply,
     mintedSupply: record.mintedSupply,
     totalSupply: record.totalSupply,
-    circulatingSupply: record.circulatingSupply,
+    // circulatingSupply is nullable in the schema: preserve "unset" as NULL
+    // rather than coercing to a false 0.
+    circulatingSupply: record.circulatingSupply ?? null,
     restrictedSupply: record.restrictedSupply ?? null,
     communitySupply: record.communitySupply ?? null,
     inflationRate: record.inflationRate,
@@ -84,10 +91,19 @@ function jsonToPrisma(record: JsonRecord): Prisma.HistoricalRecordCreateInput {
     protorevRevenue: record.protorevRevenue ?? null,
     mevRevenue: record.mevRevenue ?? null,
     totalRevenue: record.totalRevenue ?? null,
+    supplyOffsetNormalized: record.supplyOffsetNormalized ?? null,
+    genesisBackfilled: record.genesisBackfilled ?? null,
+    inflationRecomputed: record.inflationRecomputed ?? null,
+    restrictedStakedPending: record.restrictedStakedPending ?? null,
   };
 }
 
-// Save snapshot to database
+// Save snapshot to database. Replaces any existing rows for the same UTC calendar
+// day (mirroring the file path), so a same-day refresh updates rather than appends
+// and the table never accumulates duplicate-day rows. The delete + create run in a
+// single transaction, so overlapping cron invocations can't both insert a row for
+// the same day (closes the cross-invocation race that the process-local write lock
+// can't cover).
 export async function saveSnapshotToDatabase(data: JsonRecord): Promise<void> {
   if (!isDatabaseEnabled()) {
     throw new Error("Database is not configured");
@@ -95,13 +111,18 @@ export async function saveSnapshotToDatabase(data: JsonRecord): Promise<void> {
 
   try {
     const prismaData = jsonToPrisma(data);
+    const ts = prismaData.timestamp as Date;
+    const dayStart = new Date(
+      Date.UTC(ts.getUTCFullYear(), ts.getUTCMonth(), ts.getUTCDate())
+    );
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
-    // Upsert: update if exists (same day), insert if not
-    await prisma.historicalRecord.upsert({
-      where: { timestamp: prismaData.timestamp },
-      update: prismaData,
-      create: prismaData,
-    });
+    await prisma.$transaction([
+      prisma.historicalRecord.deleteMany({
+        where: { timestamp: { gte: dayStart, lt: dayEnd } },
+      }),
+      prisma.historicalRecord.create({ data: prismaData }),
+    ]);
 
     logger.info(`Saved snapshot to database: ${data.timestamp}`);
   } catch (error) {
@@ -155,11 +176,14 @@ export async function getHistoryRangeFromDatabase(
   }
 }
 
-// Get paginated history
+// Get paginated history. `fromDate` (inclusive, YYYY-MM-DD) applies the same
+// data-start gate the non-paginated endpoint uses, so paginated clients never
+// receive pre-genesis / stub rows the charts exclude.
 export async function getHistoryPaginated(
   page: number = 1,
   pageSize: number = 100,
-  orderBy: "asc" | "desc" = "desc"
+  orderBy: "asc" | "desc" = "desc",
+  fromDate?: string
 ): Promise<{
   records: JsonRecord[];
   total: number;
@@ -173,14 +197,18 @@ export async function getHistoryPaginated(
 
   try {
     const skip = (page - 1) * pageSize;
+    const where = fromDate
+      ? { timestamp: { gte: new Date(`${fromDate}T00:00:00.000Z`) } }
+      : undefined;
 
     const [records, total] = await Promise.all([
       prisma.historicalRecord.findMany({
+        where,
         take: pageSize,
         skip,
         orderBy: { timestamp: orderBy },
       }),
-      prisma.historicalRecord.count(),
+      prisma.historicalRecord.count({ where }),
     ]);
 
     return {
