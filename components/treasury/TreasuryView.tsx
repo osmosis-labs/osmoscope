@@ -190,7 +190,14 @@ function InfoTooltip({
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const [pinned, setPinned] = useState(false);
-  const open = hovered || focused || pinned;
+  // Escape sets this to suppress the popover even though focus is (briefly) still
+  // within the widget after we return it to the button. Cleared on the next
+  // mouse-enter or genuine re-focus, so the tooltip is fully usable again.
+  const [dismissed, setDismissed] = useState(false);
+  const open = !dismissed && (hovered || focused || pinned);
+  // The `?` trigger. Escape returns focus here so keyboard focus is never
+  // stranded on a link inside the just-hidden popover.
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   // Report the effective open state up (drives the card's z-lift). useEffect so
   // the parent update happens after render, not during it.
@@ -205,31 +212,54 @@ function InfoTooltip({
     // (the earlier button-onBlur trapped them). Escape closes it.
     <span
       className="relative inline-flex shrink-0"
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={() => {
+        setDismissed(false);
+        setHovered(true);
+      }}
       onMouseLeave={() => setHovered(false)}
-      onFocus={() => setFocused(true)}
+      onFocus={(e) => {
+        setFocused(true);
+        // Clear an Escape dismissal only when focus ARRIVES FROM OUTSIDE the
+        // widget (a genuine Tab-in). The Escape handler's own refocus of the
+        // button also fires onFocus, but with relatedTarget inside the widget —
+        // clearing on that would immediately un-dismiss and re-show the popover.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+          setDismissed(false);
+      }}
       onBlur={(e) => {
         // Only close on focus LEAVING the whole widget (relatedTarget check), so
         // a keyboard user can Tab from the `?` into the tooltip to reach its
-        // links without it closing.
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+        // links without it closing. Focus leaving also lifts an Escape dismissal,
+        // so a later Tab back in re-opens normally.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
           setFocused(false);
+          setDismissed(false);
+        }
       }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
+          // Hide the popover and return focus to the `?` trigger. If a tooltip
+          // link had focus, closing without moving focus would strand it on a
+          // now-hidden (opacity-0 / pointer-events-none) element and the focus
+          // ring would sit on nothing visible. Returning focus keeps it on real,
+          // visible UI; `dismissed` keeps the popover hidden despite that focus
+          // (it's cleared on the next mouse-enter or Tab-out-and-back-in).
           setPinned(false);
-          setFocused(false);
           setHovered(false);
+          setDismissed(true);
+          buttonRef.current?.focus();
         }
       }}
     >
       <button
+        ref={buttonRef}
         type="button"
         onClick={(e) => {
           e.stopPropagation();
           // Toggle the pin. When unpinning, also drop `focused` — the click
           // itself keeps the button focused, so without this the popover would
           // stay open (focused===true) and the second click would appear inert.
+          setDismissed(false);
           setPinned((v) => {
             if (v) setFocused(false);
             return !v;
