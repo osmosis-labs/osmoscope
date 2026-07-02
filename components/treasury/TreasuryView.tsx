@@ -191,8 +191,10 @@ function InfoTooltip({
   const [focused, setFocused] = useState(false);
   const [pinned, setPinned] = useState(false);
   // Escape sets this to suppress the popover even though focus is (briefly) still
-  // within the widget after we return it to the button. Cleared on the next
-  // mouse-enter or genuine re-focus, so the tooltip is fully usable again.
+  // on the trigger button after we return it there. Cleared on the next
+  // mouse-enter, on focus landing anywhere other than the button (e.g. Tab into
+  // a link), or on focus leaving the widget — so the tooltip is fully usable
+  // again the moment the user does anything but hold Escape's dismissal.
   const [dismissed, setDismissed] = useState(false);
   const open = !dismissed && (hovered || focused || pinned);
   // The `?` trigger. Escape returns focus here so keyboard focus is never
@@ -219,12 +221,14 @@ function InfoTooltip({
       onMouseLeave={() => setHovered(false)}
       onFocus={(e) => {
         setFocused(true);
-        // Clear an Escape dismissal only when focus ARRIVES FROM OUTSIDE the
-        // widget (a genuine Tab-in). The Escape handler's own refocus of the
-        // button also fires onFocus, but with relatedTarget inside the widget —
-        // clearing on that would immediately un-dismiss and re-show the popover.
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null))
-          setDismissed(false);
+        // Clear an Escape dismissal unless focus is on the `?` trigger itself.
+        // Escape hides the popover and returns focus to the button, so we must
+        // NOT un-dismiss for that button-refocus (it would immediately re-show).
+        // But focus landing on ANY other element in the widget — e.g. the user
+        // Tabbing from the button forward into a tooltip link — is genuine intent
+        // to interact, so re-show. (Keying on relatedTarget-from-outside missed
+        // this in-widget button→link move, leaving the link focused but hidden.)
+        if (e.target !== buttonRef.current) setDismissed(false);
       }}
       onBlur={(e) => {
         // Only close on focus LEAVING the whole widget (relatedTarget check), so
