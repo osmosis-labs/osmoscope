@@ -344,9 +344,15 @@ export async function buildTreasurySnapshot(
   // Re-value against the now-complete price map (EVM synthetic denoms untouched).
   const mainRevalued = mainHoldings.map((h) => revalueHolding(h, priceMap));
 
-  // Keep only lines worth >= $1 (matches the sheet), then sort/categorize.
+  // Keep priced lines worth >= $1 (matches the sheet), PLUS any unpriced-but-held
+  // line (nonzero amount, no price) so it still lands in the Community Pool's
+  // asset list and unpricedSymbols — associated holders keep those too, and
+  // dropping them here on the value<$1 rule (unpriced == $0) would hide them only
+  // for the main pool. Priced dust under $1 is still excluded.
   const mainFiltered = mainRevalued.filter(
-    (h) => Number.isFinite(h.value) && h.value >= 1
+    (h) =>
+      (Number.isFinite(h.value) && h.value >= 1) ||
+      (h.priceUnavailable && h.amount > 0)
   );
   const mainSorted = sortHoldings(mainFiltered);
   const mainTotal = mainSorted.reduce((s, h) => s + h.value, 0);

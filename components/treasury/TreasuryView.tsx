@@ -728,7 +728,7 @@ export function TreasuryView() {
             ))}
             {(data.vaultPositions ?? []).map((pos, i) => (
               <VaultCard
-                key={`vault-${pos.label}-${pos.poolRef ?? i}`}
+                key={`vault-${pos.holderLabel}-${pos.kind}-${pos.label}-${pos.poolRef ?? i}`}
                 pos={pos}
               />
             ))}

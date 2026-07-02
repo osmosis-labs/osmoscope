@@ -93,12 +93,26 @@ function makeHolding(
 // Recompute a holding's value/priceUnavailable from the (possibly updated) price
 // map. Used after resolveMissingPrices() fills in held-but-unpriced denoms, so we
 // don't have to re-fetch and re-decompose everything. `amount` is already in
-// display units, so value = amount * price. Holdings whose denom isn't in the map
-// (EVM synthetic denoms like "evm:1:0x…", which were valued by symbol, not denom)
-// are returned unchanged — re-keying them by denom would wrongly zero them.
+// display units, so value = amount * price.
+//
+// EVM synthetic denoms ("evm:1:0x…") aren't in the price map — they were priced
+// BY SYMBOL in evmHoldings, before resolveMissingPrices ran. Re-price them the
+// same way (median-priced denom for the symbol) against the now-complete map, so
+// a Grants Ethereum token whose symbol only got priced by the later SQS/CoinGecko
+// pass isn't left stale/zero. A normal Osmosis denom is re-priced by denom.
 export function revalueHolding(h: Holding, priceMap: PriceMap): Holding {
+  if (h.denom.startsWith("evm:")) {
+    const d = bestDenomForSymbol(priceMap, h.symbol, true);
+    const price = d ? priceMap[d].price : 0;
+    const priceUnavailable = !(price > 0);
+    return {
+      ...h,
+      value: priceUnavailable ? 0 : h.amount * price,
+      priceUnavailable,
+    };
+  }
   const p = priceMap[h.denom];
-  if (!p) return h; // not a real Osmosis denom (e.g. EVM) — keep as valued
+  if (!p) return h; // unknown denom — keep as valued
   const priceUnavailable = !(p.price > 0);
   return {
     ...h,
