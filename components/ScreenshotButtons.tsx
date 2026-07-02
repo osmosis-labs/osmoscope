@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { downloadCsv, type CsvRow } from "@/lib/csv";
 // The screenshot rasterizer (modern-screenshot) is only needed when the user
 // actually captures, so it's dynamically imported inside the capture handler
@@ -39,13 +39,23 @@ export function ScreenshotButtons({
   csvFilename,
 }: ScreenshotButtonsProps) {
   const [isCapturing, setIsCapturing] = useState(false);
+  // Synchronous re-entry lock. The buttons are disabled while capturing, but a
+  // ref guarantees no two captures ever run concurrently (state updates are
+  // async): overlapping runs would each mutate + restore the same live-DOM
+  // inline styles in interleaved finally blocks and corrupt them.
+  const capturingRef = useRef(false);
   const [showCopiedFeedback, setShowCopiedFeedback] = useState(false);
-  // X-share toast: holds the intent URL once the chart has been copied. The user
-  // clicks its link to open the composer — a fresh user gesture, so it's never
-  // popup-blocked, and copying already happened while the page was focused (a
-  // single click can't both copy AND open a tab: opening steals the focus that
-  // clipboard.write requires). null = hidden.
-  const [shareIntentUrl, setShareIntentUrl] = useState<string | null>(null);
+  // X-share toast: holds the composer URL + whether the chart actually made it
+  // to the clipboard. The user clicks the link to open the composer (a fresh
+  // gesture, so it's never popup-blocked); the copy happened earlier while the
+  // page was focused (a single click can't both copy AND open a tab, since
+  // opening steals the focus clipboard.write requires). `copied` drives the
+  // toast wording so we don't tell the user to paste an image that never landed
+  // on the clipboard. null = hidden.
+  const [shareToast, setShareToast] = useState<{
+    url: string;
+    copied: boolean;
+  } | null>(null);
   // Brief "no data" toast if a CSV export is triggered with an empty series.
   const [showNoDataFeedback, setShowNoDataFeedback] = useState(false);
 
@@ -68,8 +78,13 @@ export function ScreenshotButtons({
     if (!targetRef.current) {
       return null;
     }
+    // Refuse to start if a capture is already running (see capturingRef).
+    if (capturingRef.current) {
+      return null;
+    }
 
     try {
+      capturingRef.current = true;
       setIsCapturing(true);
 
       // Comprehensive font loading - wait for all fonts to be ready
@@ -244,12 +259,13 @@ export function ScreenshotButtons({
         }
       }
 
-      // No need to restore anything - we never touched the original DOM
+      // Live-DOM reveals were already restored in the capture's own finally.
       return canvas;
     } catch (error) {
       console.error("Failed to capture screenshot:", error);
       return null;
     } finally {
+      capturingRef.current = false;
       setIsCapturing(false);
     }
   }, [targetRef]);
@@ -277,11 +293,15 @@ export function ScreenshotButtons({
       canvas.toBlob((b) => resolve(b), "image/png", 1.0);
     });
 
+    // Track whether the chart actually reached the clipboard, so the toast only
+    // tells the user to paste when there's really something to paste.
+    let copied = false;
     if (blob) {
       try {
         await navigator.clipboard.write([
           new ClipboardItem({ "image/png": blob }),
         ]);
+        copied = true;
       } catch (error) {
         console.error("Failed to copy chart to clipboard for share:", error);
       }
@@ -295,7 +315,7 @@ export function ScreenshotButtons({
     const intent = `https://twitter.com/intent/tweet?text=${encodeURIComponent(
       caption
     )}&url=${encodeURIComponent(pageUrl)}`;
-    setShareIntentUrl(intent);
+    setShareToast({ url: intent, copied });
   }, [captureScreenshot, shareText]);
 
   const handleCopyToClipboard = useCallback(async () => {
@@ -357,17 +377,20 @@ export function ScreenshotButtons({
         </div>
       )}
 
-      {/* Share-to-X: chart is on the clipboard; the user clicks this link to
-          open the composer (a fresh gesture, so it isn't popup-blocked) and
-          pastes the chart in. Dismisses on click or via the close button. */}
-      {shareIntentUrl && (
+      {/* Share-to-X: the user clicks this link to open the composer (a fresh
+          gesture, so it isn't popup-blocked). The message reflects whether the
+          chart actually reached the clipboard — we don't promise a paste that
+          isn't there. Dismisses on click or via the close button. */}
+      {shareToast && (
         <div className="absolute -top-12 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded bg-osmo-purple px-3 py-1.5 text-xs font-medium text-white shadow-lg">
-          <span>Chart copied.</span>
+          <span>
+            {shareToast.copied ? "Chart copied." : "Couldn’t copy chart."}
+          </span>
           <a
-            href={shareIntentUrl}
+            href={shareToast.url}
             target="_blank"
             rel="noopener noreferrer"
-            onClick={() => setShareIntentUrl(null)}
+            onClick={() => setShareToast(null)}
             className="inline-flex items-center gap-1 rounded bg-white/20 px-2 py-0.5 font-semibold underline-offset-2 hover:bg-white/30 hover:underline"
           >
             Open X composer
@@ -388,7 +411,7 @@ export function ScreenshotButtons({
           </a>
           <button
             type="button"
-            onClick={() => setShareIntentUrl(null)}
+            onClick={() => setShareToast(null)}
             aria-label="Dismiss"
             className="ml-0.5 text-white/70 hover:text-white"
           >
