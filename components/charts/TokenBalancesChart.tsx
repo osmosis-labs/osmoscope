@@ -49,9 +49,14 @@ export function TokenBalancesChart({
   // the stacked total dip rather than show a true gap. Guard by dropping any row
   // that doesn't have all three defined (today no live row is partially-null, but
   // this future-proofs it), mirroring how StakingApr/StakingRatio filter first.
+  // Carry the raw timestamp through the map so it survives the filter: the
+  // monthly-tick builder needs labels and timestamps to stay index-aligned, and
+  // sourcing timestamps from the UNFILTERED filteredData while labels come from
+  // this (possibly shorter) list would mispair them once any row is dropped.
   const chartData = filteredData
     .map((record) => ({
       date: formatChartDate(record.timestamp, timeRange),
+      timestamp: record.timestamp,
       "Circulating Supply":
         record.circulatingSupply ?? record.circulating ?? null,
       "Restricted Supply": record.restrictedSupply ?? null,
@@ -114,7 +119,7 @@ export function TokenBalancesChart({
               tick={{ fill: "#e0d5f5" }}
               ticks={makeMonthlyTicks(
                 chartData.map((d) => d.date),
-                filteredData.map((r) => r.timestamp),
+                chartData.map((d) => d.timestamp),
                 timeRange
               )}
               angle={-45}
