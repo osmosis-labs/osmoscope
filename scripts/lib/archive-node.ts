@@ -197,10 +197,7 @@ export async function throttledFetch(
 
 export async function queryArchiveNode<T>(
   endpoint: string,
-  height?: number,
-  // Optional historical-response validator, forwarded to the pruned fallback so
-  // header-ignoring nodes (that serve current state) are rejected and re-rolled.
-  accept?: (json: T) => boolean
+  height?: number
 ): Promise<T> {
   const url = `${ARCHIVE_NODE_URL}${endpoint}`;
 
@@ -240,7 +237,7 @@ export async function queryArchiveNode<T>(
           logger.warn(
             `Archive node ${response.status} persisted; using pruned fallback for gap height ${height}`
           );
-          return await queryPrunedFallback<T>(endpoint, height, accept);
+          return await queryPrunedFallback<T>(endpoint, height);
         }
         throw new Error(
           `HTTP ${response.status} after ${MAX_ATTEMPTS} attempts`
@@ -267,7 +264,7 @@ export async function queryArchiveNode<T>(
           logger.debug(
             `Archive node missing gap height ${height}; using pruned fallback`
           );
-          return await queryPrunedFallback<T>(endpoint, height, accept);
+          return await queryPrunedFallback<T>(endpoint, height);
         }
         // The staking delegations endpoint returns 500 "invalid denom" across a
         // 2023 SDK upgrade boundary where this archive node's current binary
@@ -300,7 +297,7 @@ export async function queryArchiveNode<T>(
           logger.warn(
             `Cloudflare challenge persisted; using pruned fallback for gap height ${height}`
           );
-          return await queryPrunedFallback<T>(endpoint, height, accept);
+          return await queryPrunedFallback<T>(endpoint, height);
         }
         throw new Error(`Non-JSON response after ${MAX_ATTEMPTS} attempts`);
       }
@@ -320,7 +317,7 @@ export async function queryArchiveNode<T>(
         logger.debug(
           `Archive node missing-height envelope for gap height ${height}; using pruned fallback`
         );
-        return await queryPrunedFallback<T>(endpoint, height, accept);
+        return await queryPrunedFallback<T>(endpoint, height);
       }
       return json as T;
     } catch (error: unknown) {
@@ -343,7 +340,7 @@ export async function queryArchiveNode<T>(
           `Archive query errored ${MAX_ATTEMPTS}x; using pruned fallback for gap height ${height}`
         );
         try {
-          return await queryPrunedFallback<T>(endpoint, height, accept);
+          return await queryPrunedFallback<T>(endpoint, height);
         } catch (_fbErr: unknown) {
           // fall through to throw the original error
         }
@@ -361,19 +358,9 @@ export async function queryArchiveNode<T>(
 // node) until one has the state or the retry budget is exhausted. A pruned-miss
 // is retried; a transport error is retried with a short backoff. Throws if no
 // node in the rotation can serve the height within the budget.
-// `accept` (optional) validates that a JSON response is genuinely historical.
-// Some rotated nodes IGNORE the x-cosmos-block-height header and return CURRENT
-// state (verified: they serve today's balance for a past height). Such a
-// response is well-formed JSON and would otherwise be accepted silently,
-// corrupting the backfill (e.g. burn stamped with today's value for a past day,
-// producing a non-monotonic series). When `accept` returns false, we treat the
-// response as a header-ignoring node and re-roll onto another node, exactly as
-// we do for a pruned miss. Callers that can't distinguish current-vs-historical
-// omit `accept` and get the prior behavior.
 async function queryPrunedFallback<T>(
   endpoint: string,
-  height: number,
-  accept?: (json: T) => boolean
+  height: number
 ): Promise<T> {
   const url = `${PRUNED_FALLBACK_URL}${endpoint}`;
   const headers: Record<string, string> = {
@@ -409,11 +396,6 @@ async function queryPrunedFallback<T>(
         if (!isPrunedOrMissingHeight(json.message)) await sleep(500);
         continue;
       }
-      // Reject a node that ignored the height header and served current state.
-      if (accept && !accept(json as T)) {
-        lastErr = `node likely ignored height ${height} (served current state)`;
-        continue; // re-roll immediately onto another node
-      }
       logger.debug(
         `Pruned-fallback served height ${height} on attempt ${attempt}`
       );
@@ -437,12 +419,11 @@ async function queryPrunedFallback<T>(
 export async function queryArchiveNodeWithFallbackAndHeight<T>(
   endpoint: string,
   targetDate: string,
-  targetHeight: number,
-  accept?: (json: T) => boolean
+  targetHeight: number
 ): Promise<{ data: T; height: number } | null> {
   // Try target height first
   try {
-    const data = await queryArchiveNode<T>(endpoint, targetHeight, accept);
+    const data = await queryArchiveNode<T>(endpoint, targetHeight);
     return { data, height: targetHeight };
   } catch (error: unknown) {
     // Deterministic decode errors ("invalid denom" upgrade window) will fail at
@@ -462,7 +443,7 @@ export async function queryArchiveNodeWithFallbackAndHeight<T>(
     try {
       const earlierHeight = targetHeight - offset;
       logger.info(`  Trying ${offset} blocks earlier: ${earlierHeight}`);
-      const data = await queryArchiveNode<T>(endpoint, earlierHeight, accept);
+      const data = await queryArchiveNode<T>(endpoint, earlierHeight);
       return { data, height: earlierHeight };
     } catch (_error: unknown) {
       logger.warn(`  Block -${offset} failed`);
@@ -472,7 +453,7 @@ export async function queryArchiveNodeWithFallbackAndHeight<T>(
     try {
       const laterHeight = targetHeight + offset;
       logger.info(`  Trying ${offset} blocks later: ${laterHeight}`);
-      const data = await queryArchiveNode<T>(endpoint, laterHeight, accept);
+      const data = await queryArchiveNode<T>(endpoint, laterHeight);
       return { data, height: laterHeight };
     } catch (_error: unknown) {
       logger.warn(`  Block +${offset} failed`);
@@ -493,17 +474,12 @@ export async function queryArchiveNodeWithFallbackAndHeight<T>(
 export async function queryArchiveNodeWithFallback<T>(
   endpoint: string,
   targetDate: string,
-  targetHeight: number,
-  // Optional historical-response validator (see queryPrunedFallback). Lets
-  // balance fetchers reject a rotated node that ignored the height header and
-  // served current state, forcing a re-roll to a header-honoring node.
-  accept?: (json: T) => boolean
+  targetHeight: number
 ): Promise<T | null> {
   const result = await queryArchiveNodeWithFallbackAndHeight<T>(
     endpoint,
     targetDate,
-    targetHeight,
-    accept
+    targetHeight
   );
   return result ? result.data : null;
 }
