@@ -34,6 +34,32 @@ async function mapLimit<T, R>(
 // Known addresses
 const BURN_ADDRESS = "osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmcn030";
 
+// Live LCD (current state), used to read the CURRENT burn balance so we can
+// detect and reject fallback nodes that ignore the height header and serve it
+// for a historical query. Env-configurable, same default as the app.
+const LIVE_LCD_URL =
+  process.env.NEXT_PUBLIC_LCD_BASE_URL || "https://lcd.osmosis.zone";
+
+// Current burn-address uosmo balance as a string (raw amount), or null if it
+// can't be read. Cached for the process — it's the "reject if equal" sentinel,
+// not per-date data. Returning the raw string matches the API response shape so
+// the equality check in fetchBurnedSupply is exact.
+let cachedCurrentBurn: string | null | undefined;
+async function fetchCurrentBurnAmount(): Promise<string | null> {
+  if (cachedCurrentBurn !== undefined) return cachedCurrentBurn;
+  try {
+    const r = await fetch(
+      `${LIVE_LCD_URL}/cosmos/bank/v1beta1/balances/${BURN_ADDRESS}/by_denom?denom=uosmo`,
+      { headers: { Accept: "application/json" } }
+    );
+    const j = (await r.json()) as { balance?: { amount?: string } };
+    cachedCurrentBurn = j?.balance?.amount ?? null;
+  } catch {
+    cachedCurrentBurn = null;
+  }
+  return cachedCurrentBurn;
+}
+
 // Restricted (non-circulating) wallet set, mirrored from the chain's supply
 // methodology in osmosis/x/mint/types/restricted_addresses.go, plus the
 // developer-vesting module account ("developer_vesting_unvested"), which holds
@@ -132,13 +158,26 @@ export async function fetchMintedSupply(date: string): Promise<number> {
 export async function fetchBurnedSupply(date: string): Promise<number> {
   const height = await getBlockHeightForDate(date);
 
+  // A rotated fallback node that ignores the block-height header returns the
+  // CURRENT burn balance for a past height — which is higher than the true
+  // historical value and breaks burn monotonicity (produces a negative burn
+  // rate). Reject any response equal to the current burn balance so the fallback
+  // re-rolls onto a node that actually honors the height. Best-effort: if the
+  // current value can't be read, skip the guard rather than block the fetch.
+  const currentBurn = await fetchCurrentBurnAmount();
+  const accept = currentBurn
+    ? (json: { balance?: { amount?: string } }) =>
+        json?.balance?.amount !== currentBurn
+    : undefined;
+
   try {
     const response = await queryArchiveNodeWithFallback<{
       balance: { denom: string; amount: string };
     }>(
       `/cosmos/bank/v1beta1/balances/${BURN_ADDRESS}/by_denom?denom=uosmo`,
       date,
-      height
+      height,
+      accept
     );
 
     if (!response) {
