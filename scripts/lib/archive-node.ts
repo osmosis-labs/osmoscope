@@ -59,8 +59,10 @@ async function getArchiveTip(): Promise<number> {
 }
 
 // True only for heights ABOVE the archive's tip (the recent gap), where the
-// pruned-node fallback is safe to use.
-async function isHeightInRecentGap(height: number): Promise<boolean> {
+// pruned-node fallback is safe to use. Exported so balance fetchers can gate
+// consensus/fallback logic to the gap (below-tip heights are the archive node's
+// authoritative domain and must NOT be resolved via community nodes).
+export async function isHeightInRecentGap(height: number): Promise<boolean> {
   return height > (await getArchiveTip());
 }
 

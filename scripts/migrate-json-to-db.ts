@@ -119,44 +119,43 @@ async function migrate() {
 
           // Enforce one row per calendar day, but NEVER clobber a live cron row
           // with a backfill row. A cron/live-snapshot row carries dayEpoch; a
-          // bare archive backfill row does not. If a different-timestamp row
-          // already exists for this day AND it has an epoch while the incoming
-          // record does not, the DB row is more authoritative — skip this
-          // record entirely. Otherwise remove the other-time row(s) so the
-          // incoming (richer/equal) record is the day's single row.
+          // bare archive backfill row does not. If the incoming record is a bare
+          // backfill AND ANY same-day row with an epoch already exists in the DB,
+          // that DB row is more authoritative — skip the incoming record.
+          // (Guard on dayEpoch != null in the WHERE clause, not on whichever row
+          // findFirst happens to return, so a day holding both a live row and a
+          // stray backfill row still triggers the skip regardless of ordering.)
           const dayStart = new Date(transformed.timestamp);
           dayStart.setUTCHours(0, 0, 0, 0);
           const dayEnd = new Date(dayStart);
           dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
-          const sameDayOther = await prisma.historicalRecord.findFirst({
-            where: {
-              timestamp: {
-                gte: dayStart,
-                lt: dayEnd,
-                not: transformed.timestamp,
-              },
-            },
-            select: { dayEpoch: true },
-          });
-          if (
-            sameDayOther &&
-            sameDayOther.dayEpoch != null &&
-            transformed.dayEpoch == null
-          ) {
-            // Existing DB row is a live snapshot; incoming is a bare backfill.
-            // Keep the DB row untouched.
-            skipped++;
-            continue;
-          }
-          if (sameDayOther) {
-            await prisma.historicalRecord.deleteMany({
+          const otherTimeSameDay = {
+            gte: dayStart,
+            lt: dayEnd,
+            not: transformed.timestamp,
+          };
+          if (transformed.dayEpoch == null) {
+            const liveRow = await prisma.historicalRecord.findFirst({
               where: {
-                timestamp: {
-                  gte: dayStart,
-                  lt: dayEnd,
-                  not: transformed.timestamp,
-                },
+                timestamp: otherTimeSameDay,
+                dayEpoch: { not: null },
               },
+              select: { timestamp: true },
+            });
+            if (liveRow) {
+              // A live snapshot already owns this day; keep it, drop the backfill.
+              skipped++;
+              continue;
+            }
+          }
+          // Incoming record wins the day: remove any other-timestamp row(s) for
+          // it so it becomes the day's single row.
+          const others = await prisma.historicalRecord.count({
+            where: { timestamp: otherTimeSameDay },
+          });
+          if (others > 0) {
+            await prisma.historicalRecord.deleteMany({
+              where: { timestamp: otherTimeSameDay },
             });
           }
 
