@@ -67,13 +67,22 @@ async function migrate() {
     const historyRecords = loadJsonFile(HISTORY_FILE);
     const archiveRecords = loadJsonFile(ARCHIVE_FILE);
 
-    // Combine and deduplicate by timestamp
+    // Combine and deduplicate by CALENDAR DAY (not exact timestamp). A backfill
+    // row (archive convention ...T17:20:00Z) and a live-snapshot/cron row for the
+    // same day (e.g. ...T17:15:17Z) differ only by time; keying on exact
+    // timestamp let both through and produced two rows for one day, which reads
+    // as a huge negative burn-rate spike on the chart. Key by UTC day and keep
+    // the RICHER record (more populated fields — favors the live snapshot, which
+    // carries dayEpoch/stakingRate the bare archive row lacks).
     const allRecords = [...historyRecords, ...archiveRecords];
     const uniqueRecords = new Map<string, JsonRecord>();
+    const fieldCount = (r: JsonRecord) =>
+      Object.values(r).filter((v) => v != null).length;
 
     for (const record of allRecords) {
-      const key = new Date(record.timestamp).toISOString();
-      if (!uniqueRecords.has(key)) {
+      const key = new Date(record.timestamp).toISOString().split("T")[0];
+      const existing = uniqueRecords.get(key);
+      if (!existing || fieldCount(record) > fieldCount(existing)) {
         uniqueRecords.set(key, record);
       }
     }
@@ -99,6 +108,7 @@ async function migrate() {
     let inserted = 0;
     let updated = 0;
     let failed = 0;
+    let skipped = 0; // incoming backfill rows kept out in favor of a live DB row
 
     for (let i = 0; i < recordsToInsert.length; i += BATCH_SIZE) {
       const batch = recordsToInsert.slice(i, i + BATCH_SIZE);
@@ -106,6 +116,49 @@ async function migrate() {
       for (const record of batch) {
         try {
           const transformed = transformRecord(record);
+
+          // Enforce one row per calendar day, but NEVER clobber a live cron row
+          // with a backfill row. A cron/live-snapshot row carries dayEpoch; a
+          // bare archive backfill row does not. If a different-timestamp row
+          // already exists for this day AND it has an epoch while the incoming
+          // record does not, the DB row is more authoritative — skip this
+          // record entirely. Otherwise remove the other-time row(s) so the
+          // incoming (richer/equal) record is the day's single row.
+          const dayStart = new Date(transformed.timestamp);
+          dayStart.setUTCHours(0, 0, 0, 0);
+          const dayEnd = new Date(dayStart);
+          dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+          const sameDayOther = await prisma.historicalRecord.findFirst({
+            where: {
+              timestamp: {
+                gte: dayStart,
+                lt: dayEnd,
+                not: transformed.timestamp,
+              },
+            },
+            select: { dayEpoch: true },
+          });
+          if (
+            sameDayOther &&
+            sameDayOther.dayEpoch != null &&
+            transformed.dayEpoch == null
+          ) {
+            // Existing DB row is a live snapshot; incoming is a bare backfill.
+            // Keep the DB row untouched.
+            skipped++;
+            continue;
+          }
+          if (sameDayOther) {
+            await prisma.historicalRecord.deleteMany({
+              where: {
+                timestamp: {
+                  gte: dayStart,
+                  lt: dayEnd,
+                  not: transformed.timestamp,
+                },
+              },
+            });
+          }
 
           // Upsert: update if exists, insert if not
           await prisma.historicalRecord.upsert({
@@ -149,6 +202,9 @@ async function migrate() {
     console.log("════════════════════════════════════════");
     console.log(`✓ Inserted: ${inserted} new records`);
     console.log(`✓ Updated: ${updated} existing records`);
+    if (skipped > 0) {
+      console.log(`↷ Skipped: ${skipped} (live DB row kept over backfill)`);
+    }
     if (failed > 0) {
       console.log(`✗ Failed: ${failed} records`);
     }
