@@ -29,11 +29,17 @@ export function CardHeader({ children, className }: CardProps) {
   return <div className={cn("mb-4", className)}>{children}</div>;
 }
 
-export function CardTitle({ children, className }: CardProps) {
+// `as` lets callers set the heading level for a correct document outline
+// (default h3). The tokenomics page passes h2 so it doesn't skip h1 -> h3.
+export function CardTitle({
+  children,
+  className,
+  as: Tag = "h3",
+}: CardProps & { as?: "h2" | "h3" | "h4" }) {
   return (
-    <h3 className={cn("text-xl font-semibold text-white", className)}>
+    <Tag className={cn("text-xl font-semibold text-white", className)}>
       {children}
-    </h3>
+    </Tag>
   );
 }
 

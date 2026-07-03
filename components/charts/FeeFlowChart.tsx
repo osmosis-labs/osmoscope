@@ -98,9 +98,6 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
     }
   };
 
-  // Filter data based on selected time range
-  const filteredData = filterDataByTimeRange(historicalData, timeRange);
-
   const {
     nodes,
     links: _links,
@@ -126,6 +123,10 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
     tobToCommunity,
     revenueAvgs,
   } = useMemo(() => {
+    // Filter to the selected range INSIDE the memo: filterDataByTimeRange
+    // returns a fresh array each call, so computing it outside and listing it as
+    // a dep would defeat this (expensive) memo — it would recompute every render.
+    const filteredData = filterDataByTimeRange(historicalData, timeRange);
     // Get the latest distribution parameters from historical data
     const latestRecord = historicalData[historicalData.length - 1];
     const osmoTakerDist = latestRecord?.osmoTakerFeeDistribution;
@@ -489,7 +490,7 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
       tobToCommunity,
       revenueAvgs,
     };
-  }, [historicalData, filteredData]);
+  }, [historicalData, timeRange]);
 
   const formatUSDCompact = (value: number) => {
     if (value >= 1000000) {

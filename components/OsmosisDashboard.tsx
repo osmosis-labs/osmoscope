@@ -107,7 +107,7 @@ export function OsmosisDashboard() {
           <CardHeader>
             <div className="flex items-start justify-between">
               <div className="flex flex-col items-start gap-2">
-                <CardTitle>OSMO Burned (%)</CardTitle>
+                <CardTitle as="h2">OSMO Burned (%)</CardTitle>
                 <ScreenshotButtons
                   targetRef={burnedPieChartRef}
                   filename="osmo-burned-percentage"
@@ -116,32 +116,40 @@ export function OsmosisDashboard() {
               </div>
               <div className="text-right">
                 <div className="text-3xl font-bold text-[#FF6B6B]">
-                  {data.circulating > 0
-                    ? formatPercentage((data.burned / data.circulating) * 100)
+                  {data.mintedSupply > 0
+                    ? formatPercentage((data.burned / data.mintedSupply) * 100)
                     : "—"}
                 </div>
               </div>
             </div>
           </CardHeader>
           <CardContent className="relative flex items-center justify-center p-1">
+            {/* Burn as a share of TOTAL MINTED OSMO (everything ever created),
+                not circulating — burned OSMO was minted then destroyed, so minted
+                is the correct base; circulating already excludes it and would
+                overstate the ratio. The doughnut pairs burned vs the unburned
+                remainder (minted − burned = current total supply). */}
             <div
               className="w-full"
               role="img"
-              aria-label={`OSMO burned vs circulating: ${formatNumberWithCommas(
+              aria-label={`OSMO burned as a share of total minted supply: ${formatNumberWithCommas(
                 data.burned
               )} OSMO burned (${
-                data.circulating > 0
-                  ? formatPercentage((data.burned / data.circulating) * 100)
+                data.mintedSupply > 0
+                  ? formatPercentage((data.burned / data.mintedSupply) * 100)
                   : "n/a"
-              }), ${formatNumberWithCommas(data.circulating)} OSMO circulating.`}
+              }) of ${formatNumberWithCommas(data.mintedSupply)} OSMO ever minted.`}
             >
               <ResponsiveContainer width="100%" height={380}>
-                {data.circulating > 0 ? (
+                {data.mintedSupply > 0 ? (
                   <PieChart>
                     <Pie
                       data={[
                         { name: "Burned", value: data.burned },
-                        { name: "Circulating Supply", value: data.circulating },
+                        {
+                          name: "Unburned Supply",
+                          value: Math.max(data.mintedSupply - data.burned, 0),
+                        },
                       ]}
                       cx="50%"
                       cy="50%"
@@ -170,7 +178,7 @@ export function OsmosisDashboard() {
                   </PieChart>
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-osmo-300">
-                    Circulating supply unavailable
+                    Supply data unavailable
                   </div>
                 )}
               </ResponsiveContainer>
