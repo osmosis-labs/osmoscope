@@ -63,7 +63,10 @@ export function ChartHeader({
     <div className="flex items-start justify-between gap-3">
       {/* Title + controls + save: stacked on mobile, one wrapping row from `sm` up. */}
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
-        <CardTitle>{title}</CardTitle>
+        {/* h2: sits under the page h1 (SiteHeader) so the tokenomics-page
+            outline is h1 -> h2 per chart, with no skipped level. All ChartHeader
+            users are tokenomics charts; the treasury page has its own h2s. */}
+        <CardTitle as="h2">{title}</CardTitle>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <TimeRangeSelector
             selectedRange={timeRange}

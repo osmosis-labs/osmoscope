@@ -9,14 +9,17 @@ const DESCRIPTION =
 export const metadata: Metadata = {
   title: TITLE,
   description: DESCRIPTION,
+  alternates: { canonical: "/treasury" },
   // Inherits the root 1200x630 opengraph-image (app/opengraph-image.tsx).
   openGraph: {
     title: TITLE,
     description: DESCRIPTION,
     type: "website",
+    url: "/treasury",
   },
   twitter: {
     card: "summary_large_image",
+    site: "@osmosiszone",
     title: TITLE,
     description: DESCRIPTION,
   },

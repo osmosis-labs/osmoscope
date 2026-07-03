@@ -136,7 +136,10 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<boolean> {
   // Use write lock to prevent race conditions
   return lockWrite(async () => {
     try {
-      // TEMPORARY: Force save if we have distribution parameters but they're not in history
+      // Override daily dedup when this snapshot carries taker-fee distribution
+      // params that the latest stored row lacks: those params feed the fee-flow
+      // chart, and without this a same-day re-run (which dedup would skip) would
+      // never persist them. Fires at most once (until a row has the params).
       const existingHistory = await getHistory();
       const latestRecord = existingHistory[existingHistory.length - 1];
       const forceSave =
