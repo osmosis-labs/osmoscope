@@ -222,13 +222,19 @@ export async function fetchBurnedSupply(date: string): Promise<number> {
   // archive path. Consensus takes the majority of samples after excluding the
   // live current value (so a cluster of header-ignoring nodes can't win).
   if (await isHeightInRecentGap(height)) {
+    // Consensus depends on knowing the live current value to exclude current-
+    // echoing (header-ignoring) nodes. If we can't read it, exclusion is
+    // disabled and a cluster of echoers could win the vote — so DON'T trust
+    // consensus in that case; skip it and fall through to the archive path.
     const currentAmt = await fetchCurrentBurnRaw();
-    const consensus = await fetchBurnAtHeightConsensus(height, currentAmt);
-    if (consensus) {
-      return parseInt(consensus) / 1_000_000;
+    if (currentAmt) {
+      const consensus = await fetchBurnAtHeightConsensus(height, currentAmt);
+      if (consensus) {
+        return parseInt(consensus) / 1_000_000;
+      }
     }
-    // No quorum: fall through to the normal archive path (which will itself use
-    // the pruned fallback for a gap height, best-effort).
+    // No current value, or no quorum: fall through to the normal archive path
+    // (which itself uses the pruned fallback for a gap height, best-effort).
   }
 
   try {

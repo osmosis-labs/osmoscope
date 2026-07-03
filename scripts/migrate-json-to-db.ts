@@ -143,28 +143,30 @@ async function migrate() {
               select: { timestamp: true },
             });
             if (liveRow) {
-              // A live snapshot already owns this day; keep it, drop the backfill.
+              // A live snapshot already owns this day; keep it and drop the
+              // incoming backfill. Also purge any OTHER same-day rows that lack
+              // an epoch (stray backfill duplicates), so the live row is the
+              // day's only row — leaving them would still show two chart points.
+              await prisma.historicalRecord.deleteMany({
+                where: { timestamp: otherTimeSameDay, dayEpoch: null },
+              });
               skipped++;
               continue;
             }
           }
-          // Incoming record wins the day: remove any other-timestamp row(s) for
-          // it so it becomes the day's single row.
-          const others = await prisma.historicalRecord.count({
-            where: { timestamp: otherTimeSameDay },
-          });
-          if (others > 0) {
-            await prisma.historicalRecord.deleteMany({
+          // Incoming record wins the day. Remove any other-timestamp row(s) for
+          // it AND write it atomically in one transaction, so a failed upsert
+          // can't leave the day with zero rows (the delete rolls back with it).
+          await prisma.$transaction([
+            prisma.historicalRecord.deleteMany({
               where: { timestamp: otherTimeSameDay },
-            });
-          }
-
-          // Upsert: update if exists, insert if not
-          await prisma.historicalRecord.upsert({
-            where: { timestamp: transformed.timestamp },
-            update: transformed,
-            create: transformed,
-          });
+            }),
+            prisma.historicalRecord.upsert({
+              where: { timestamp: transformed.timestamp },
+              update: transformed,
+              create: transformed,
+            }),
+          ]);
 
           // Check if it was an update or insert
           const existing = await prisma.historicalRecord.findUnique({
