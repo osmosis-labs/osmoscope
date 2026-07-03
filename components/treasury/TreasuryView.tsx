@@ -177,12 +177,29 @@ function InfoTooltip({
   text: string;
   onOpen?: (open: boolean) => void;
 }) {
-  // Track hover and click-pin SEPARATELY, else they fight: on a mouse that's
-  // already hovering (open via hover), a single click would just toggle the
-  // shared flag back off. Visible when hovered OR pinned; click toggles the pin.
+  // Three independent inputs, because collapsing any two into one makes them
+  // fight:
+  //  - hovered: mouse is over the widget (open while true).
+  //  - focused: keyboard/programmatic focus is within the widget (open while
+  //    true) — this is what lets a keyboard user reach the tooltip's links.
+  //  - pinned:  an explicit click toggled it open (survives losing hover/focus).
+  // Only CLICK touches `pinned`. Focus must NOT set `pinned`, or a mouse click
+  // would toggle it twice — once via the focus that a click delivers, once via
+  // the click itself — and land back closed (defeating click-to-pin, worst on
+  // touch where there's no lingering hover to keep it visible).
   const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [pinned, setPinned] = useState(false);
-  const open = hovered || pinned;
+  // Escape sets this to suppress the popover even though focus is (briefly) still
+  // on the trigger button after we return it there. Cleared on the next
+  // mouse-enter, on focus landing anywhere other than the button (e.g. Tab into
+  // a link), or on focus leaving the widget — so the tooltip is fully usable
+  // again the moment the user does anything but hold Escape's dismissal.
+  const [dismissed, setDismissed] = useState(false);
+  const open = !dismissed && (hovered || focused || pinned);
+  // The `?` trigger. Escape returns focus here so keyboard focus is never
+  // stranded on a link inside the just-hidden popover.
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   // Report the effective open state up (drives the card's z-lift). useEffect so
   // the parent update happens after render, not during it.
@@ -191,27 +208,76 @@ function InfoTooltip({
   }, [open, onOpen]);
 
   return (
+    // Focus/blur live on the WRAPPER, not the button, and blur only closes when
+    // focus leaves the whole widget (relatedTarget check) — so a keyboard user
+    // can Tab from the `?` into the tooltip to reach its links without it closing
+    // (the earlier button-onBlur trapped them). Escape closes it.
     <span
       className="relative inline-flex shrink-0"
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={() => {
+        setDismissed(false);
+        setHovered(true);
+      }}
       onMouseLeave={() => setHovered(false)}
+      onFocus={(e) => {
+        setFocused(true);
+        // Clear an Escape dismissal unless focus is on the `?` trigger itself.
+        // Escape hides the popover and returns focus to the button, so we must
+        // NOT un-dismiss for that button-refocus (it would immediately re-show).
+        // But focus landing on ANY other element in the widget — e.g. the user
+        // Tabbing from the button forward into a tooltip link — is genuine intent
+        // to interact, so re-show. (Keying on relatedTarget-from-outside missed
+        // this in-widget button→link move, leaving the link focused but hidden.)
+        if (e.target !== buttonRef.current) setDismissed(false);
+      }}
+      onBlur={(e) => {
+        // Only close on focus LEAVING the whole widget (relatedTarget check), so
+        // a keyboard user can Tab from the `?` into the tooltip to reach its
+        // links without it closing. Focus leaving also lifts an Escape dismissal,
+        // so a later Tab back in re-opens normally.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+          setFocused(false);
+          setDismissed(false);
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          // Hide the popover and return focus to the `?` trigger. If a tooltip
+          // link had focus, closing without moving focus would strand it on a
+          // now-hidden (opacity-0 / pointer-events-none) element and the focus
+          // ring would sit on nothing visible. Returning focus keeps it on real,
+          // visible UI; `dismissed` keeps the popover hidden despite that focus
+          // (it's cleared on the next mouse-enter or Tab-out-and-back-in).
+          setPinned(false);
+          setHovered(false);
+          setDismissed(true);
+          buttonRef.current?.focus();
+        }
+      }}
     >
       <button
+        ref={buttonRef}
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          setPinned((v) => !v);
+          // Toggle the pin. When unpinning, also drop `focused` — the click
+          // itself keeps the button focused, so without this the popover would
+          // stay open (focused===true) and the second click would appear inert.
+          setDismissed(false);
+          setPinned((v) => {
+            if (v) setFocused(false);
+            return !v;
+          });
         }}
-        onBlur={() => setPinned(false)}
         aria-label="About this address"
         aria-expanded={open}
         className="flex h-4 w-4 items-center justify-center rounded-full border border-white/30 text-[10px] font-bold leading-none text-osmo-200 transition-colors hover:bg-white/20 hover:text-white"
       >
         ?
       </button>
-      {/* Pointer-events enabled only when open, so links inside are clickable
-          (the wrapper's hover handlers keep it open while the pointer is on the
-          tooltip; click-to-pin covers the button->tooltip gap). */}
+      {/* Pointer-events enabled only when open, so links inside are clickable and
+          focusable; the wrapper's focus containment keeps it open while a link
+          inside has focus. */}
       <span
         role="tooltip"
         className={`absolute left-1/2 top-6 w-64 -translate-x-1/2 rounded-lg border border-white/20 bg-osmo-900 p-3 text-left text-xs font-normal leading-relaxed text-osmo-100 shadow-xl transition-opacity duration-150 ${
@@ -551,7 +617,16 @@ function ValuePie({
       {/* flex-1 + items-center vertically centers the chart+legend in the card,
           so a shorter pie sits centered against its taller grid-row sibling. */}
       <div className="flex flex-1 flex-col items-center gap-3 sm:flex-row sm:gap-5">
-        <div className="h-52 w-52 shrink-0">
+        <div
+          className="h-52 w-52 shrink-0"
+          role="img"
+          aria-label={`${title}: ${slices
+            .slice(0, 4)
+            .map((s) => `${s.name} ${usdCompact(s.value)}`)
+            .join(
+              ", "
+            )}${slices.length > 4 ? ", and others" : ""}. Full breakdown in the adjacent list.`}
+        >
           <ResponsiveContainer width="100%" height="100%">
             <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
               <Pie

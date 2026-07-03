@@ -517,8 +517,8 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
           title: "Taker Fees",
           total: formatUSD(revenueAvgs.takerFees),
           breakdown: [
-            { label: "OSMO (50%)", value: formatUSD(takerFeesOsmo) },
-            { label: "Non-OSMO (50%)", value: formatUSD(takerFeesNonOsmo) },
+            { label: "OSMO (~50% †)", value: formatUSD(takerFeesOsmo) },
+            { label: "Non-OSMO (~50% †)", value: formatUSD(takerFeesNonOsmo) },
           ],
           flows: [
             {
@@ -548,8 +548,11 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
               label: "Remaining (95%)",
               value: formatUSD(revenueAvgs.protorev * 0.95),
             },
-            { label: "  • OSMO (50%)", value: formatUSD(protorevOsmo) },
-            { label: "  • Non-OSMO (50%)", value: formatUSD(protorevNonOsmo) },
+            { label: "  • OSMO (~50% †)", value: formatUSD(protorevOsmo) },
+            {
+              label: "  • Non-OSMO (~50% †)",
+              value: formatUSD(protorevNonOsmo),
+            },
           ],
           flows: [
             { label: "→ Burn (OSMO)", value: formatUSD(protorevOsmoToBurn) },
@@ -892,6 +895,15 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
                               </span>
                             </div>
                           ))}
+                          {(displayNode === "taker_fees" ||
+                            displayNode === "protorev") && (
+                            <div className="mt-1 text-xs leading-relaxed text-osmo-300">
+                              † The OSMO / non-OSMO split is an assumed ~50/50
+                              source composition, not a live chain figure; the
+                              downstream staking / community / burn split uses
+                              live chain parameters.
+                            </div>
+                          )}
                         </div>
                       )}
 

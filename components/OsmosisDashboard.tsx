@@ -228,7 +228,7 @@ export function OsmosisDashboard() {
             href="https://lcd.osmosis.zone/swagger"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-osmo-purple underline hover:text-white"
+            className="text-osmo-300 underline hover:text-white"
           >
             Osmosis Chain
           </a>{" "}
@@ -237,7 +237,7 @@ export function OsmosisDashboard() {
             href="https://www.numia.xyz/"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-osmo-purple underline hover:text-white"
+            className="text-osmo-300 underline hover:text-white"
           >
             Numia
           </a>
