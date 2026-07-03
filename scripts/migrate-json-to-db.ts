@@ -135,9 +135,14 @@ async function migrate() {
             not: transformed.timestamp,
           };
           if (transformed.dayEpoch == null) {
+            // Look for a live (epoch) row ANYWHERE in the day, INCLUDING one at
+            // the incoming record's exact timestamp. Scoping this to other
+            // timestamps would miss a live row that happens to share the incoming
+            // timestamp, and the upsert's `update` would then clear its dayEpoch
+            // and other live fields with the bare backfill's nulls.
             const liveRow = await prisma.historicalRecord.findFirst({
               where: {
-                timestamp: otherTimeSameDay,
+                timestamp: { gte: dayStart, lt: dayEnd },
                 dayEpoch: { not: null },
               },
               select: { timestamp: true },
