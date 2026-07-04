@@ -162,9 +162,19 @@ async function migrate() {
           // Incoming record wins the day. Remove any other-timestamp row(s) for
           // it AND write it atomically in one transaction, so a failed upsert
           // can't leave the day with zero rows (the delete rolls back with it).
+          //
+          // When the incoming record is a BARE backfill (no dayEpoch), scope the
+          // delete to epoch-less rows only — so even if a live cron row raced in
+          // between the check above and this transaction, the backfill can never
+          // delete it. A live incoming record (has dayEpoch) may replace any
+          // same-day row, including another live one.
+          const deleteWhere =
+            transformed.dayEpoch == null
+              ? { timestamp: otherTimeSameDay, dayEpoch: null }
+              : { timestamp: otherTimeSameDay };
           await prisma.$transaction([
             prisma.historicalRecord.deleteMany({
-              where: { timestamp: otherTimeSameDay },
+              where: deleteWhere,
             }),
             prisma.historicalRecord.upsert({
               where: { timestamp: transformed.timestamp },
