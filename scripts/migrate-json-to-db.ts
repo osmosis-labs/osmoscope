@@ -67,13 +67,22 @@ async function migrate() {
     const historyRecords = loadJsonFile(HISTORY_FILE);
     const archiveRecords = loadJsonFile(ARCHIVE_FILE);
 
-    // Combine and deduplicate by timestamp
+    // Combine and deduplicate by CALENDAR DAY (not exact timestamp). A backfill
+    // row (archive convention ...T17:20:00Z) and a live-snapshot/cron row for the
+    // same day (e.g. ...T17:15:17Z) differ only by time; keying on exact
+    // timestamp let both through and produced two rows for one day, which reads
+    // as a huge negative burn-rate spike on the chart. Key by UTC day and keep
+    // the RICHER record (more populated fields — favors the live snapshot, which
+    // carries dayEpoch/stakingRate the bare archive row lacks).
     const allRecords = [...historyRecords, ...archiveRecords];
     const uniqueRecords = new Map<string, JsonRecord>();
+    const fieldCount = (r: JsonRecord) =>
+      Object.values(r).filter((v) => v != null).length;
 
     for (const record of allRecords) {
-      const key = new Date(record.timestamp).toISOString();
-      if (!uniqueRecords.has(key)) {
+      const key = new Date(record.timestamp).toISOString().split("T")[0];
+      const existing = uniqueRecords.get(key);
+      if (!existing || fieldCount(record) > fieldCount(existing)) {
         uniqueRecords.set(key, record);
       }
     }
@@ -99,6 +108,7 @@ async function migrate() {
     let inserted = 0;
     let updated = 0;
     let failed = 0;
+    let skipped = 0; // incoming backfill rows kept out in favor of a live DB row
 
     for (let i = 0; i < recordsToInsert.length; i += BATCH_SIZE) {
       const batch = recordsToInsert.slice(i, i + BATCH_SIZE);
@@ -107,12 +117,71 @@ async function migrate() {
         try {
           const transformed = transformRecord(record);
 
-          // Upsert: update if exists, insert if not
-          await prisma.historicalRecord.upsert({
-            where: { timestamp: transformed.timestamp },
-            update: transformed,
-            create: transformed,
-          });
+          // Enforce one row per calendar day, but NEVER clobber a live cron row
+          // with a backfill row. A cron/live-snapshot row carries dayEpoch; a
+          // bare archive backfill row does not. If the incoming record is a bare
+          // backfill AND ANY same-day row with an epoch already exists in the DB,
+          // that DB row is more authoritative — skip the incoming record.
+          // (Guard on dayEpoch != null in the WHERE clause, not on whichever row
+          // findFirst happens to return, so a day holding both a live row and a
+          // stray backfill row still triggers the skip regardless of ordering.)
+          const dayStart = new Date(transformed.timestamp);
+          dayStart.setUTCHours(0, 0, 0, 0);
+          const dayEnd = new Date(dayStart);
+          dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+          const otherTimeSameDay = {
+            gte: dayStart,
+            lt: dayEnd,
+            not: transformed.timestamp,
+          };
+          if (transformed.dayEpoch == null) {
+            // Look for a live (epoch) row ANYWHERE in the day, INCLUDING one at
+            // the incoming record's exact timestamp. Scoping this to other
+            // timestamps would miss a live row that happens to share the incoming
+            // timestamp, and the upsert's `update` would then clear its dayEpoch
+            // and other live fields with the bare backfill's nulls.
+            const liveRow = await prisma.historicalRecord.findFirst({
+              where: {
+                timestamp: { gte: dayStart, lt: dayEnd },
+                dayEpoch: { not: null },
+              },
+              select: { timestamp: true },
+            });
+            if (liveRow) {
+              // A live snapshot already owns this day; keep it and drop the
+              // incoming backfill. Also purge any OTHER same-day rows that lack
+              // an epoch (stray backfill duplicates), so the live row is the
+              // day's only row — leaving them would still show two chart points.
+              await prisma.historicalRecord.deleteMany({
+                where: { timestamp: otherTimeSameDay, dayEpoch: null },
+              });
+              skipped++;
+              continue;
+            }
+          }
+          // Incoming record wins the day. Remove any other-timestamp row(s) for
+          // it AND write it atomically in one transaction, so a failed upsert
+          // can't leave the day with zero rows (the delete rolls back with it).
+          //
+          // When the incoming record is a BARE backfill (no dayEpoch), scope the
+          // delete to epoch-less rows only — so even if a live cron row raced in
+          // between the check above and this transaction, the backfill can never
+          // delete it. A live incoming record (has dayEpoch) may replace any
+          // same-day row, including another live one.
+          const deleteWhere =
+            transformed.dayEpoch == null
+              ? { timestamp: otherTimeSameDay, dayEpoch: null }
+              : { timestamp: otherTimeSameDay };
+          await prisma.$transaction([
+            prisma.historicalRecord.deleteMany({
+              where: deleteWhere,
+            }),
+            prisma.historicalRecord.upsert({
+              where: { timestamp: transformed.timestamp },
+              update: transformed,
+              create: transformed,
+            }),
+          ]);
 
           // Check if it was an update or insert
           const existing = await prisma.historicalRecord.findUnique({
@@ -149,6 +218,9 @@ async function migrate() {
     console.log("════════════════════════════════════════");
     console.log(`✓ Inserted: ${inserted} new records`);
     console.log(`✓ Updated: ${updated} existing records`);
+    if (skipped > 0) {
+      console.log(`↷ Skipped: ${skipped} (live DB row kept over backfill)`);
+    }
     if (failed > 0) {
       console.log(`✗ Failed: ${failed} records`);
     }

@@ -4,6 +4,7 @@ import {
   queryArchiveNodeWithFallback,
   getBlockHeightForDate,
   validateSupply,
+  isHeightInRecentGap,
 } from "./archive-node";
 
 // Max concurrent address queries within a single date's fetchLockedBalances. The
@@ -33,6 +34,84 @@ async function mapLimit<T, R>(
 
 // Known addresses
 const BURN_ADDRESS = "osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmcn030";
+
+// Rotating community-node fallback (same balancer the archive layer uses), and
+// the live LCD for reading the current burn balance. We query the fallback
+// directly here for burn consensus (below).
+const PRUNED_FALLBACK_URL = "https://rest.cosmos.directory/osmosis";
+const LIVE_LCD_URL =
+  process.env.NEXT_PUBLIC_LCD_BASE_URL || "https://lcd.osmosis.zone";
+const BURN_BALANCE_PATH = `/cosmos/bank/v1beta1/balances/${BURN_ADDRESS}/by_denom?denom=uosmo`;
+
+// Current (live) burn balance as a raw uosmo string, read fresh — NOT cached, so
+// it can't go stale across a long backfill.
+async function fetchCurrentBurnRaw(): Promise<string | null> {
+  try {
+    const r = await fetch(`${LIVE_LCD_URL}${BURN_BALANCE_PATH}`, {
+      headers: { Accept: "application/json" },
+    });
+    const j = (await r.json()) as { balance?: { amount?: string } };
+    return j?.balance?.amount ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Read the burn balance at a recent-gap height via CONSENSUS across rotated
+// nodes. The balancer mixes three node kinds for such a height: (a) header-
+// honoring nodes that return the TRUE historical value, (b) header-ignoring
+// nodes that return CURRENT state, and (c) nodes that pruned the height and
+// error. We sample several times and take the majority — but FIRST exclude any
+// sample equal to the live current value, because header-ignoring nodes all
+// echo that same inflated number and can otherwise out-vote the honoring nodes
+// (plurality alone is not enough). Combining consensus WITH current-exclusion
+// covers both failure modes: no single lucky read is trusted, and a cluster of
+// current-echoing nodes can't win. `currentAmt` is read fresh by the caller.
+// Returns the raw uosmo string, or null if no historical value reached quorum.
+const BURN_CONSENSUS_SAMPLES = 12;
+const BURN_CONSENSUS_MIN_VOTES = 3; // need agreement, not a single lucky read
+async function fetchBurnAtHeightConsensus(
+  height: number,
+  currentAmt: string | null
+): Promise<string | null> {
+  const url = `${PRUNED_FALLBACK_URL}${BURN_BALANCE_PATH}`;
+  const counts = new Map<string, number>();
+  for (let i = 0; i < BURN_CONSENSUS_SAMPLES; i++) {
+    try {
+      const r = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          "x-cosmos-block-height": String(height),
+        },
+      });
+      if (!r.ok) continue; // pruned / error node: skip
+      const j = (await r.json()) as {
+        balance?: { amount?: string };
+        code?: number;
+      };
+      const amt = j?.balance?.amount;
+      if (!amt || j.code) continue; // error envelope or empty: skip
+      // Exclude current-state echoes: a node serving the live value for a past
+      // height ignored the header. (If the true historical burn genuinely equals
+      // current — a day with no burns since — the archive-path fallback below
+      // still yields it; we simply don't let current win the consensus vote.)
+      if (currentAmt && amt === currentAmt) continue;
+      counts.set(amt, (counts.get(amt) ?? 0) + 1);
+    } catch {
+      /* transport error: skip this sample */
+    }
+  }
+  // Majority of the historical (non-current) candidates, if it cleared quorum.
+  let best: string | null = null;
+  let bestVotes = 0;
+  for (const [amt, votes] of counts) {
+    if (votes > bestVotes) {
+      best = amt;
+      bestVotes = votes;
+    }
+  }
+  return bestVotes >= BURN_CONSENSUS_MIN_VOTES ? best : null;
+}
 
 // Restricted (non-circulating) wallet set, mirrored from the chain's supply
 // methodology in osmosis/x/mint/types/restricted_addresses.go, plus the
@@ -131,6 +210,32 @@ export async function fetchMintedSupply(date: string): Promise<number> {
 
 export async function fetchBurnedSupply(date: string): Promise<number> {
   const height = await getBlockHeightForDate(date);
+
+  // Burn is a cumulative balance; a header-ignoring fallback node that returns
+  // CURRENT state for a past height inflates it and breaks monotonicity (the
+  // negative-burn-rate bug fixed here).
+  //
+  // ONLY for recent-gap heights (above the frozen archive tip, served solely by
+  // the rotating community nodes) do we resolve via consensus. Below-tip heights
+  // are the archive node's authoritative domain — routing them through community
+  // nodes risks a wrong-quorum current-state read, so those go straight to the
+  // archive path. Consensus takes the majority of samples after excluding the
+  // live current value (so a cluster of header-ignoring nodes can't win).
+  if (await isHeightInRecentGap(height)) {
+    // Consensus depends on knowing the live current value to exclude current-
+    // echoing (header-ignoring) nodes. If we can't read it, exclusion is
+    // disabled and a cluster of echoers could win the vote — so DON'T trust
+    // consensus in that case; skip it and fall through to the archive path.
+    const currentAmt = await fetchCurrentBurnRaw();
+    if (currentAmt) {
+      const consensus = await fetchBurnAtHeightConsensus(height, currentAmt);
+      if (consensus) {
+        return parseInt(consensus) / 1_000_000;
+      }
+    }
+    // No current value, or no quorum: fall through to the normal archive path
+    // (which itself uses the pruned fallback for a gap height, best-effort).
+  }
 
   try {
     const response = await queryArchiveNodeWithFallback<{
