@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { ScreenshotButtons } from "@/components/ScreenshotButtons";
 import { formatNumberWithCommas, formatUsd as usd } from "@/lib/utils";
 import { EXPLORER_BASE, tokenColor } from "@/config/community-pool";
-import { EtherscanMark, MintscanMark } from "./ExplorerIcons";
+import { EtherscanMark, MintscanMark, SolscanMark } from "./ExplorerIcons";
 import type {
   AssetTotal,
   TreasuryHolder,
@@ -89,6 +89,8 @@ function ExplorerLink({ addr }: { addr: HolderAddress }) {
     >
       {addr.chain === "ethereum" ? (
         <EtherscanMark className="h-full w-full text-white" />
+      ) : addr.chain === "solana" ? (
+        <SolscanMark className="h-full w-full" />
       ) : (
         <MintscanMark className="h-full w-full" />
       )}

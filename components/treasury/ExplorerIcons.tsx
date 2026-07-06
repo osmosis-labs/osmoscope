@@ -55,3 +55,38 @@ export function MintscanMark(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+// Solscan mark: a rounded-square in Solscan's purple→teal brand gradient with a
+// white "S" scan glyph. Inlined (no external request) to work under the strict
+// CSP, matching the Etherscan/Mintscan marks. The gradient id is scoped so
+// multiple instances on a page don't collide.
+export function SolscanMark(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label="Solscan"
+      {...props}
+    >
+      <defs>
+        <linearGradient
+          id="solscan-grad"
+          x1="0"
+          y1="0"
+          x2="24"
+          y2="24"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0" stopColor="#9945FF" />
+          <stop offset="1" stopColor="#14F195" />
+        </linearGradient>
+      </defs>
+      <rect width="24" height="24" rx="6" fill="url(#solscan-grad)" />
+      <path
+        d="M16.2 8.1a4.4 4.4 0 0 0-3.9-1.6c-2.2.2-3.5 1.4-3.5 3 0 1.7 1.3 2.5 3.6 2.9 1.7.3 2.2.6 2.2 1.2 0 .7-.7 1.1-1.9 1.1a3 3 0 0 1-2.6-1.2l-1.9 1.3a5 5 0 0 0 4.4 2c2.4 0 4-1.2 4-3.2 0-1.8-1.3-2.6-3.7-3-1.6-.3-2.1-.5-2.1-1.1 0-.6.6-1 1.6-1 .9 0 1.7.4 2.2 1.1l1.5-1.5Z"
+        fill="#fff"
+      />
+    </svg>
+  );
+}

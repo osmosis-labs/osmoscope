@@ -10,6 +10,8 @@ import {
   fetchCosmwasmSmartData,
   fetchEvmNativeBalance,
   fetchErc20Balance,
+  fetchSolanaNativeBalance,
+  fetchSolanaSplBalance,
 } from "./fetch";
 import type { PriceMap, PriceInfo } from "./prices";
 import { fetchClPositions, clPositionToHoldings } from "./cl";
@@ -19,6 +21,8 @@ import {
   MAGMA_HOLDER_ADDRESS,
   EVM_NATIVE_ASSETS,
   EVM_TOKEN_ALLOWLIST,
+  SOLANA_NATIVE_ASSET,
+  SOLANA_TOKEN_ALLOWLIST,
   IGNORE_DENOMS,
 } from "@/config/community-pool";
 
@@ -95,13 +99,14 @@ function makeHolding(
 // don't have to re-fetch and re-decompose everything. `amount` is already in
 // display units, so value = amount * price.
 //
-// EVM synthetic denoms ("evm:1:0x…") aren't in the price map — they were priced
-// BY SYMBOL in evmHoldings, before resolveMissingPrices ran. Re-price them the
-// same way (median-priced denom for the symbol) against the now-complete map, so
-// a Grants Ethereum token whose symbol only got priced by the later SQS/CoinGecko
-// pass isn't left stale/zero. A normal Osmosis denom is re-priced by denom.
+// EVM synthetic denoms ("evm:1:0x…") and Solana ones ("sol:native", "sol:<mint>")
+// aren't in the price map — they were priced BY SYMBOL in evm/solanaHoldings,
+// before resolveMissingPrices ran. Re-price them the same way (median-priced
+// denom for the symbol) against the now-complete map, so a Grants holding whose
+// symbol only got priced by the later SQS/CoinGecko pass isn't left stale/zero.
+// A normal Osmosis denom is re-priced by denom.
 export function revalueHolding(h: Holding, priceMap: PriceMap): Holding {
-  if (h.denom.startsWith("evm:")) {
+  if (h.denom.startsWith("evm:") || h.denom.startsWith("sol:")) {
     const d = bestDenomForSymbol(priceMap, h.symbol, true);
     const price = d ? priceMap[d].price : 0;
     const priceUnavailable = !(price > 0);
@@ -357,6 +362,60 @@ export async function evmHoldings(
       amount,
       value: priceUnavailable ? 0 : amount * p.price,
       denom: `evm:${chainId}:${token.contract}`,
+      priceUnavailable,
+    });
+  }
+
+  return holdings;
+}
+
+// Solana holdings: native SOL + allowlisted SPL tokens for one address. Mirrors
+// evmHoldings — priced by symbol through the same outlier-resistant selection,
+// and RPC failures propagate (this Grants address is stablecoin-heavy, so
+// silently dropping a balance would be a large undercount). `sol:*` denoms are
+// re-priced by symbol in revalueHolding, like the evm:* ones.
+export async function solanaHoldings(
+  address: string,
+  priceMap: PriceMap
+): Promise<Holding[]> {
+  const holdings: Holding[] = [];
+  const priceBySymbol = (symbol: string): PriceInfo => {
+    const denom = bestDenomForSymbol(priceMap, symbol, true);
+    return denom ? priceMap[denom] : { symbol, price: 0, exponent: 0 };
+  };
+
+  // Native SOL.
+  const solAmount = await fetchSolanaNativeBalance(
+    address,
+    SOLANA_NATIVE_ASSET.decimals
+  );
+  if (solAmount > 0) {
+    const p = priceBySymbol(
+      SOLANA_NATIVE_ASSET.priceSymbol || SOLANA_NATIVE_ASSET.symbol
+    );
+    const priceUnavailable = !(p.price > 0);
+    holdings.push({
+      symbol: SOLANA_NATIVE_ASSET.symbol,
+      info: "Solana",
+      amount: solAmount,
+      value: priceUnavailable ? 0 : solAmount * p.price,
+      denom: "sol:native",
+      priceUnavailable,
+    });
+  }
+
+  // Allowlisted SPL tokens.
+  for (const token of SOLANA_TOKEN_ALLOWLIST) {
+    const amount = await fetchSolanaSplBalance(address, token.mint);
+    if (amount <= 0) continue;
+    const p = priceBySymbol(token.symbol);
+    const priceUnavailable = !(p.price > 0);
+    holdings.push({
+      symbol: token.symbol,
+      info: "Solana",
+      amount,
+      value: priceUnavailable ? 0 : amount * p.price,
+      denom: `sol:${token.mint}`,
       priceUnavailable,
     });
   }
