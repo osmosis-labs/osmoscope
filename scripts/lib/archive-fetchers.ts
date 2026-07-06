@@ -113,6 +113,15 @@ async function fetchBurnAtHeightConsensus(
   return bestVotes >= BURN_CONSENSUS_MIN_VOTES ? best : null;
 }
 
+// Developer-vesting module account (verified via auth module_accounts). Holds
+// the unvested developer-rewards OSMO (~55M). Its LIQUID balance is what the
+// mint module's negative supply offset removes from by_denom, so the backfill
+// reverses the offset with THIS address's liquid balance (fetchLockedBalances
+// buckets it under `.liquid` because it is in STATIC_LOCKED_ADDRESSES, NOT under
+// `.devVesting`, which only holds the dynamic dev-reward receiver residual).
+export const DEV_VESTING_MODULE_ADDRESS =
+  "osmo1vqy8rqqlydj9wkcyvct9zxl3hc4eqgu3d7hd9k";
+
 // Restricted (non-circulating) wallet set, mirrored from the chain's supply
 // methodology in osmosis/x/mint/types/restricted_addresses.go, plus the
 // developer-vesting module account ("developer_vesting_unvested"), which holds
@@ -123,8 +132,7 @@ async function fetchBurnAtHeightConsensus(
 // listed here: they are fetched dynamically per-height in fetchLockedBalances
 // (as devVesting) and de-duplicated against this set, matching the keeper.
 const STATIC_LOCKED_ADDRESSES = [
-  // Developer-vesting module account (verified via auth module_accounts).
-  "osmo1vqy8rqqlydj9wkcyvct9zxl3hc4eqgu3d7hd9k",
+  DEV_VESTING_MODULE_ADDRESS,
   // Foundation / strategic reserve.
   "osmo1ugku28hwyexpljrrmtet05nd6kjlrvr9jz6z00",
   // Additional foundation strategic-reserve wallet (team-identified, not in the
@@ -154,7 +162,7 @@ const STATIC_LOCKED_ADDRESSES = [
 // account is a module account that cannot delegate, so it is omitted here to
 // avoid a pointless query.
 const STAKED_ADDRESSES = STATIC_LOCKED_ADDRESSES.filter(
-  (addr) => addr !== "osmo1vqy8rqqlydj9wkcyvct9zxl3hc4eqgu3d7hd9k"
+  (addr) => addr !== DEV_VESTING_MODULE_ADDRESS
 );
 
 // ===================================

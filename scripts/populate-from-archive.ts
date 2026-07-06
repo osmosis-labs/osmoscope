@@ -15,6 +15,7 @@ import {
   fetchEpochProvisions,
   fetchChainInflation,
   fetchTotalStaked,
+  DEV_VESTING_MODULE_ADDRESS,
   type DistributionParams,
 } from "./lib/archive-fetchers";
 
@@ -389,9 +390,20 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
           lockedBalances.devVesting
         ).reduce((a, b) => a + b, 0);
 
+        // The mint module's supply offset removes the dev-vesting MODULE ACCOUNT's
+        // balance (the unvested developer-rewards OSMO, ~55M), not the dynamic
+        // receiver residual. fetchLockedBalances buckets that module account under
+        // `.liquid` (it is in the static restricted set), so read it from there —
+        // NOT from totalDevVestingLocked, which only holds the small dynamic
+        // residual and would leave rawMinted/total/circulating understated by the
+        // module balance. This matches lib/snapshot.ts (fetchBalance of the module
+        // account) and scripts/correct-dev-vesting-offset.ts (same address).
+        const devVestingModuleBalance =
+          lockedBalances.liquid[DEV_VESTING_MODULE_ADDRESS] || 0;
+
         // Raw minted = offset-applied by_denom + unvested dev-vesting (see the
         // Step 3 note above). totalSupply follows from raw minted.
-        const rawMintedSupply = mintedSupply + totalDevVestingLocked;
+        const rawMintedSupply = mintedSupply + devVestingModuleBalance;
         const totalSupply = rawMintedSupply - burnedSupply;
 
         // Restricted = real liquid + dev-vesting (both fetched per-date) + staked.
@@ -411,7 +423,10 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
           totalSupply - restrictedSupply - communityPool;
 
         logger.info(
-          `  Restricted: ${restrictedSupply.toLocaleString()} OSMO (liquid ${totalLiquidLocked.toLocaleString()} + staked ${lockedBalances.staked.toLocaleString()}${restrictedStakedPending ? " [staked PENDING overlay]" : ""} + devVest ${totalDevVestingLocked.toLocaleString()})`
+          `  Restricted: ${restrictedSupply.toLocaleString()} OSMO (liquid ${totalLiquidLocked.toLocaleString()} + staked ${lockedBalances.staked.toLocaleString()}${restrictedStakedPending ? " [staked PENDING overlay]" : ""} + devVestResidual ${totalDevVestingLocked.toLocaleString()})`
+        );
+        logger.info(
+          `  Dev-vesting offset reversed (module account): ${devVestingModuleBalance.toLocaleString()} OSMO`
         );
         logger.info(`  Community pool: ${communityPool.toLocaleString()} OSMO`);
 
@@ -445,7 +460,10 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
           totalSupply,
           circulatingSupply,
           restrictedSupply,
-          devVestingSupply: totalDevVestingLocked,
+          // The reversed offset (module-account balance), matching what
+          // lib/snapshot.ts and correct-dev-vesting-offset.ts store — NOT the
+          // dynamic-receiver residual.
+          devVestingSupply: devVestingModuleBalance,
           restrictedStakedPending: restrictedStakedPending || undefined,
           communitySupply: communityPool,
           inflationRate,

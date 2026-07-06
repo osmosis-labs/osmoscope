@@ -37,17 +37,25 @@ export class SnapshotSanityError extends Error {}
 // beyond a wide tolerance signals a bad read, not a real event.
 const MAX_DAILY_SUPPLY_DELTA = 5_000_000; // OSMO; ~10x a generous daily mint
 const MAX_DAILY_RESTRICTED_DELTA = 40_000_000; // OSMO; allows real unlock events
-function assertSnapshotSane(metrics: {
+// Exported for unit tests (pure function; the live path calls it internally).
+export function assertSnapshotSane(metrics: {
   mintedSupply: number;
   totalSupply: number;
   burned: number;
   circulating: number;
   restrictedSupply: number;
   communitySupply: number;
+  // Current snapshot's reversed dev-vesting offset (module-account balance). Used
+  // to normalize a legacy prev row to the same raw-minted basis before the
+  // day-over-day delta check (see below).
+  devVestingSupply?: number;
   prev?: {
     totalSupply: number;
     restrictedSupply?: number;
     communitySupply?: number;
+    // Absent on legacy rows written before the raw-minted-basis fix: those rows'
+    // totalSupply is on the OFFSET-APPLIED basis (~1 dev-vesting balance lower).
+    devVestingSupply?: number | null;
   };
 }): void {
   // Absolute floors: supply can never be zero/negative on a live chain.
@@ -77,11 +85,23 @@ function assertSnapshotSane(metrics: {
   // Day-over-day deltas vs. the previous snapshot.
   const prev = metrics.prev;
   if (prev) {
+    // Normalize the prior row to THIS snapshot's basis before comparing. A legacy
+    // row written before the raw-minted-basis fix (devVestingSupply absent) has a
+    // totalSupply that is one dev-vesting balance lower purely as a methodology
+    // artifact, not a real supply move. Comparing raw-minted (now) against
+    // offset-applied (then) would show a ~55M jump and wrongly trip the gate on
+    // the first post-deploy snapshot, before the one-off correction script runs.
+    // Adding the current reversed offset to the legacy prev puts both on the raw
+    // basis; a genuinely bad read still trips because the offset is ~constant.
+    const prevTotalSupply =
+      prev.devVestingSupply == null
+        ? prev.totalSupply + (metrics.devVestingSupply ?? 0)
+        : prev.totalSupply;
     if (
-      Math.abs(metrics.totalSupply - prev.totalSupply) > MAX_DAILY_SUPPLY_DELTA
+      Math.abs(metrics.totalSupply - prevTotalSupply) > MAX_DAILY_SUPPLY_DELTA
     )
       throw new SnapshotSanityError(
-        `total supply moved ${(metrics.totalSupply - prev.totalSupply).toFixed(0)} OSMO vs prior — implausible, refusing to persist`
+        `total supply moved ${(metrics.totalSupply - prevTotalSupply).toFixed(0)} OSMO vs prior — implausible, refusing to persist`
       );
     if (
       prev.restrictedSupply != null &&
@@ -177,11 +197,13 @@ export async function buildAndSaveSnapshot(
   );
   assertSnapshotSane({
     ...metrics,
+    devVestingSupply: devVestingBalance,
     prev: prevSnapshot
       ? {
           totalSupply: prevSnapshot.totalSupply,
           restrictedSupply: prevSnapshot.restrictedSupply,
           communitySupply: prevSnapshot.communitySupply,
+          devVestingSupply: prevSnapshot.devVestingSupply,
         }
       : undefined,
   });
