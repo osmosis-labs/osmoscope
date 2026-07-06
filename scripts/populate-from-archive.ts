@@ -364,8 +364,15 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
         const totalStaked = await fetchTotalStaked(dateStr, height);
         const lockedBalances = await fetchLockedBalances(dateStr, height);
 
-        // Step 3: Calculate derived values
-        const totalSupply = mintedSupply - burnedSupply;
+        // Step 3: Calculate derived values.
+        // The archive supply/by_denom (mintedSupply) is OFFSET-ADJUSTED: the mint
+        // module's negative supply offset has already removed the unvested
+        // dev-vesting balance. Reverse it to RAW minted so dev-vesting is counted
+        // exactly once (raw includes it +, restricted subtracts it -, nets to
+        // zero in circulating) — matching the canonical mint-module methodology
+        // and the live snapshot path. (Previously used the offset-applied value
+        // AND subtracted dev-vesting via restricted, understating total +
+        // circulating by the dev-vesting balance.)
 
         // Restricted supply (chain methodology): restricted-address liquid +
         // staked, plus the developer-vesting module balance (the dev-vesting
@@ -381,6 +388,12 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
         const totalDevVestingLocked = Object.values(
           lockedBalances.devVesting
         ).reduce((a, b) => a + b, 0);
+
+        // Raw minted = offset-applied by_denom + unvested dev-vesting (see the
+        // Step 3 note above). totalSupply follows from raw minted.
+        const rawMintedSupply = mintedSupply + totalDevVestingLocked;
+        const totalSupply = rawMintedSupply - burnedSupply;
+
         // Restricted = real liquid + dev-vesting (both fetched per-date) + staked.
         // When the staked portion can't be read (2023 "invalid denom" window),
         // we STILL record the liquid+dev-vesting base (it's real and dominant)
@@ -427,11 +440,12 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
         // Step 4: Create or update historical record
         const record: HistoricalRecord = {
           timestamp: `${dateStr}T17:20:00.000Z`,
-          mintedSupply,
+          mintedSupply: rawMintedSupply,
           burnedSupply,
           totalSupply,
           circulatingSupply,
           restrictedSupply,
+          devVestingSupply: totalDevVestingLocked,
           restrictedStakedPending: restrictedStakedPending || undefined,
           communitySupply: communityPool,
           inflationRate,

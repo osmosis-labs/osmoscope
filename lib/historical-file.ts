@@ -29,6 +29,7 @@ export interface HistoricalRecord {
   totalSupply: number; // Calculated as mintedSupply - burnedSupply
   circulatingSupply?: number; // Unset for the 2023 upgrade window where staked (hence restricted/circulating) can't be read; interpolated post-backfill.
   restrictedSupply?: number; // Chain-methodology restricted supply (dev-vesting + restricted-address liquid+staked).
+  devVestingSupply?: number; // Unvested developer-vesting module balance for this date. mintedSupply is on the RAW GetSupply basis (this amount is included in it once, and subtracted once via restrictedSupply, netting to zero in circulating). Stored so the offset is recoverable per row. Absent on legacy rows written before this field existed.
   restrictedStakedPending?: boolean; // True when the staked portion couldn't be read (2023 invalid-denom window); the value holds liquid+devVesting only until the reconstructed staked ramp is overlaid.
   communitySupply?: number; // Community pool OSMO (live + archive backfill).
   inflationRate: number;

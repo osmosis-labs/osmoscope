@@ -127,12 +127,28 @@ export async function buildAndSaveSnapshot(
     fetchTotalStaked(),
   ]);
 
-  const totalSupply = mintedSupply - burnedAmount;
+  // `fetchTotalSupply()` returns the chain's supply/by_denom value, which is
+  // ALREADY offset-adjusted: the x/mint module registers a negative supply
+  // offset equal to the unvested developer-vesting balance, so by_denom has that
+  // ~55M OSMO removed. We reverse the offset to get RAW minted supply, matching
+  // the canonical mint-module methodology (MTN-151 / the /total_supply +
+  // /circulating_supply chain endpoints), which does all math on raw GetSupply.
+  //
+  // This is required for dev-vesting to be counted EXACTLY ONCE: raw minted
+  // includes it (+), and restrictedSupply subtracts it (-), so it nets to zero
+  // in circulating. Using the offset-applied by_denom here instead (its prior
+  // behaviour) removed dev-vesting a SECOND time via restrictedSupply, which
+  // understated both total and circulating by the dev-vesting balance (~55M).
+  const rawMintedSupply = mintedSupply + devVestingBalance;
+  const totalSupply = rawMintedSupply - burnedAmount;
   const restrictedSupply = restrictedEntities + devVestingBalance;
   const circulating = totalSupply - restrictedSupply - communitySupply;
   const metrics = {
     burned: burnedAmount,
-    mintedSupply,
+    // Store RAW minted (offset reversed) so the identity
+    // totalSupply === mintedSupply − burned holds for consumers of the record,
+    // and mintedSupply matches the chain's raw GetSupply basis.
+    mintedSupply: rawMintedSupply,
     totalSupply,
     circulating,
     restrictedSupply,
@@ -186,6 +202,7 @@ export async function buildAndSaveSnapshot(
     circulatingSupply: metrics.circulating,
     restrictedSupply: metrics.restrictedSupply,
     communitySupply: metrics.communitySupply,
+    devVestingSupply: devVestingBalance,
     inflationRate,
     totalStaked,
     stakingApr: todayApr,

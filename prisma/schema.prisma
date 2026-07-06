@@ -29,6 +29,10 @@ model HistoricalRecord {
   circulatingSupply  Decimal? @db.Decimal(20, 6)
   restrictedSupply   Decimal? @db.Decimal(20, 6)
   communitySupply    Decimal? @db.Decimal(20, 6)
+  // Unvested developer-vesting module balance for this date. mintedSupply is on
+  // the raw GetSupply basis, which includes this amount once (+); restrictedSupply
+  // subtracts it once (-), netting to zero in circulating. Null on legacy rows.
+  devVestingSupply   Decimal? @db.Decimal(20, 6)
 
   // Staking metrics
   inflationRate Decimal  @db.Decimal(10, 6)
