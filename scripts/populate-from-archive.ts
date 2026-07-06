@@ -401,6 +401,21 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
         const devVestingModuleBalance =
           lockedBalances.liquid[DEV_VESTING_MODULE_ADDRESS] || 0;
 
+        // The dev-vesting module account holds tens of millions of unvested OSMO
+        // at every historical height (funded at genesis, vesting down over time),
+        // so a zero here means fetchLiquid failed (it returns 0 on a transient
+        // archive error rather than throwing). Persisting would store an
+        // offset-applied (understated) row with devVestingSupply: 0 — which the
+        // correction script (WHERE devVestingSupply IS NULL) would treat as done
+        // and never repair. Throw so the per-date catch skips this date (logged to
+        // errors[] and retryable) instead of baking in bad data. Mirrors the live
+        // path's assertSnapshotSane dev-vesting floor.
+        if (!(devVestingModuleBalance > 0)) {
+          throw new Error(
+            `dev-vesting module balance read as 0 for ${dateStr} (height ${height}) — likely a failed archive fetch; skipping to avoid an understated row`
+          );
+        }
+
         // Raw minted = offset-applied by_denom + unvested dev-vesting (see the
         // Step 3 note above). totalSupply follows from raw minted.
         const rawMintedSupply = mintedSupply + devVestingModuleBalance;
