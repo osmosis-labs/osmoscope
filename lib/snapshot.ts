@@ -81,6 +81,19 @@ export function assertSnapshotSane(metrics: {
     throw new SnapshotSanityError(
       `circulating not positive (${metrics.circulating})`
     );
+  // Dev-vesting module balance floor. The developer-vesting module account always
+  // holds tens of millions of unvested OSMO on mainnet, so a zero reading means
+  // fetchBalance failed (it returns 0 on a transient LCD error rather than
+  // throwing). Persisting that would write mintedSupply/totalSupply on the
+  // offset-applied basis AND stamp devVestingSupply: 0 — which the correction
+  // script (WHERE devVestingSupply IS NULL) can never repair, and which makes the
+  // NEXT run reject the ~55M basis gap and block the cron. Refuse here so the bad
+  // row is never written. Guarded on !== undefined so backfill/tests that omit
+  // the field are unaffected; the live path always supplies it.
+  if (metrics.devVestingSupply !== undefined && !(metrics.devVestingSupply > 0))
+    throw new SnapshotSanityError(
+      `dev-vesting supply not positive (${metrics.devVestingSupply}) — likely a failed balance read`
+    );
 
   // Day-over-day deltas vs. the previous snapshot.
   const prev = metrics.prev;
@@ -93,9 +106,14 @@ export function assertSnapshotSane(metrics: {
     // the first post-deploy snapshot, before the one-off correction script runs.
     // Adding the current reversed offset to the legacy prev puts both on the raw
     // basis; a genuinely bad read still trips because the offset is ~constant.
+    // Only normalize when we actually have a positive current offset to add — the
+    // floor check above already rejects a zero/failed dev-vesting read on the live
+    // path, so reaching here without one means a caller that doesn't supply it, in
+    // which case leaving prev unnormalized is the safe (stricter) choice.
+    const currentDevVesting = metrics.devVestingSupply ?? 0;
     const prevTotalSupply =
-      prev.devVestingSupply == null
-        ? prev.totalSupply + (metrics.devVestingSupply ?? 0)
+      prev.devVestingSupply == null && currentDevVesting > 0
+        ? prev.totalSupply + currentDevVesting
         : prev.totalSupply;
     if (
       Math.abs(metrics.totalSupply - prevTotalSupply) > MAX_DAILY_SUPPLY_DELTA

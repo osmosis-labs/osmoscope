@@ -79,3 +79,26 @@ test("assertSnapshotSane: rejects non-positive core figures", () => {
     SnapshotSanityError
   );
 });
+
+test("assertSnapshotSane: rejects a failed dev-vesting read (zero) before it can persist", () => {
+  // fetchBalance returns 0 on a transient error. Without this floor, a zero
+  // dev-vesting read against a legacy prev would slip through (both offset-applied)
+  // and persist devVestingSupply: 0 — a row the correction script (WHERE null)
+  // can never repair and that blocks the next run. The floor must reject it.
+  const prev = {
+    totalSupply: 811_000_000 - DEV_VESTING,
+    devVestingSupply: null,
+  };
+  assert.throws(
+    () => assertSnapshotSane(baseMetrics({ devVestingSupply: 0, prev })),
+    SnapshotSanityError
+  );
+});
+
+test("assertSnapshotSane: tolerates callers that omit devVestingSupply (backfill/tests)", () => {
+  // The floor is guarded on !== undefined, so a caller that doesn't supply the
+  // field is unaffected; prev is then left unnormalized (stricter).
+  const metrics = baseMetrics();
+  delete (metrics as { devVestingSupply?: number }).devVestingSupply;
+  assert.doesNotThrow(() => assertSnapshotSane(metrics));
+});
