@@ -15,6 +15,7 @@ import {
   fetchEpochProvisions,
   fetchChainInflation,
   fetchTotalStaked,
+  DEV_VESTING_MODULE_ADDRESS,
   type DistributionParams,
 } from "./lib/archive-fetchers";
 
@@ -364,8 +365,15 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
         const totalStaked = await fetchTotalStaked(dateStr, height);
         const lockedBalances = await fetchLockedBalances(dateStr, height);
 
-        // Step 3: Calculate derived values
-        const totalSupply = mintedSupply - burnedSupply;
+        // Step 3: Calculate derived values.
+        // The archive supply/by_denom (mintedSupply) is OFFSET-ADJUSTED: the mint
+        // module's negative supply offset has already removed the unvested
+        // dev-vesting balance. Reverse it to RAW minted so dev-vesting is counted
+        // exactly once (raw includes it +, restricted subtracts it -, nets to
+        // zero in circulating) — matching the canonical mint-module methodology
+        // and the live snapshot path. (Previously used the offset-applied value
+        // AND subtracted dev-vesting via restricted, understating total +
+        // circulating by the dev-vesting balance.)
 
         // Restricted supply (chain methodology): restricted-address liquid +
         // staked, plus the developer-vesting module balance (the dev-vesting
@@ -381,6 +389,38 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
         const totalDevVestingLocked = Object.values(
           lockedBalances.devVesting
         ).reduce((a, b) => a + b, 0);
+
+        // The mint module's supply offset removes the dev-vesting MODULE ACCOUNT's
+        // balance (the unvested developer-rewards OSMO, ~55M), not the dynamic
+        // receiver residual. fetchLockedBalances buckets that module account under
+        // `.liquid` (it is in the static restricted set), so read it from there —
+        // NOT from totalDevVestingLocked, which only holds the small dynamic
+        // residual and would leave rawMinted/total/circulating understated by the
+        // module balance. This matches lib/snapshot.ts (fetchBalance of the module
+        // account) and scripts/correct-dev-vesting-offset.ts (same address).
+        const devVestingModuleBalance =
+          lockedBalances.liquid[DEV_VESTING_MODULE_ADDRESS] || 0;
+
+        // The dev-vesting module account holds tens of millions of unvested OSMO
+        // at every historical height (funded at genesis, vesting down over time),
+        // so a zero here means fetchLiquid failed (it returns 0 on a transient
+        // archive error rather than throwing). Persisting would store an
+        // offset-applied (understated) row with devVestingSupply: 0 — which the
+        // correction script (WHERE devVestingSupply IS NULL) would treat as done
+        // and never repair. Throw so the per-date catch skips this date (logged to
+        // errors[] and retryable) instead of baking in bad data. Mirrors the live
+        // path's assertSnapshotSane dev-vesting floor.
+        if (!(devVestingModuleBalance > 0)) {
+          throw new Error(
+            `dev-vesting module balance read as 0 for ${dateStr} (height ${height}) — likely a failed archive fetch; skipping to avoid an understated row`
+          );
+        }
+
+        // Raw minted = offset-applied by_denom + unvested dev-vesting (see the
+        // Step 3 note above). totalSupply follows from raw minted.
+        const rawMintedSupply = mintedSupply + devVestingModuleBalance;
+        const totalSupply = rawMintedSupply - burnedSupply;
+
         // Restricted = real liquid + dev-vesting (both fetched per-date) + staked.
         // When the staked portion can't be read (2023 "invalid denom" window),
         // we STILL record the liquid+dev-vesting base (it's real and dominant)
@@ -398,7 +438,10 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
           totalSupply - restrictedSupply - communityPool;
 
         logger.info(
-          `  Restricted: ${restrictedSupply.toLocaleString()} OSMO (liquid ${totalLiquidLocked.toLocaleString()} + staked ${lockedBalances.staked.toLocaleString()}${restrictedStakedPending ? " [staked PENDING overlay]" : ""} + devVest ${totalDevVestingLocked.toLocaleString()})`
+          `  Restricted: ${restrictedSupply.toLocaleString()} OSMO (liquid ${totalLiquidLocked.toLocaleString()} + staked ${lockedBalances.staked.toLocaleString()}${restrictedStakedPending ? " [staked PENDING overlay]" : ""} + devVestResidual ${totalDevVestingLocked.toLocaleString()})`
+        );
+        logger.info(
+          `  Dev-vesting offset reversed (module account): ${devVestingModuleBalance.toLocaleString()} OSMO`
         );
         logger.info(`  Community pool: ${communityPool.toLocaleString()} OSMO`);
 
@@ -427,11 +470,15 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
         // Step 4: Create or update historical record
         const record: HistoricalRecord = {
           timestamp: `${dateStr}T17:20:00.000Z`,
-          mintedSupply,
+          mintedSupply: rawMintedSupply,
           burnedSupply,
           totalSupply,
           circulatingSupply,
           restrictedSupply,
+          // The reversed offset (module-account balance), matching what
+          // lib/snapshot.ts and correct-dev-vesting-offset.ts store — NOT the
+          // dynamic-receiver residual.
+          devVestingSupply: devVestingModuleBalance,
           restrictedStakedPending: restrictedStakedPending || undefined,
           communitySupply: communityPool,
           inflationRate,

@@ -37,17 +37,25 @@ export class SnapshotSanityError extends Error {}
 // beyond a wide tolerance signals a bad read, not a real event.
 const MAX_DAILY_SUPPLY_DELTA = 5_000_000; // OSMO; ~10x a generous daily mint
 const MAX_DAILY_RESTRICTED_DELTA = 40_000_000; // OSMO; allows real unlock events
-function assertSnapshotSane(metrics: {
+// Exported for unit tests (pure function; the live path calls it internally).
+export function assertSnapshotSane(metrics: {
   mintedSupply: number;
   totalSupply: number;
   burned: number;
   circulating: number;
   restrictedSupply: number;
   communitySupply: number;
+  // Current snapshot's reversed dev-vesting offset (module-account balance). Used
+  // to normalize a legacy prev row to the same raw-minted basis before the
+  // day-over-day delta check (see below).
+  devVestingSupply?: number;
   prev?: {
     totalSupply: number;
     restrictedSupply?: number;
     communitySupply?: number;
+    // Absent on legacy rows written before the raw-minted-basis fix: those rows'
+    // totalSupply is on the OFFSET-APPLIED basis (~1 dev-vesting balance lower).
+    devVestingSupply?: number | null;
   };
 }): void {
   // Absolute floors: supply can never be zero/negative on a live chain.
@@ -73,15 +81,45 @@ function assertSnapshotSane(metrics: {
     throw new SnapshotSanityError(
       `circulating not positive (${metrics.circulating})`
     );
+  // Dev-vesting module balance floor. The developer-vesting module account always
+  // holds tens of millions of unvested OSMO on mainnet, so a zero reading means
+  // fetchBalance failed (it returns 0 on a transient LCD error rather than
+  // throwing). Persisting that would write mintedSupply/totalSupply on the
+  // offset-applied basis AND stamp devVestingSupply: 0 — which the correction
+  // script (WHERE devVestingSupply IS NULL) can never repair, and which makes the
+  // NEXT run reject the ~55M basis gap and block the cron. Refuse here so the bad
+  // row is never written. Guarded on !== undefined so backfill/tests that omit
+  // the field are unaffected; the live path always supplies it.
+  if (metrics.devVestingSupply !== undefined && !(metrics.devVestingSupply > 0))
+    throw new SnapshotSanityError(
+      `dev-vesting supply not positive (${metrics.devVestingSupply}) — likely a failed balance read`
+    );
 
   // Day-over-day deltas vs. the previous snapshot.
   const prev = metrics.prev;
   if (prev) {
+    // Normalize the prior row to THIS snapshot's basis before comparing. A legacy
+    // row written before the raw-minted-basis fix (devVestingSupply absent) has a
+    // totalSupply that is one dev-vesting balance lower purely as a methodology
+    // artifact, not a real supply move. Comparing raw-minted (now) against
+    // offset-applied (then) would show a ~55M jump and wrongly trip the gate on
+    // the first post-deploy snapshot, before the one-off correction script runs.
+    // Adding the current reversed offset to the legacy prev puts both on the raw
+    // basis; a genuinely bad read still trips because the offset is ~constant.
+    // Only normalize when we actually have a positive current offset to add — the
+    // floor check above already rejects a zero/failed dev-vesting read on the live
+    // path, so reaching here without one means a caller that doesn't supply it, in
+    // which case leaving prev unnormalized is the safe (stricter) choice.
+    const currentDevVesting = metrics.devVestingSupply ?? 0;
+    const prevTotalSupply =
+      prev.devVestingSupply == null && currentDevVesting > 0
+        ? prev.totalSupply + currentDevVesting
+        : prev.totalSupply;
     if (
-      Math.abs(metrics.totalSupply - prev.totalSupply) > MAX_DAILY_SUPPLY_DELTA
+      Math.abs(metrics.totalSupply - prevTotalSupply) > MAX_DAILY_SUPPLY_DELTA
     )
       throw new SnapshotSanityError(
-        `total supply moved ${(metrics.totalSupply - prev.totalSupply).toFixed(0)} OSMO vs prior — implausible, refusing to persist`
+        `total supply moved ${(metrics.totalSupply - prevTotalSupply).toFixed(0)} OSMO vs prior — implausible, refusing to persist`
       );
     if (
       prev.restrictedSupply != null &&
@@ -127,12 +165,28 @@ export async function buildAndSaveSnapshot(
     fetchTotalStaked(),
   ]);
 
-  const totalSupply = mintedSupply - burnedAmount;
+  // `fetchTotalSupply()` returns the chain's supply/by_denom value, which is
+  // ALREADY offset-adjusted: the x/mint module registers a negative supply
+  // offset equal to the unvested developer-vesting balance, so by_denom has that
+  // ~55M OSMO removed. We reverse the offset to get RAW minted supply, matching
+  // the canonical mint-module methodology (MTN-151 / the /total_supply +
+  // /circulating_supply chain endpoints), which does all math on raw GetSupply.
+  //
+  // This is required for dev-vesting to be counted EXACTLY ONCE: raw minted
+  // includes it (+), and restrictedSupply subtracts it (-), so it nets to zero
+  // in circulating. Using the offset-applied by_denom here instead (its prior
+  // behaviour) removed dev-vesting a SECOND time via restrictedSupply, which
+  // understated both total and circulating by the dev-vesting balance (~55M).
+  const rawMintedSupply = mintedSupply + devVestingBalance;
+  const totalSupply = rawMintedSupply - burnedAmount;
   const restrictedSupply = restrictedEntities + devVestingBalance;
   const circulating = totalSupply - restrictedSupply - communitySupply;
   const metrics = {
     burned: burnedAmount,
-    mintedSupply,
+    // Store RAW minted (offset reversed) so the identity
+    // totalSupply === mintedSupply − burned holds for consumers of the record,
+    // and mintedSupply matches the chain's raw GetSupply basis.
+    mintedSupply: rawMintedSupply,
     totalSupply,
     circulating,
     restrictedSupply,
@@ -161,11 +215,13 @@ export async function buildAndSaveSnapshot(
   );
   assertSnapshotSane({
     ...metrics,
+    devVestingSupply: devVestingBalance,
     prev: prevSnapshot
       ? {
           totalSupply: prevSnapshot.totalSupply,
           restrictedSupply: prevSnapshot.restrictedSupply,
           communitySupply: prevSnapshot.communitySupply,
+          devVestingSupply: prevSnapshot.devVestingSupply,
         }
       : undefined,
   });
@@ -186,6 +242,7 @@ export async function buildAndSaveSnapshot(
     circulatingSupply: metrics.circulating,
     restrictedSupply: metrics.restrictedSupply,
     communitySupply: metrics.communitySupply,
+    devVestingSupply: devVestingBalance,
     inflationRate,
     totalStaked,
     stakingApr: todayApr,
