@@ -3,7 +3,10 @@
 // Ported from the community-pool Apps Script; server-only (used by the cron/
 // snapshot builder, never the client).
 import { logger } from "../logger";
-import { EVM_RPC_ENDPOINTS } from "@/config/community-pool";
+import {
+  EVM_RPC_ENDPOINTS,
+  SOLANA_RPC_ENDPOINTS,
+} from "@/config/community-pool";
 
 // NOTE: lcd.osmosis.zone blocks CosmWasm smart queries (and 403s some other
 // paths), so it must NOT be relied on alone and a 403/blocked response has to
@@ -216,4 +219,81 @@ export async function fetchErc20Balance(
     "latest",
   ]);
   return hexToDecimal(hex, decimals);
+}
+
+// ---------------------------------------------------------------------------
+// Solana (mainnet-beta) JSON-RPC. Different API from EVM: getBalance returns
+// lamports (native SOL), getTokenAccountsByOwner returns SPL token accounts.
+// Rotates endpoints on failure like the EVM path.
+// ---------------------------------------------------------------------------
+async function fetchSolanaRpc<T>(
+  method: string,
+  params: unknown[]
+): Promise<T> {
+  const endpoints = SOLANA_RPC_ENDPOINTS;
+  if (!endpoints?.length) throw new Error("No Solana RPC endpoints configured");
+  const payload = { jsonrpc: "2.0", id: 1, method, params };
+  let lastError: Error | null = null;
+
+  for (const endpoint of endpoints) {
+    try {
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) {
+        lastError = new Error(`HTTP ${resp.status} from ${endpoint}`);
+        continue;
+      }
+      const data = (await resp.json()) as { result?: T; error?: unknown };
+      if (data.error) {
+        lastError = new Error(`RPC error: ${JSON.stringify(data.error)}`);
+        continue;
+      }
+      if (data.result === undefined) {
+        lastError = new Error(`Empty result from ${endpoint}`);
+        continue;
+      }
+      return data.result;
+    } catch (e) {
+      lastError = e as Error;
+      logger.warn(`Solana RPC ${method} at ${endpoint}: ${lastError.message}`);
+    }
+  }
+  throw new Error(
+    `All Solana RPC endpoints failed for ${method}. Last: ${lastError?.message ?? "unknown"}`
+  );
+}
+
+// Native SOL balance (lamports → SOL). getBalance returns { value: lamports }.
+export async function fetchSolanaNativeBalance(
+  address: string,
+  decimals: number
+): Promise<number> {
+  const res = await fetchSolanaRpc<{ value: number }>("getBalance", [address]);
+  const lamports = res?.value ?? 0;
+  return lamports / 10 ** decimals;
+}
+
+// SPL token balance for a specific mint held by `owner`. Sums across all of the
+// owner's token accounts for that mint (usually one) using the parsed uiAmount.
+export async function fetchSolanaSplBalance(
+  owner: string,
+  mint: string
+): Promise<number> {
+  const res = await fetchSolanaRpc<{
+    value: Array<{
+      account: {
+        data: {
+          parsed: { info: { tokenAmount: { uiAmount: number | null } } };
+        };
+      };
+    }>;
+  }>("getTokenAccountsByOwner", [owner, { mint }, { encoding: "jsonParsed" }]);
+  const accounts = res?.value ?? [];
+  return accounts.reduce((sum, a) => {
+    const ui = a?.account?.data?.parsed?.info?.tokenAmount?.uiAmount;
+    return sum + (typeof ui === "number" ? ui : 0);
+  }, 0);
 }

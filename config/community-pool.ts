@@ -18,7 +18,7 @@
 export interface AssociatedAddress {
   address: string;
   label: string;
-  chain: "osmosis" | "ethereum";
+  chain: "osmosis" | "ethereum" | "solana";
   // Optional grouping key. Addresses sharing a `group` are merged into one holder
   // in the treasury breakdown (their values summed) under `groupLabel`, while each
   // underlying address is still surfaced (e.g. for explorer links). Used to fold
@@ -147,6 +147,13 @@ export const ASSOCIATED_ADDRESSES: AssociatedAddress[] = [
     group: "grants",
     groupLabel: "Osmosis Grants Program",
   },
+  {
+    address: "E7bvZrF3cjKx9beyLWnYF2w7HzsHrB8LU2D9cHu1p5uG",
+    label: "Osmosis Grants Program (Solana)",
+    chain: "solana",
+    group: "grants",
+    groupLabel: "Osmosis Grants Program",
+  },
 ];
 
 // The main community-pool CL positions are held by this address (the
@@ -230,6 +237,47 @@ export const EVM_TOKEN_ALLOWLIST: Record<
     },
   ],
 };
+
+// ---------------------------------------------------------------------------
+// Solana (mainnet-beta) config for the Solana associated address. Solana uses
+// JSON-RPC but a different API from EVM: native SOL via getBalance, SPL tokens
+// via getTokenAccountsByOwner. Public RPCs are rate-limited; the fetcher rotates
+// on failure like the EVM path.
+// ---------------------------------------------------------------------------
+export const SOLANA_RPC_ENDPOINTS: string[] = [
+  "https://api.mainnet-beta.solana.com",
+  "https://solana-rpc.publicnode.com",
+  "https://rpc.ankr.com/solana",
+];
+
+// Native SOL asset metadata (9 decimals).
+export const SOLANA_NATIVE_ASSET = {
+  symbol: "SOL",
+  decimals: 9,
+  priceSymbol: "SOL",
+};
+
+// Allowlisted SPL tokens, keyed by mint address (like the EVM token allowlist).
+// Priced by symbol through the existing price map. Extend as the address's
+// holdings change.
+export const SOLANA_TOKEN_ALLOWLIST: Array<{
+  symbol: string;
+  mint: string;
+  decimals: number;
+}> = [
+  {
+    // Circle USDC on Solana (canonical mint).
+    symbol: "USDC",
+    mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    decimals: 6,
+  },
+  {
+    // Tether USDT on Solana.
+    symbol: "USDT",
+    mint: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    decimals: 6,
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Price / symbol / exponent overrides. See the price engine for how they layer:
@@ -384,10 +432,10 @@ export function isOsmoExposure(symbol: string): boolean {
 
 // ---------------------------------------------------------------------------
 // Block-explorer links surfaced next to each holder group on the treasury page.
-// Osmosis addresses -> Mintscan; Ethereum addresses -> Etherscan.
+// Osmosis -> Mintscan; Ethereum -> Etherscan; Solana -> Solscan.
 // ---------------------------------------------------------------------------
 export const EXPLORER_BASE: Record<
-  "osmosis" | "ethereum",
+  "osmosis" | "ethereum" | "solana",
   { name: string; addressUrl: (address: string) => string }
 > = {
   osmosis: {
@@ -397,5 +445,9 @@ export const EXPLORER_BASE: Record<
   ethereum: {
     name: "Etherscan",
     addressUrl: (a) => `https://etherscan.io/address/${a}`,
+  },
+  solana: {
+    name: "Solscan",
+    addressUrl: (a) => `https://solscan.io/account/${a}`,
   },
 };

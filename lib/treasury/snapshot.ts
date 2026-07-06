@@ -10,6 +10,7 @@ import {
   decomposeBankDenom,
   magmaHoldings,
   evmHoldings,
+  solanaHoldings,
   sortHoldings,
   revalueHolding,
   type Holding,
@@ -40,7 +41,7 @@ export interface AssetTotal {
 // One underlying address of a holder (surfaced for explorer links).
 export interface HolderAddress {
   address: string;
-  chain: "osmosis" | "ethereum";
+  chain: "osmosis" | "ethereum" | "solana";
 }
 
 // A treasury holder: the main pool, a single associated address, or a group of
@@ -49,7 +50,7 @@ export interface TreasuryHolder {
   label: string;
   // Primary address (first underlying); kept for a stable React key / back-compat.
   address: string;
-  chain: "osmosis" | "ethereum";
+  chain: "osmosis" | "ethereum" | "solana";
   addresses: HolderAddress[]; // all underlying addresses (>1 for grouped holders)
   totalValue: number;
   assets: AssetTotal[]; // aggregated by symbol, value-desc
@@ -327,7 +328,9 @@ export async function buildTreasurySnapshot(
       holdings:
         a.chain === "ethereum"
           ? await evmHoldings(a.address, "1", priceMap)
-          : await addressHoldings(a.address, priceMap),
+          : a.chain === "solana"
+            ? await solanaHoldings(a.address, priceMap)
+            : await addressHoldings(a.address, priceMap),
     })
   );
 
@@ -382,7 +385,7 @@ export async function buildTreasurySnapshot(
     label: string;
     holdings: Holding[];
     addresses: HolderAddress[];
-    primary: { address: string; chain: "osmosis" | "ethereum" };
+    primary: { address: string; chain: "osmosis" | "ethereum" | "solana" };
     description?: string;
   }
   const groups = new Map<string, GroupAcc>();
