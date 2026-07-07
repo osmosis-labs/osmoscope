@@ -17,10 +17,38 @@ import {
   makeMonthlyTicks,
 } from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
 import { ChartHeader } from "./ChartHeader";
+import { InfoTooltip } from "../ui/InfoTooltip";
 
+// The stacked series (bottom to top) with a plain-English explainer of what each
+// represents. These distinctions are genuinely non-obvious — total vs circulating,
+// what "restricted" folds in, where dev-vesting sits — so each gets a `?` hover.
+// Colors match the <Area> strokes below.
+const SERIES_LEGEND = [
+  {
+    label: "Circulating Supply",
+    color: "#7C4DFF",
+    explainer:
+      "The public float: OSMO freely tradable and transferable. Computed as total supply minus restricted and community-pool balances. This is the figure most price/market-cap calculations use.",
+  },
+  {
+    label: "Restricted Supply",
+    color: "#9E9E9E",
+    explainer:
+      "OSMO excluded from circulating: the unvested developer-vesting allocation plus foundation and strategic-reserve wallets (their liquid and staked balances). Not freely tradable, so it's held out of circulating supply.",
+  },
+  {
+    label: "Community Supply",
+    color: "#2994D0",
+    explainer:
+      "The on-chain community pool balance, governed by community-pool spend proposals. Funded by a share of inflation, taker fees and pool-creation fees. Held separate from circulating supply.",
+  },
+] as const;
+
+// Extra context surfaced on the headline, since Total/Minted aren't their own
+// stacked bands but matter for reading the chart.
 interface TokenBalancesChartProps {
   burned: number;
   totalSupply: number;
@@ -36,6 +64,30 @@ export function TokenBalancesChart({
 }: TokenBalancesChartProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>("all");
+  // A tooltip popover would otherwise be clipped under the NEXT card: Card has
+  // backdrop-blur, which creates a stacking context, so the tooltip's own z-index
+  // can't beat a later sibling card. Fix (same as the treasury cards): lift the
+  // WHOLE card's z-index while any explainer is open.
+  //
+  // Track the SET of open tooltip indices, not a count. InfoTooltip reports its
+  // absolute open state via onOpen (from an effect keyed on [open, onOpen]), and
+  // it re-fires that effect whenever the onOpen prop identity changes — so a
+  // naive increment/decrement would double-count / net to zero on a parent
+  // re-render. A set keyed by index is idempotent: re-reporting the same state is
+  // a no-op, so it's immune to those spurious re-fires. The callback is memoized
+  // (stable identity) so it doesn't trigger them in the first place.
+  const [openIds, setOpenIds] = useState<Set<number>>(new Set());
+  const anyTipOpen = openIds.size > 0;
+  const trackTip = useCallback((index: number, open: boolean) => {
+    setOpenIds((prev) => {
+      const has = prev.has(index);
+      if (open === has) return prev; // idempotent: no change
+      const next = new Set(prev);
+      if (open) next.add(index);
+      else next.delete(index);
+      return next;
+    });
+  }, []);
 
   // Filter data based on selected time range
   const filteredData = filterDataByTimeRange(historicalData, timeRange);
@@ -76,7 +128,7 @@ export function TokenBalancesChart({
   // markers no longer correspond to any step. They were removed.
 
   return (
-    <Card ref={cardRef}>
+    <Card ref={cardRef} className={anyTipOpen ? "relative z-30" : undefined}>
       <CardHeader>
         <ChartHeader
           title="Supply Distribution"
@@ -180,6 +232,28 @@ export function TokenBalancesChart({
             />
           </AreaChart>
         </ResponsiveContainer>
+        {/* Custom legend with per-series explainers. The chart has no built-in
+            Recharts <Legend>, and the series are otherwise only named in the
+            hover tooltip — so this row both labels the bands and carries the `?`
+            explainers for what each supply bucket actually means. */}
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-osmo-200">
+          {SERIES_LEGEND.map((s, i) => (
+            <span key={s.label} className="inline-flex items-center gap-1.5">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                style={{ backgroundColor: s.color }}
+                aria-hidden
+              />
+              <span>{s.label}</span>
+              <InfoTooltip
+                text={s.explainer}
+                ariaLabel={`About ${s.label}`}
+                placement="top"
+                onOpen={(open) => trackTip(i, open)}
+              />
+            </span>
+          ))}
+        </div>
       </CardContent>
     </Card>
   );
