@@ -17,7 +17,7 @@ import {
   makeMonthlyTicks,
 } from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
 import { ChartHeader } from "./ChartHeader";
 import { InfoTooltip } from "../ui/InfoTooltip";
@@ -67,10 +67,27 @@ export function TokenBalancesChart({
   // A tooltip popover would otherwise be clipped under the NEXT card: Card has
   // backdrop-blur, which creates a stacking context, so the tooltip's own z-index
   // can't beat a later sibling card. Fix (same as the treasury cards): lift the
-  // WHOLE card's z-index while any explainer is open. `openCount` tracks how many
-  // are open so overlapping hover/focus don't prematurely drop the lift.
-  const [openCount, setOpenCount] = useState(0);
-  const anyTipOpen = openCount > 0;
+  // WHOLE card's z-index while any explainer is open.
+  //
+  // Track the SET of open tooltip indices, not a count. InfoTooltip reports its
+  // absolute open state via onOpen (from an effect keyed on [open, onOpen]), and
+  // it re-fires that effect whenever the onOpen prop identity changes — so a
+  // naive increment/decrement would double-count / net to zero on a parent
+  // re-render. A set keyed by index is idempotent: re-reporting the same state is
+  // a no-op, so it's immune to those spurious re-fires. The callback is memoized
+  // (stable identity) so it doesn't trigger them in the first place.
+  const [openIds, setOpenIds] = useState<Set<number>>(new Set());
+  const anyTipOpen = openIds.size > 0;
+  const trackTip = useCallback((index: number, open: boolean) => {
+    setOpenIds((prev) => {
+      const has = prev.has(index);
+      if (open === has) return prev; // idempotent: no change
+      const next = new Set(prev);
+      if (open) next.add(index);
+      else next.delete(index);
+      return next;
+    });
+  }, []);
 
   // Filter data based on selected time range
   const filteredData = filterDataByTimeRange(historicalData, timeRange);
@@ -109,12 +126,6 @@ export function TokenBalancesChart({
   // now normalized onto the chain's current supply-offset methodology
   // (scripts/normalize-supply-offset.ts), so the series is continuous and those
   // markers no longer correspond to any step. They were removed.
-
-  // Translate a tooltip's open/close into a running count, so the card's z-lift
-  // stays raised while ANY explainer is open (a second tooltip opening before the
-  // first closes must not drop the lift).
-  const trackTip = (open: boolean) =>
-    setOpenCount((n) => Math.max(0, n + (open ? 1 : -1)));
 
   return (
     <Card ref={cardRef} className={anyTipOpen ? "relative z-30" : undefined}>
@@ -226,7 +237,7 @@ export function TokenBalancesChart({
             hover tooltip — so this row both labels the bands and carries the `?`
             explainers for what each supply bucket actually means. */}
         <div className="mt-3 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-osmo-200">
-          {SERIES_LEGEND.map((s) => (
+          {SERIES_LEGEND.map((s, i) => (
             <span key={s.label} className="inline-flex items-center gap-1.5">
               <span
                 className="h-2.5 w-2.5 shrink-0 rounded-sm"
@@ -238,7 +249,7 @@ export function TokenBalancesChart({
                 text={s.explainer}
                 ariaLabel={`About ${s.label}`}
                 placement="top"
-                onOpen={trackTip}
+                onOpen={(open) => trackTip(i, open)}
               />
             </span>
           ))}
