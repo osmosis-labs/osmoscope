@@ -15,7 +15,8 @@ import {
   BURN_ADDRESS,
   DEVELOPER_VESTING_MODULE_ADDRESS,
 } from "./osmosis-lcd";
-import { saveSnapshot, getHistory } from "./historical-file";
+import { saveSnapshot, getHistory, backfillRevenue } from "./historical-file";
+import { fetchDailyRevenue } from "./revenue";
 import { logger } from "./logger";
 
 export interface SnapshotResult {
@@ -293,4 +294,36 @@ export async function buildAndSaveSnapshot(
       : `Snapshot skipped (already captured) for ${timestamp}`
   );
   return { saved, timestamp, dayEpoch };
+}
+
+// Keep protocol-revenue fresh on existing rows. Data Lenses lags the chain by
+// several days, so we can't attach "today's" revenue to a snapshot — instead we
+// pull a short recent window and backfill any rows missing it or stale. As
+// upstream publishes a new day, a later run fills it in.
+//
+// This is SEPARATE from buildAndSaveSnapshot on purpose: the cron often exits
+// early (today's epoch snapshot already exists, or the epoch hasn't advanced)
+// WITHOUT building a snapshot, and revenue must still refresh on those runs —
+// otherwise it would only get one attempt per day (on the single epoch-advance
+// tick), and a Data Lenses hiccup there would strand the gap for a full day. The
+// cron calls this on EVERY invocation. Non-critical and fully guarded: a Data
+// Lenses failure logs and returns 0, never throwing. Window = ~14 days, covering
+// the ~5-day publish lag plus slack. Returns how many rows were filled.
+export async function refreshRecentRevenue(): Promise<number> {
+  try {
+    const now = Date.now();
+    const end = new Date(now).toISOString().split("T")[0];
+    const start = new Date(now - 14 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split("T")[0];
+    const revenue = await fetchDailyRevenue(start, end);
+    const n = await backfillRevenue(revenue);
+    if (n > 0) logger.info(`Revenue: filled ${n} recent row(s)`);
+    return n;
+  } catch (e) {
+    logger.warn(
+      `Revenue refresh skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
+    );
+    return 0;
+  }
 }

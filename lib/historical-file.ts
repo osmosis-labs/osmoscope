@@ -4,11 +4,13 @@ import { logger } from "./logger";
 import { isDatabaseEnabled } from "./database";
 import {
   saveSnapshotToDatabase,
+  backfillRevenueInDatabase,
   getHistoryFromDatabase,
   getHistoryRangeFromDatabase,
   getHistoryStatsFromDatabase,
   getBurnRateFromDatabase,
 } from "./historical-file-db";
+import type { DailyRevenue } from "./revenue";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const HISTORY_FILE = path.join(DATA_DIR, "history.json");
@@ -205,6 +207,34 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<boolean> {
       throw error;
     }
   });
+}
+
+// Fill protocol-revenue fields on existing rows from a list of daily revenue
+// (Data Lenses). Idempotent; only touches the five revenue fields. Called by the
+// cron so recent rows fill in as the (lagging) source publishes them. DB-backed
+// only — the local-file backend is dev-only and uses the manual backfill script,
+// so this is a logged no-op there rather than duplicating file rewrite logic.
+export async function backfillRevenue(rows: DailyRevenue[]): Promise<number> {
+  if (rows.length === 0) return 0;
+  if (isDatabaseEnabled()) {
+    const byDate = new Map(
+      rows.map((r) => [
+        r.date,
+        {
+          txnFeesRevenue: r.txnFeesRevenue,
+          takerFeesRevenue: r.takerFeesRevenue,
+          protorevRevenue: r.protorevRevenue,
+          mevRevenue: r.mevRevenue,
+          totalRevenue: r.totalRevenue,
+        },
+      ])
+    );
+    return backfillRevenueInDatabase(byDate);
+  }
+  logger.info(
+    "backfillRevenue: file backend (dev) — skipping; use scripts/populate-revenue-history.ts"
+  );
+  return 0;
 }
 
 // Sort records ascending by timestamp. Consumers (metrics KPIs, burnRateOver,
