@@ -20,7 +20,35 @@ import type { HistoricalRecord } from "@/lib/historical-file";
 import { useState, useRef } from "react";
 import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
 import { ChartHeader } from "./ChartHeader";
+import { InfoTooltip } from "../ui/InfoTooltip";
 
+// The stacked series (bottom to top) with a plain-English explainer of what each
+// represents. These distinctions are genuinely non-obvious — total vs circulating,
+// what "restricted" folds in, where dev-vesting sits — so each gets a `?` hover.
+// Colors match the <Area> strokes below.
+const SERIES_LEGEND = [
+  {
+    label: "Circulating Supply",
+    color: "#7C4DFF",
+    explainer:
+      "The public float: OSMO freely tradable and transferable. Computed as total supply minus restricted and community-pool balances. This is the figure most price/market-cap calculations use.",
+  },
+  {
+    label: "Restricted Supply",
+    color: "#9E9E9E",
+    explainer:
+      "OSMO excluded from circulating: the unvested developer-vesting allocation plus foundation and strategic-reserve wallets (their liquid and staked balances). Not freely tradable, so it's held out of circulating supply.",
+  },
+  {
+    label: "Community Supply",
+    color: "#2994D0",
+    explainer:
+      "The on-chain community pool balance, governed by community-pool spend proposals. Funded by a share of inflation, taker fees and pool-creation fees. Held separate from circulating supply.",
+  },
+] as const;
+
+// Extra context surfaced on the headline, since Total/Minted aren't their own
+// stacked bands but matter for reading the chart.
 interface TokenBalancesChartProps {
   burned: number;
   totalSupply: number;
@@ -36,6 +64,13 @@ export function TokenBalancesChart({
 }: TokenBalancesChartProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>("all");
+  // A tooltip popover would otherwise be clipped under the NEXT card: Card has
+  // backdrop-blur, which creates a stacking context, so the tooltip's own z-index
+  // can't beat a later sibling card. Fix (same as the treasury cards): lift the
+  // WHOLE card's z-index while any explainer is open. `openCount` tracks how many
+  // are open so overlapping hover/focus don't prematurely drop the lift.
+  const [openCount, setOpenCount] = useState(0);
+  const anyTipOpen = openCount > 0;
 
   // Filter data based on selected time range
   const filteredData = filterDataByTimeRange(historicalData, timeRange);
@@ -75,8 +110,14 @@ export function TokenBalancesChart({
   // (scripts/normalize-supply-offset.ts), so the series is continuous and those
   // markers no longer correspond to any step. They were removed.
 
+  // Translate a tooltip's open/close into a running count, so the card's z-lift
+  // stays raised while ANY explainer is open (a second tooltip opening before the
+  // first closes must not drop the lift).
+  const trackTip = (open: boolean) =>
+    setOpenCount((n) => Math.max(0, n + (open ? 1 : -1)));
+
   return (
-    <Card ref={cardRef}>
+    <Card ref={cardRef} className={anyTipOpen ? "relative z-30" : undefined}>
       <CardHeader>
         <ChartHeader
           title="Supply Distribution"
@@ -180,6 +221,28 @@ export function TokenBalancesChart({
             />
           </AreaChart>
         </ResponsiveContainer>
+        {/* Custom legend with per-series explainers. The chart has no built-in
+            Recharts <Legend>, and the series are otherwise only named in the
+            hover tooltip — so this row both labels the bands and carries the `?`
+            explainers for what each supply bucket actually means. */}
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-osmo-200">
+          {SERIES_LEGEND.map((s) => (
+            <span key={s.label} className="inline-flex items-center gap-1.5">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                style={{ backgroundColor: s.color }}
+                aria-hidden
+              />
+              <span>{s.label}</span>
+              <InfoTooltip
+                text={s.explainer}
+                ariaLabel={`About ${s.label}`}
+                placement="top"
+                onOpen={trackTip}
+              />
+            </span>
+          ))}
+        </div>
       </CardContent>
     </Card>
   );
