@@ -15,7 +15,8 @@ import {
   BURN_ADDRESS,
   DEVELOPER_VESTING_MODULE_ADDRESS,
 } from "./osmosis-lcd";
-import { saveSnapshot, getHistory } from "./historical-file";
+import { saveSnapshot, getHistory, backfillRevenue } from "./historical-file";
+import { fetchDailyRevenue } from "./revenue";
 import { logger } from "./logger";
 
 export interface SnapshotResult {
@@ -292,5 +293,26 @@ export async function buildAndSaveSnapshot(
       ? `Snapshot persisted for ${timestamp}`
       : `Snapshot skipped (already captured) for ${timestamp}`
   );
+
+  // Keep protocol-revenue fresh. Data Lenses lags the chain by several days, so
+  // we can't attach "today's" revenue to this snapshot — instead each tick pulls
+  // a short recent window and backfills any prior rows that are missing it or
+  // stale. As upstream publishes a new day, the next tick fills it in. This is
+  // NON-CRITICAL: a Data Lenses outage must never fail the snapshot, so it's
+  // fully guarded (revenue simply isn't updated this tick). Window = ~14 days,
+  // comfortably covering the ~5-day publish lag plus a few days of slack.
+  try {
+    const end = new Date(timestamp).toISOString().split("T")[0];
+    const startMs = new Date(timestamp).getTime() - 14 * 24 * 60 * 60 * 1000;
+    const start = new Date(startMs).toISOString().split("T")[0];
+    const revenue = await fetchDailyRevenue(start, end);
+    const n = await backfillRevenue(revenue);
+    if (n > 0) logger.info(`Revenue: filled ${n} recent row(s)`);
+  } catch (e) {
+    logger.warn(
+      `Revenue backfill skipped this tick (non-critical): ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+
   return { saved, timestamp, dayEpoch };
 }

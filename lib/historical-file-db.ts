@@ -133,6 +133,58 @@ export async function saveSnapshotToDatabase(data: JsonRecord): Promise<void> {
   }
 }
 
+// Fill protocol-revenue fields on DB rows from a date -> revenue map, for rows
+// that don't already carry that day's total (idempotent). Used by the cron to
+// keep recent rows fresh as Data Lenses publishes them (that source lags the
+// chain by several days). Matches on calendar day (UTC). Returns how many rows
+// were updated. Only touches the five revenue fields — never supply/staking/burn.
+export async function backfillRevenueInDatabase(
+  byDate: Map<
+    string,
+    {
+      txnFeesRevenue: number;
+      takerFeesRevenue: number;
+      protorevRevenue: number;
+      mevRevenue: number;
+      totalRevenue: number;
+    }
+  >
+): Promise<number> {
+  if (!isDatabaseEnabled()) {
+    throw new Error("Database is not configured");
+  }
+  if (byDate.size === 0) return 0;
+
+  // Only consider rows still missing revenue OR whose stored total differs from
+  // the source — avoids rewriting every row every hour.
+  const rows = await prisma.historicalRecord.findMany({
+    select: { timestamp: true, totalRevenue: true },
+  });
+
+  let updated = 0;
+  for (const r of rows) {
+    const day = r.timestamp.toISOString().split("T")[0];
+    const rev = byDate.get(day);
+    if (!rev) continue;
+    if (r.totalRevenue != null && Number(r.totalRevenue) === rev.totalRevenue) {
+      continue; // already current
+    }
+    await prisma.historicalRecord.update({
+      where: { timestamp: r.timestamp },
+      data: {
+        txnFeesRevenue: rev.txnFeesRevenue,
+        takerFeesRevenue: rev.takerFeesRevenue,
+        protorevRevenue: rev.protorevRevenue,
+        mevRevenue: rev.mevRevenue,
+        totalRevenue: rev.totalRevenue,
+      },
+    });
+    updated++;
+  }
+  if (updated > 0) logger.info(`Backfilled revenue on ${updated} DB row(s)`);
+  return updated;
+}
+
 // Get all historical records from database
 export async function getHistoryFromDatabase(): Promise<JsonRecord[]> {
   if (!isDatabaseEnabled()) {
