@@ -102,26 +102,31 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // The epoch snapshot and the revenue refresh are INDEPENDENT. Revenue
+  // maintenance updates existing rows and must run on every cron invocation —
+  // including when the epoch snapshot fails (LCD error, sanity-gate rejection, DB
+  // write failure). So run the epoch step in its own try/catch, then ALWAYS run
+  // the revenue refresh, and report both. A snapshot failure still surfaces as a
+  // 500 (so the run is flagged), but only AFTER revenue has had its turn.
+  let epochResult: Record<string, unknown> | null = null;
+  let epochError: string | null = null;
   try {
-    // The epoch-snapshot decision. Runs to one of three outcomes, after which we
-    // ALWAYS refresh protocol revenue (below) regardless of which path was taken —
-    // revenue updates EXISTING rows and is independent of whether a new snapshot
-    // was written, so it must not be gated behind the epoch logic's early exits.
-    const epochResult = await runEpochSnapshot();
-
-    // Refresh recent protocol revenue on every cron run (Data Lenses lags several
-    // days; this backfills as it publishes). Guarded internally — never throws.
-    const revenueFilled = await refreshRecentRevenue();
-
-    return NextResponse.json({ ok: true, ...epochResult, revenueFilled });
+    epochResult = await runEpochSnapshot();
   } catch (error) {
+    epochError = error instanceof Error ? error.message : "Unknown error";
     logger.error("Snapshot cron failed:", error);
+  }
+
+  // Refresh recent protocol revenue regardless of the epoch outcome (Data Lenses
+  // lags several days; this backfills as it publishes). Guarded internally —
+  // never throws.
+  const revenueFilled = await refreshRecentRevenue();
+
+  if (epochError) {
     return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
+      { ok: false, error: epochError, revenueFilled },
       { status: 500 }
     );
   }
+  return NextResponse.json({ ok: true, ...epochResult, revenueFilled });
 }
