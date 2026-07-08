@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildAndSaveSnapshot, refreshRecentRevenue } from "@/lib/snapshot";
+import { buildAndSaveSnapshot } from "@/lib/snapshot";
 import { fetchDayEpoch } from "@/lib/osmosis-lcd";
 import { getHistory } from "@/lib/historical-file";
 import { logger } from "@/lib/logger";
@@ -102,31 +102,21 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // The epoch snapshot and the revenue refresh are INDEPENDENT. Revenue
-  // maintenance updates existing rows and must run on every cron invocation —
-  // including when the epoch snapshot fails (LCD error, sanity-gate rejection, DB
-  // write failure). So run the epoch step in its own try/catch, then ALWAYS run
-  // the revenue refresh, and report both. A snapshot failure still surfaces as a
-  // 500 (so the run is flagged), but only AFTER revenue has had its turn.
-  let epochResult: Record<string, unknown> | null = null;
-  let epochError: string | null = null;
+  // Protocol-revenue maintenance is handled by its own hourly cron
+  // (/api/cron/revenue), NOT here: this snapshot cron only fires twice a day in a
+  // 30-minute window, so tying revenue to it left the series up to a day behind
+  // when Data Lenses published after that window. See app/api/cron/revenue.
   try {
-    epochResult = await runEpochSnapshot();
+    const result = await runEpochSnapshot();
+    return NextResponse.json({ ok: true, ...result });
   } catch (error) {
-    epochError = error instanceof Error ? error.message : "Unknown error";
     logger.error("Snapshot cron failed:", error);
-  }
-
-  // Refresh recent protocol revenue regardless of the epoch outcome (Data Lenses
-  // lags several days; this backfills as it publishes). Guarded internally —
-  // never throws.
-  const revenueFilled = await refreshRecentRevenue();
-
-  if (epochError) {
     return NextResponse.json(
-      { ok: false, error: epochError, revenueFilled },
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 }
     );
   }
-  return NextResponse.json({ ok: true, ...epochResult, revenueFilled });
 }
