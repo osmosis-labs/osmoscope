@@ -12,7 +12,6 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader } from "../ui/Card";
 import {
-  formatNumber,
   formatNumberWithCommas,
   formatPercentage,
   formatChartDate,
@@ -22,6 +21,19 @@ import type { HistoricalRecord } from "@/lib/historical-file";
 import { useState, useRef } from "react";
 import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
 import { ChartHeader } from "./ChartHeader";
+
+// Smallest "nice" step (1, 2, or 5 × 10ⁿ) that divides `span` into roughly
+// `targetTicks` intervals. Used to snap a Y-axis to round tick boundaries that
+// scale with the visible data range. Returns a sane floor when the span is 0.
+function niceStep(span: number, targetTicks: number): number {
+  if (!(span > 0)) return 1;
+  const raw = span / targetTicks;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  for (const m of [1, 2, 5, 10]) {
+    if (m * mag >= raw) return m * mag;
+  }
+  return 10 * mag;
+}
 
 interface StakingRatioChartProps {
   stakingRatio: number | null;
@@ -62,16 +74,37 @@ export function StakingRatioChart({
   const stakedValues = chartData.map((d) => d["Staked OSMO"]);
   const pctValues = chartData.map((d) => d["Staked %"]);
 
-  // Left axis (bonded OSMO): snap the min DOWN to the nearest 20M for a clean
-  // tick boundary, and the max UP to the next 20M, so gridlines land on round
-  // numbers. Floored at 0 so we never show negative supply.
-  const OSMO_STEP = 20_000_000;
+  // Left axis (bonded OSMO): snap to a "nice" round step chosen from the VISIBLE
+  // spread, so the axis has a useful number of evenly-spaced ticks at every range
+  // rather than a fixed step that collapses to just min+max when the data is
+  // tight. A fixed 20M step, for example, left the 90d view (a ~14M spread) with
+  // only two ticks. Pick the smallest nice step (1/2/5 ×10ⁿ) that yields ~5
+  // intervals, snap the bounds to it (min down, max up, floored at 0), and emit a
+  // tick per step. This also fixes the fractional-tick / rounded-duplicate issue
+  // the % axis had, since ticks land exactly on the snapped boundaries.
   const stakedMin = stakedValues.length ? Math.min(...stakedValues) : 0;
   const stakedMax = stakedValues.length ? Math.max(...stakedValues) : 0;
-  const osmoDomain: [number, number] = [
-    Math.max(0, Math.floor(stakedMin / OSMO_STEP) * OSMO_STEP),
-    Math.ceil(stakedMax / OSMO_STEP) * OSMO_STEP,
-  ];
+  // No step floor: bonded OSMO can move very little over a short window (a quiet
+  // 7d period, or between adjacent epochs), so fitting the axis to a sub-million
+  // spread is legitimate and lets that movement fill the plot. The step scales
+  // all the way down with the spread.
+  const OSMO_STEP = niceStep(stakedMax - stakedMin, 5);
+  const osmoLo = Math.max(0, Math.floor(stakedMin / OSMO_STEP) * OSMO_STEP);
+  const osmoHi = Math.ceil(stakedMax / OSMO_STEP) * OSMO_STEP;
+  const osmoDomain: [number, number] = [osmoLo, osmoHi];
+  const osmoTicks: number[] = [];
+  for (let t = osmoLo; t <= osmoHi; t += OSMO_STEP) osmoTicks.push(t);
+  // Label precision must track the step, or a sub-million step reprints duplicate
+  // whole-million labels (e.g. a 0.5M step -> 203M, 203M, 204M, 204M). Show just
+  // enough decimals in the "M" suffix to keep adjacent ticks distinct: for a step
+  // of S OSMO the "M" value changes by S/1e6 per tick, so we need
+  // ceil(-log10(S/1e6)) decimals. Clamped to [0,6] so float noise can't produce a
+  // runaway label (a 1k step -> 3 decimals -> "200.001M").
+  const osmoStepInM = OSMO_STEP / 1_000_000;
+  const osmoLabelDecimals = Math.min(
+    6,
+    Math.max(0, Math.ceil(-Math.log10(osmoStepInM)))
+  );
 
   // Right axis (staking %): snap the min DOWN and max UP to the nearest whole
   // percent, clamped to [0,100], so the bounds are clean integers and the line's
@@ -86,6 +119,17 @@ export function StakingRatioChart({
     pctHi = Math.min(100, pctHi + 1);
   }
   const pctDomain: [number, number] = [pctLo, pctHi];
+  // Explicit integer ticks. Without these Recharts divides the domain into N
+  // equal intervals regardless of integer boundaries, so an integer domain like
+  // [24,27] yields ticks at 24, 24.6, 25.2, 25.8, … which `Math.round` then
+  // collapses to duplicate labels (24, 25, 25, 26, 26, 27) and prints "26" at the
+  // physical 25.8 position. Emit one tick per whole percent, stepping up when the
+  // span is wide so we don't overcrowd the axis (target ≤ ~8 ticks).
+  const pctSpan = pctHi - pctLo;
+  const pctStep = Math.max(1, Math.ceil(pctSpan / 8));
+  const pctTicks: number[] = [];
+  for (let t = pctLo; t <= pctHi; t += pctStep) pctTicks.push(t);
+  if (pctTicks[pctTicks.length - 1] !== pctHi) pctTicks.push(pctHi);
 
   return (
     <Card ref={cardRef}>
@@ -157,7 +201,13 @@ export function StakingRatioChart({
                 stroke="#fff"
                 tick={{ fill: "#e0d5f5" }}
                 domain={osmoDomain}
-                tickFormatter={(value) => formatNumber(value, 0)}
+                ticks={osmoTicks}
+                // Custom "M" formatter honouring osmoLabelDecimals: formatNumber
+                // hardcodes whole-million precision for values ≥10M, so it can't
+                // distinguish sub-million ticks and would print duplicate labels.
+                tickFormatter={(value) =>
+                  `${(value / 1_000_000).toFixed(osmoLabelDecimals)}M`
+                }
               />
               {/* Right axis: staking ratio %. Fit to the visible range (not
                   0-based) so the line's variation is legible; see pctDomain. */}
@@ -168,6 +218,7 @@ export function StakingRatioChart({
                 tick={{ fill: "#4FC3F7" }}
                 tickFormatter={(value) => `${Math.round(value)}%`}
                 domain={pctDomain}
+                ticks={pctTicks}
               />
               <Tooltip
                 contentStyle={{
