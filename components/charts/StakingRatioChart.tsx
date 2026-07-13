@@ -54,6 +54,39 @@ export function StakingRatioChart({
     "Staked %": ((record.totalStaked as number) / record.totalSupply) * 100,
   }));
 
+  // Fit both Y-axes to the VISIBLE range instead of anchoring at 0. Staked OSMO
+  // (hundreds of millions) and the staking ratio (~45%) barely vary relative to
+  // their absolute size, so a 0-based axis crushes the movement into a flat band.
+  // Fitting min/max lets each series track its actual change and rescales as the
+  // range switches.
+  const stakedValues = chartData.map((d) => d["Staked OSMO"]);
+  const pctValues = chartData.map((d) => d["Staked %"]);
+
+  // Left axis (bonded OSMO): snap the min DOWN to the nearest 20M for a clean
+  // tick boundary, and the max UP to the next 20M, so gridlines land on round
+  // numbers. Floored at 0 so we never show negative supply.
+  const OSMO_STEP = 20_000_000;
+  const stakedMin = stakedValues.length ? Math.min(...stakedValues) : 0;
+  const stakedMax = stakedValues.length ? Math.max(...stakedValues) : 0;
+  const osmoDomain: [number, number] = [
+    Math.max(0, Math.floor(stakedMin / OSMO_STEP) * OSMO_STEP),
+    Math.ceil(stakedMax / OSMO_STEP) * OSMO_STEP,
+  ];
+
+  // Right axis (staking %): snap the min DOWN and max UP to the nearest whole
+  // percent, clamped to [0,100], so the bounds are clean integers and the line's
+  // variation fills the plot. If min and max round to the same integer (very flat
+  // range), widen by 1% each side so the axis still has span.
+  const pctMin = pctValues.length ? Math.min(...pctValues) : 0;
+  const pctMax = pctValues.length ? Math.max(...pctValues) : 0;
+  let pctLo = Math.max(0, Math.floor(pctMin));
+  let pctHi = Math.min(100, Math.ceil(pctMax));
+  if (pctHi <= pctLo) {
+    pctLo = Math.max(0, pctLo - 1);
+    pctHi = Math.min(100, pctHi + 1);
+  }
+  const pctDomain: [number, number] = [pctLo, pctHi];
+
   return (
     <Card ref={cardRef}>
       <CardHeader>
@@ -117,21 +150,24 @@ export function StakingRatioChart({
                 textAnchor="end"
                 height={80}
               />
-              {/* Left axis: bonded OSMO. */}
+              {/* Left axis: bonded OSMO. Fit to the visible range (not 0-based)
+                  so the area's movement is legible; see osmoDomain above. */}
               <YAxis
                 yAxisId="osmo"
                 stroke="#fff"
                 tick={{ fill: "#e0d5f5" }}
+                domain={osmoDomain}
                 tickFormatter={(value) => formatNumber(value, 0)}
               />
-              {/* Right axis: staking ratio %. */}
+              {/* Right axis: staking ratio %. Fit to the visible range (not
+                  0-based) so the line's variation is legible; see pctDomain. */}
               <YAxis
                 yAxisId="pct"
                 orientation="right"
                 stroke="#4FC3F7"
                 tick={{ fill: "#4FC3F7" }}
                 tickFormatter={(value) => `${Math.round(value)}%`}
-                domain={[0, "auto"]}
+                domain={pctDomain}
               />
               <Tooltip
                 contentStyle={{

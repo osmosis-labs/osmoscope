@@ -719,7 +719,11 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
   }
 
   return (
-    <Card ref={cardRef}>
+    // Lift the whole card's z-index while the node tooltip is open. The tooltip is
+    // an in-card absolute overlay, and Card's backdrop-blur creates a stacking
+    // context, so without this the overlay is painted UNDER the next card below.
+    // Same fix as TokenBalancesChart's explainer popovers.
+    <Card ref={cardRef} className={displayNode ? "relative z-30" : undefined}>
       <CardHeader>
         <ChartHeader
           title="Protocol Revenue"
