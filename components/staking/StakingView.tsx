@@ -464,6 +464,163 @@ export function StakingView() {
         />
       </div>
 
+      {/* Validator leaderboard */}
+      <Card>
+        <CardHeader>
+          <CardTitle as="h2">Validators</CardTitle>
+          {data?.snapshotAsOf && (
+            <p className="mt-1 text-xs text-osmo-300">
+              Governance, long-run uptime and slashing as of{" "}
+              {new Date(data.snapshotAsOf).toLocaleDateString(undefined, {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+              })}
+              .
+            </p>
+          )}
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex min-h-[200px] items-center justify-center text-osmo-200">
+              Loading validator set…
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/15 text-left text-osmo-200">
+                    <th className="py-2 pr-3 font-medium">#</th>
+                    <th className="py-2 pr-3 font-medium">Validator</th>
+                    <th className="py-2 pr-3 text-right font-medium">
+                      Voting power
+                    </th>
+                    <th className="py-2 pr-3 text-right font-medium">
+                      Cumulative
+                    </th>
+                    <th className="py-2 pr-3 text-right font-medium">
+                      Commission
+                    </th>
+                    <th className="py-2 pr-3 text-right font-medium">
+                      Uptime
+                      <span className="block text-[10px] font-normal text-osmo-300">
+                        recent (~80k blocks)
+                      </span>
+                    </th>
+                    <th className="py-2 pr-3 text-right font-medium">
+                      Long-run uptime
+                    </th>
+                    <th className="py-2 pr-3 text-right font-medium">
+                      Governance
+                      <span className="block text-[10px] font-normal text-osmo-300">
+                        last 10 proposals
+                      </span>
+                    </th>
+                    <th className="py-2 text-right font-medium">Slashed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleValidators.map((v, i) => {
+                    const highCommission = v.commission > 0.1;
+                    // Consensus-threshold markers: a dotted coloured divider AFTER
+                    // the validator that completes ⅓ (veto, red) and ⅔ (control,
+                    // orange), matching the distribution chart's lines (no label).
+                    const markerColor =
+                      i === vetoIdx
+                        ? "#FF6B6B"
+                        : i === controlIdx
+                          ? "#FFB74D"
+                          : null;
+                    return (
+                      <Fragment key={v.operatorAddress}>
+                        <tr className="border-b border-white/5">
+                          <td className="py-2 pr-3 tabular-nums text-osmo-200">
+                            {i + 1}
+                          </td>
+                          <td className="py-2 pr-3 font-medium text-white">
+                            {v.moniker}
+                          </td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-white">
+                            {formatPercentage(v.votingPowerShare * 100, 2)}
+                          </td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-osmo-200">
+                            {formatPercentage(
+                              cumulativeByOperator.get(v.operatorAddress) ?? 0,
+                              2
+                            )}
+                          </td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-osmo-100">
+                            {highCommission && (
+                              <span
+                                className="mr-1 text-amber-300"
+                                title="Commission above 10%"
+                                aria-label="Commission above 10%"
+                              >
+                                (!)
+                              </span>
+                            )}
+                            {formatPercentage(v.commission * 100, 0)}
+                          </td>
+                          <td
+                            className={`py-2 pr-3 text-right tabular-nums ${uptimeColorClass(v.uptime)}`}
+                          >
+                            {v.uptime == null
+                              ? "—"
+                              : formatPercentage(v.uptime * 100, 2)}
+                          </td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-osmo-100">
+                            {v.longRunUptime == null
+                              ? "—"
+                              : formatPercentage(v.longRunUptime, 2)}
+                          </td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-osmo-100">
+                            {v.govVotesLast10 == null
+                              ? "—"
+                              : `${v.govVotesLast10}/10`}
+                          </td>
+                          <td className="py-2 text-right tabular-nums">
+                            {v.timesSlashed == null ? (
+                              <span className="text-osmo-300">—</span>
+                            ) : v.timesSlashed > 0 ? (
+                              <span className="text-amber-300">
+                                {v.timesSlashed}
+                              </span>
+                            ) : (
+                              <span className="text-osmo-300">0</span>
+                            )}
+                          </td>
+                        </tr>
+                        {markerColor && (
+                          <tr>
+                            <td colSpan={9} className="p-0">
+                              <div
+                                className="border-t-2 border-dashed"
+                                style={{ borderColor: markerColor }}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {allValidators.length > defaultRows && (
+                <button
+                  type="button"
+                  onClick={() => setLeaderboardExpanded((v) => !v)}
+                  className="mt-3 w-full rounded-lg border border-white/15 bg-white/5 py-2 text-sm font-medium text-osmo-100 transition-colors hover:bg-white/15 hover:text-white"
+                >
+                  {leaderboardExpanded
+                    ? "Show fewer"
+                    : `Show all ${allValidators.length} validators`}
+                </button>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Voting-power distribution */}
       <Card liftOnHover>
         <CardHeader>
@@ -620,163 +777,6 @@ export function StakingView() {
                 Show fewer
               </button>
             )}
-        </CardContent>
-      </Card>
-
-      {/* Validator leaderboard */}
-      <Card>
-        <CardHeader>
-          <CardTitle as="h2">Validators</CardTitle>
-          {data?.snapshotAsOf && (
-            <p className="mt-1 text-xs text-osmo-300">
-              Governance, long-run uptime and slashing as of{" "}
-              {new Date(data.snapshotAsOf).toLocaleDateString(undefined, {
-                year: "numeric",
-                month: "short",
-                day: "numeric",
-              })}
-              .
-            </p>
-          )}
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex min-h-[200px] items-center justify-center text-osmo-200">
-              Loading validator set…
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/15 text-left text-osmo-200">
-                    <th className="py-2 pr-3 font-medium">#</th>
-                    <th className="py-2 pr-3 font-medium">Validator</th>
-                    <th className="py-2 pr-3 text-right font-medium">
-                      Voting power
-                    </th>
-                    <th className="py-2 pr-3 text-right font-medium">
-                      Cumulative
-                    </th>
-                    <th className="py-2 pr-3 text-right font-medium">
-                      Commission
-                    </th>
-                    <th className="py-2 pr-3 text-right font-medium">
-                      Uptime
-                      <span className="block text-[10px] font-normal text-osmo-300">
-                        recent (~80k blocks)
-                      </span>
-                    </th>
-                    <th className="py-2 pr-3 text-right font-medium">
-                      Long-run uptime
-                    </th>
-                    <th className="py-2 pr-3 text-right font-medium">
-                      Governance
-                      <span className="block text-[10px] font-normal text-osmo-300">
-                        last 10 proposals
-                      </span>
-                    </th>
-                    <th className="py-2 text-right font-medium">Slashed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleValidators.map((v, i) => {
-                    const highCommission = v.commission > 0.1;
-                    // Consensus-threshold markers: a dotted coloured divider AFTER
-                    // the validator that completes ⅓ (veto, red) and ⅔ (control,
-                    // orange), matching the distribution chart's lines (no label).
-                    const markerColor =
-                      i === vetoIdx
-                        ? "#FF6B6B"
-                        : i === controlIdx
-                          ? "#FFB74D"
-                          : null;
-                    return (
-                      <Fragment key={v.operatorAddress}>
-                        <tr className="border-b border-white/5">
-                          <td className="py-2 pr-3 tabular-nums text-osmo-200">
-                            {i + 1}
-                          </td>
-                          <td className="py-2 pr-3 font-medium text-white">
-                            {v.moniker}
-                          </td>
-                          <td className="py-2 pr-3 text-right tabular-nums text-white">
-                            {formatPercentage(v.votingPowerShare * 100, 2)}
-                          </td>
-                          <td className="py-2 pr-3 text-right tabular-nums text-osmo-200">
-                            {formatPercentage(
-                              cumulativeByOperator.get(v.operatorAddress) ?? 0,
-                              2
-                            )}
-                          </td>
-                          <td className="py-2 pr-3 text-right tabular-nums text-osmo-100">
-                            {highCommission && (
-                              <span
-                                className="mr-1 text-amber-300"
-                                title="Commission above 10%"
-                                aria-label="Commission above 10%"
-                              >
-                                (!)
-                              </span>
-                            )}
-                            {formatPercentage(v.commission * 100, 0)}
-                          </td>
-                          <td
-                            className={`py-2 pr-3 text-right tabular-nums ${uptimeColorClass(v.uptime)}`}
-                          >
-                            {v.uptime == null
-                              ? "—"
-                              : formatPercentage(v.uptime * 100, 2)}
-                          </td>
-                          <td className="py-2 pr-3 text-right tabular-nums text-osmo-100">
-                            {v.longRunUptime == null
-                              ? "—"
-                              : formatPercentage(v.longRunUptime, 2)}
-                          </td>
-                          <td className="py-2 pr-3 text-right tabular-nums text-osmo-100">
-                            {v.govVotesLast10 == null
-                              ? "—"
-                              : `${v.govVotesLast10}/10`}
-                          </td>
-                          <td className="py-2 text-right tabular-nums">
-                            {v.timesSlashed == null ? (
-                              <span className="text-osmo-300">—</span>
-                            ) : v.timesSlashed > 0 ? (
-                              <span className="text-amber-300">
-                                {v.timesSlashed}
-                              </span>
-                            ) : (
-                              <span className="text-osmo-300">0</span>
-                            )}
-                          </td>
-                        </tr>
-                        {markerColor && (
-                          <tr>
-                            <td colSpan={9} className="p-0">
-                              <div
-                                className="border-t-2 border-dashed"
-                                style={{ borderColor: markerColor }}
-                              />
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {allValidators.length > defaultRows && (
-                <button
-                  type="button"
-                  onClick={() => setLeaderboardExpanded((v) => !v)}
-                  className="mt-3 w-full rounded-lg border border-white/15 bg-white/5 py-2 text-sm font-medium text-osmo-100 transition-colors hover:bg-white/15 hover:text-white"
-                >
-                  {leaderboardExpanded
-                    ? "Show fewer"
-                    : `Show all ${allValidators.length} validators`}
-                </button>
-              )}
-            </div>
-          )}
         </CardContent>
       </Card>
 
