@@ -38,6 +38,11 @@ export interface HistoricalRecord {
   totalStaked?: number; // Total bonded tokens from staking pool
   stakingApr?: number; // Raw APR for this specific date
   stakingRate?: number; // 30-day average APR
+  // Decentralization / validator metrics (daily)
+  nakamotoCoefficient?: number; // min validators to exceed 1/3 bonded stake
+  giniCoefficient?: number; // stake-concentration inequality (0-1)
+  pendingUndelegations?: number; // total OSMO unbonding on this date
+  blockRate?: number; // average seconds per block on this date
   // Revenue distribution parameters
   distributionProportions?: {
     staking: string;

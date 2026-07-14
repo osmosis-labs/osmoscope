@@ -40,6 +40,17 @@ model HistoricalRecord {
   stakingApr    Decimal? @db.Decimal(10, 6)
   stakingRate   Decimal? @db.Decimal(10, 6)
 
+  // Decentralization / validator metrics (daily). Backfilled from SmartStake CSV
+  // history (Nakamoto/Gini from 2022-01, undelegations from 2025-07) and kept
+  // current by the snapshot cron going forward. pendingUndelegations is the total
+  // OSMO unbonding on that date (distinct from the live forward 14-day schedule).
+  nakamotoCoefficient  Int?
+  giniCoefficient      Decimal? @db.Decimal(10, 6)
+  pendingUndelegations Decimal? @db.Decimal(20, 6)
+  // Average seconds per block on this date. Backfilled from SmartStake history
+  // (from 2022-10) and computed by the cron from daily block-height deltas.
+  blockRate            Decimal? @db.Decimal(10, 4)
+
   // Data-provenance markers. These make the one-off migration scripts idempotent
   // (normalize-supply-offset / backfill-genesis-2021 / recompute-inflation) and
   // flag the 2023 window where the restricted staked portion was reconstructed.
@@ -93,4 +104,30 @@ model TreasurySnapshot {
 
   @@index([timestamp(sort: Desc)])
   @@map("treasury_snapshots")
+}
+
+// Per-validator snapshot of metrics that can't be read live from the LCD:
+// governance recency, slashing history, and long-run signing uptime. Sourced by
+// importing SmartStake's Validators.csv (scripts/import-validator-snapshot.ts),
+// keyed by operator address and joined into /api/validators. It's a point-in-time
+// snapshot (updatedAt = "as of"), refreshed by re-importing — not live data.
+model ValidatorSnapshot {
+  operatorAddress String @id
+
+  // Governance: proposals voted on out of the last 10 (SmartStake recency
+  // metric, 0-10). Comparable across validators regardless of age, unlike the
+  // all-time count which skews to older validators (so that isn't stored).
+  govVotesLast10 Int?
+
+  // Slashing history.
+  timesSlashed      Int?
+  latestSlashedTime DateTime? @db.Timestamptz(6)
+
+  // Long-run signing uptime % (SmartStake historicalPerSigned), a longer window
+  // than the live ~80k-block slashing-window uptime shown elsewhere.
+  longRunUptime Decimal? @db.Decimal(7, 4)
+
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("validator_snapshots")
 }

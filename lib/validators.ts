@@ -22,6 +22,12 @@ export interface ValidatorInfo {
   // Uptime over the slashing signed-blocks window (0-1), or null if the
   // signing-info couldn't be joined. Filled by fetchValidatorUptime.
   uptime: number | null;
+  // Snapshot metrics from the ValidatorSnapshot table (SmartStake import), joined
+  // by operator address. Null when no snapshot row exists. These are point-in-time
+  // (see snapshotAsOf), not live.
+  govVotesLast10: number | null; // votes in the last 10 proposals (0-10)
+  timesSlashed: number | null;
+  longRunUptime: number | null; // long-run signing uptime % (0-100)
 }
 
 // Raw LCD shapes (only the fields we use).
@@ -66,6 +72,9 @@ export async function fetchBondedValidators(): Promise<ValidatorInfo[]> {
         jailed: v.jailed,
         votingPowerShare: 0, // set below
         uptime: null, // set by enrichWithUptime
+        govVotesLast10: null, // set by enrichWithSnapshot
+        timesSlashed: null,
+        longRunUptime: null,
       };
       out.push(info);
       // Track the consensus address (for the uptime join) in a side map keyed by
@@ -162,6 +171,41 @@ async function enrichWithUptime(validators: ValidatorInfo[]): Promise<void> {
   }
 }
 
+// Join the ValidatorSnapshot table (imported from SmartStake's Validators.csv)
+// onto the live set by operator address, filling govVotesLast10 / timesSlashed /
+// longRunUptime. Returns the snapshot's "as of" time (max updatedAt) so the UI can
+// label it point-in-time. Non-fatal / DB-optional: if the table is empty or the
+// DB isn't reachable, the fields stay null and asOf is null.
+async function enrichWithSnapshot(
+  validators: ValidatorInfo[]
+): Promise<string | null> {
+  try {
+    // Imported lazily so lib/validators stays usable without a DB (the live
+    // metrics don't need it); the snapshot join is a best-effort overlay.
+    const { prisma, isDatabaseEnabled } = await import("./database");
+    if (!isDatabaseEnabled()) return null;
+    const snaps = await prisma.validatorSnapshot.findMany();
+    if (snaps.length === 0) return null;
+    const byOp = new Map(snaps.map((s) => [s.operatorAddress, s]));
+    let asOf: Date | null = null;
+    for (const v of validators) {
+      const s = byOp.get(v.operatorAddress);
+      if (!s) continue;
+      v.govVotesLast10 = s.govVotesLast10 ?? null;
+      v.timesSlashed = s.timesSlashed ?? null;
+      v.longRunUptime =
+        s.longRunUptime == null ? null : Number(s.longRunUptime);
+      if (s.updatedAt && (!asOf || s.updatedAt > asOf)) asOf = s.updatedAt;
+    }
+    return asOf ? asOf.toISOString() : null;
+  } catch (error) {
+    logger.warn(
+      `Snapshot enrichment skipped: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return null;
+  }
+}
+
 // Nakamoto coefficient: the minimum number of validators whose combined stake
 // exceeds the Byzantine-fault threshold (>1/3 of bonded stake), i.e. the smallest
 // colluding set that could halt the chain. Lower = more centralized. Expects a
@@ -220,18 +264,26 @@ export interface DecentralizationMetrics {
   gini: number;
   bondedTotal: number;
   validators: ValidatorInfo[];
+  // ISO time the per-validator snapshot (gov/slashing/long-run-uptime) was last
+  // imported, or null if no snapshot is present. The UI shows it as an "as of".
+  snapshotAsOf: string | null;
 }
 
 export async function fetchDecentralizationMetrics(): Promise<DecentralizationMetrics> {
   try {
     const validators = await fetchBondedValidators();
-    await enrichWithUptime(validators);
+    // Uptime (live LCD) and the snapshot overlay (DB) are independent; run both.
+    const [, snapshotAsOf] = await Promise.all([
+      enrichWithUptime(validators),
+      enrichWithSnapshot(validators),
+    ]);
     return {
       validatorCount: validators.length,
       nakamoto: nakamotoCoefficient(validators),
       gini: giniCoefficient(validators),
       bondedTotal: validators.reduce((s, v) => s + v.tokens, 0),
       validators,
+      snapshotAsOf,
     };
   } catch (error) {
     logger.error("Error fetching decentralization metrics:", error);

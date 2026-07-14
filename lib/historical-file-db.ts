@@ -28,6 +28,13 @@ function prismaToJson(record: PrismaRecord): JsonRecord {
     totalStaked: num(record.totalStaked),
     stakingApr: num(record.stakingApr),
     stakingRate: num(record.stakingRate),
+    nakamotoCoefficient:
+      record.nakamotoCoefficient == null
+        ? undefined
+        : Number(record.nakamotoCoefficient),
+    giniCoefficient: num(record.giniCoefficient),
+    pendingUndelegations: num(record.pendingUndelegations),
+    blockRate: num(record.blockRate),
     distributionProportions: record.distributionProportions as
       | JsonRecord["distributionProportions"]
       | undefined,
@@ -82,6 +89,10 @@ export function jsonToPrisma(
     totalStaked: record.totalStaked ?? null,
     stakingApr: record.stakingApr ?? null,
     stakingRate: record.stakingRate ?? null,
+    nakamotoCoefficient: record.nakamotoCoefficient ?? null,
+    giniCoefficient: record.giniCoefficient ?? null,
+    pendingUndelegations: record.pendingUndelegations ?? null,
+    blockRate: record.blockRate ?? null,
     distributionProportions: toJson(record.distributionProportions),
     osmoTakerFeeDistribution: toJson(record.osmoTakerFeeDistribution),
     nonOsmoTakerFeeDistribution: toJson(record.nonOsmoTakerFeeDistribution),

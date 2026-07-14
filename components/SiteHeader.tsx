@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from "react";
 const NAV = [
   { href: "/", label: "Tokenomics" },
   { href: "/treasury", label: "Treasury" },
-  { href: "/staking", label: "Staking" },
+  { href: "/staking", label: "Network" },
 ] as const;
 
 export function SiteHeader({

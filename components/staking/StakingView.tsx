@@ -1,9 +1,11 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useState, useRef } from "react";
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -17,11 +19,16 @@ import { useValidatorData } from "@/lib/hooks/useValidatorData";
 import { useUndelegations } from "@/lib/hooks/useUndelegations";
 import { useOsmosisMetrics } from "@/lib/hooks/useOsmosisMetrics";
 import { useHistoricalData } from "@/lib/hooks/useHistoricalData";
+import type { HistoricalRecord } from "@/lib/historical-file";
 import {
   formatNumber,
   formatNumberWithCommas,
   formatPercentage,
+  formatChartDate,
+  makeMonthlyTicks,
 } from "@/lib/utils";
+import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
+import { ChartHeader } from "../charts/ChartHeader";
 import { InfoTooltip } from "../ui/InfoTooltip";
 import { StakingRatioChart } from "../charts/StakingRatioChart";
 
@@ -56,6 +63,117 @@ function Stat({
 // identity — so one hue, darkest for the largest validator). Cells beyond the
 // list reuse the lightest step.
 const BAR_FILL = "#7C4DFF";
+
+// A simple single-series line chart over the daily history, for the metrics
+// backfilled from SmartStake (Nakamoto, Gini, block rate). Points missing the
+// value are dropped (connectNulls keeps the line continuous across gaps). `unit`
+// is appended in the tooltip; `decimals` controls y-axis / tooltip precision.
+function MetricLineChart({
+  title,
+  subtitle,
+  data,
+  dataKey,
+  color,
+  unit = "",
+  decimals = 0,
+}: {
+  title: string;
+  subtitle: string;
+  data: HistoricalRecord[];
+  dataKey: "nakamotoCoefficient" | "giniCoefficient" | "blockRate";
+  color: string;
+  unit?: string;
+  decimals?: number;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [timeRange, setTimeRange] = useState<TimeRange>("all");
+  const filtered = filterDataByTimeRange(data, timeRange).filter(
+    (r) => r[dataKey] != null
+  );
+  const chartData = filtered.map((r) => ({
+    date: formatChartDate(r.timestamp, timeRange),
+    timestamp: r.timestamp,
+    value: r[dataKey] as number,
+  }));
+
+  return (
+    <Card ref={cardRef} liftOnHover>
+      <CardHeader>
+        <ChartHeader
+          title={title}
+          timeRange={timeRange}
+          onRangeChange={setTimeRange}
+          cardRef={cardRef}
+          screenshotFilename={`osmo-${dataKey}`}
+          shareText={`Osmosis ${title.toLowerCase()} over time`}
+          csvRows={() =>
+            data
+              .filter((r) => r[dataKey] != null)
+              .map((r) => ({ date: r.timestamp, value: r[dataKey] as number }))
+          }
+        />
+        <p className="mt-1 text-sm text-osmo-200">{subtitle}</p>
+      </CardHeader>
+      <CardContent>
+        {chartData.length === 0 ? (
+          <div className="flex min-h-[320px] items-center justify-center text-osmo-200">
+            No data available for this range
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={340}>
+            <LineChart data={chartData}>
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="rgba(255,255,255,0.1)"
+              />
+              <XAxis
+                dataKey="date"
+                stroke="#fff"
+                tick={{ fill: "#e0d5f5" }}
+                ticks={makeMonthlyTicks(
+                  chartData.map((d) => d.date),
+                  chartData.map((d) => d.timestamp),
+                  timeRange
+                )}
+                angle={-45}
+                textAnchor="end"
+                height={70}
+              />
+              <YAxis
+                stroke="#fff"
+                tick={{ fill: "#e0d5f5" }}
+                domain={["auto", "auto"]}
+                tickFormatter={(v) => v.toFixed(decimals)}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "rgba(31, 10, 41, 0.95)",
+                  backdropFilter: "blur(12px)",
+                  border: "1px solid rgba(255, 255, 255, 0.2)",
+                  borderRadius: "8px",
+                }}
+                labelStyle={{ color: "#fff" }}
+                itemStyle={{ color: "#fff" }}
+                formatter={(value: number) => [
+                  `${value.toFixed(decimals)}${unit}`,
+                  title,
+                ]}
+              />
+              <Line
+                type="monotone"
+                dataKey="value"
+                stroke={color}
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 // Recharts-passed props we read off the Customized child (only the bits we use).
 interface CustomizedAxisProps {
@@ -306,6 +424,25 @@ export function StakingView() {
         </CardContent>
       </Card>
 
+      {/* Nakamoto + Gini over time (history from the SmartStake import; the cron
+          keeps them current). */}
+      <MetricLineChart
+        title="Nakamoto Coefficient"
+        subtitle="Minimum validators to exceed ⅓ of bonded stake, over time. Higher is more decentralized."
+        data={historicalData}
+        dataKey="nakamotoCoefficient"
+        color="#4FC3F7"
+        decimals={0}
+      />
+      <MetricLineChart
+        title="Gini Coefficient"
+        subtitle="Stake-concentration inequality across the validator set (0 even → 1 concentrated), over time."
+        data={historicalData}
+        dataKey="giniCoefficient"
+        color="#FF66CC"
+        decimals={3}
+      />
+
       {/* Staking ratio over time (moved here from Tokenomics: it's a
           staking-health metric, not a tokenomics one). */}
       <StakingRatioChart
@@ -475,6 +612,17 @@ export function StakingView() {
       <Card>
         <CardHeader>
           <CardTitle as="h2">Validators</CardTitle>
+          {data?.snapshotAsOf && (
+            <p className="mt-1 text-xs text-osmo-300">
+              Governance, long-run uptime and slashing as of{" "}
+              {new Date(data.snapshotAsOf).toLocaleDateString(undefined, {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+              })}
+              .
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -497,12 +645,22 @@ export function StakingView() {
                     <th className="py-2 pr-3 text-right font-medium">
                       Commission
                     </th>
-                    <th className="py-2 text-right font-medium">
+                    <th className="py-2 pr-3 text-right font-medium">
                       Uptime
                       <span className="block text-[10px] font-normal text-osmo-300">
                         recent (~80k blocks)
                       </span>
                     </th>
+                    <th className="py-2 pr-3 text-right font-medium">
+                      Long-run uptime
+                    </th>
+                    <th className="py-2 pr-3 text-right font-medium">
+                      Governance
+                      <span className="block text-[10px] font-normal text-osmo-300">
+                        last 10 proposals
+                      </span>
+                    </th>
+                    <th className="py-2 text-right font-medium">Slashed</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -548,16 +706,37 @@ export function StakingView() {
                             {formatPercentage(v.commission * 100, 0)}
                           </td>
                           <td
-                            className={`py-2 text-right tabular-nums ${uptimeColorClass(v.uptime)}`}
+                            className={`py-2 pr-3 text-right tabular-nums ${uptimeColorClass(v.uptime)}`}
                           >
                             {v.uptime == null
                               ? "—"
                               : formatPercentage(v.uptime * 100, 2)}
                           </td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-osmo-100">
+                            {v.longRunUptime == null
+                              ? "—"
+                              : formatPercentage(v.longRunUptime, 2)}
+                          </td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-osmo-100">
+                            {v.govVotesLast10 == null
+                              ? "—"
+                              : `${v.govVotesLast10}/10`}
+                          </td>
+                          <td className="py-2 text-right tabular-nums">
+                            {v.timesSlashed == null ? (
+                              <span className="text-osmo-300">—</span>
+                            ) : v.timesSlashed > 0 ? (
+                              <span className="text-amber-300">
+                                {v.timesSlashed}
+                              </span>
+                            ) : (
+                              <span className="text-osmo-300">0</span>
+                            )}
+                          </td>
                         </tr>
                         {markerColor && (
                           <tr>
-                            <td colSpan={6} className="p-0">
+                            <td colSpan={9} className="p-0">
                               <div
                                 className="border-t-2 border-dashed"
                                 style={{ borderColor: markerColor }}
@@ -657,6 +836,18 @@ export function StakingView() {
           )}
         </CardContent>
       </Card>
+
+      {/* Block rate — network performance (seconds per block), history from the
+          SmartStake import; the cron computes it from daily block-height deltas. */}
+      <MetricLineChart
+        title="Block Rate"
+        subtitle="Average seconds per block over time — Osmosis has fallen from ~6s to ~1.1s."
+        data={historicalData}
+        dataKey="blockRate"
+        color="#81C784"
+        unit="s"
+        decimals={2}
+      />
     </div>
   );
 }
