@@ -32,33 +32,6 @@ import { ChartHeader } from "../charts/ChartHeader";
 import { InfoTooltip } from "../ui/InfoTooltip";
 import { StakingRatioChart } from "../charts/StakingRatioChart";
 
-// One headline stat with an optional `?` explainer.
-function Stat({
-  label,
-  value,
-  explainer,
-  color = "text-white",
-}: {
-  label: string;
-  value: string;
-  explainer?: string;
-  color?: string;
-}) {
-  return (
-    <div className="rounded-lg bg-white/5 p-4">
-      <div className="flex items-center gap-1.5 text-xs text-osmo-200">
-        <span>{label}</span>
-        {explainer && (
-          <InfoTooltip text={explainer} ariaLabel={`About ${label}`} />
-        )}
-      </div>
-      <div className={`mt-1 text-2xl font-bold sm:text-3xl ${color}`}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
 // Osmosis-purple single-hue ramp for the voting-power bars (magnitude, not
 // identity — so one hue, darkest for the largest validator). Cells beyond the
 // list reuse the lightest step.
@@ -70,7 +43,7 @@ const BAR_FILL = "#7C4DFF";
 // is appended in the tooltip; `decimals` controls y-axis / tooltip precision.
 function MetricLineChart({
   title,
-  subtitle,
+  explainer,
   data,
   dataKey,
   color,
@@ -78,7 +51,7 @@ function MetricLineChart({
   decimals = 0,
 }: {
   title: string;
-  subtitle: string;
+  explainer?: string;
   data: HistoricalRecord[];
   dataKey: "nakamotoCoefficient" | "giniCoefficient" | "blockRate";
   color: string;
@@ -101,6 +74,7 @@ function MetricLineChart({
       <CardHeader>
         <ChartHeader
           title={title}
+          titleExplainer={explainer}
           timeRange={timeRange}
           onRangeChange={setTimeRange}
           cardRef={cardRef}
@@ -112,7 +86,6 @@ function MetricLineChart({
               .map((r) => ({ date: r.timestamp, value: r[dataKey] as number }))
           }
         />
-        <p className="mt-1 text-sm text-osmo-200">{subtitle}</p>
       </CardHeader>
       <CardContent>
         {chartData.length === 0 ? (
@@ -377,88 +350,130 @@ export function StakingView() {
     return out;
   })();
 
+  // --- Top-of-page KPI strip (mirrors the Tokenomics KpiSummary look) ---------
+  // Latest block rate = most recent historical row carrying it (not in the live
+  // validator API). Pending-undelegation subtitle compares the current total to
+  // the typical 90-day level from the imported history.
+  const latestBlockRate = [...historicalData]
+    .reverse()
+    .find((r) => r.blockRate != null)?.blockRate;
+  const undelegAvg90 = (() => {
+    const vals = historicalData
+      .filter((r) => r.pendingUndelegations != null)
+      .slice(-90)
+      .map((r) => r.pendingUndelegations as number);
+    return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+  })();
+  const undelegVsTypical =
+    undelegations && undelegAvg90 && undelegAvg90 > 0
+      ? (undelegations.total / undelegAvg90 - 1) * 100
+      : null;
+
+  const kpis: {
+    label: string;
+    value: string;
+    sub?: string;
+    color?: string;
+  }[] = [
+    {
+      label: "Block Rate",
+      value: latestBlockRate != null ? `${latestBlockRate.toFixed(2)}s` : "—",
+      sub: "seconds per block",
+    },
+    {
+      label: "Staked",
+      value:
+        metrics?.stakingRatio != null
+          ? formatPercentage(metrics.stakingRatio, 2)
+          : "—",
+      sub: "of total supply",
+      color: "text-[#4FC3F7]",
+    },
+    {
+      label: "Validator Set",
+      value: isLoading ? "…" : String(data?.validatorCount ?? "—"),
+      sub: "active validators",
+    },
+    {
+      label: "Nakamoto Coefficient",
+      value: isLoading ? "…" : String(data?.nakamoto ?? "—"),
+      sub: "validators to halt (⅓)",
+    },
+    {
+      label: "Pending Undelegations",
+      value:
+        undelegationsLoading || !undelegations
+          ? "…"
+          : `${formatNumberWithCommas(undelegations.total, 0)} OSMO`,
+      sub:
+        undelegVsTypical != null
+          ? `${undelegVsTypical >= 0 ? "+" : ""}${undelegVsTypical.toFixed(0)}% vs 90-day typical`
+          : "unbonding now",
+      color:
+        undelegVsTypical == null
+          ? undefined
+          : undelegVsTypical > 25
+            ? "text-[#E57373]"
+            : undelegVsTypical < -25
+              ? "text-[#81C784]"
+              : undefined,
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      {/* Decentralization overview */}
-      <Card liftOnHover>
-        <CardHeader>
-          <div className="flex items-start justify-between gap-3">
-            <CardTitle as="h2">Decentralization</CardTitle>
-            {/* Time control placeholder: history is being recorded from now; the
-                selector activates once enough daily points exist. */}
-            <span className="shrink-0 rounded-md border border-white/15 bg-white/5 px-2 py-1 text-xs text-osmo-200">
-              History accumulating
-            </span>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat
-              label="Nakamoto coefficient"
-              value={isLoading ? "…" : String(data?.nakamoto ?? "—")}
-              color="text-[#4FC3F7]"
-              explainer="The minimum number of validators whose combined stake exceeds 1/3 of the bonded total — the smallest colluding set that could halt the chain. Higher is more decentralized."
-            />
-            <Stat
-              label="Gini coefficient"
-              value={isLoading ? "…" : (data?.gini.toFixed(3) ?? "—")}
-              explainer="Stake-concentration inequality across the validator set, from 0 (perfectly even) to 1 (all stake on one validator). Complements Nakamoto by describing the whole distribution, not just the top tail."
-            />
-            <Stat
-              label="Active validators"
-              value={isLoading ? "…" : String(data?.validatorCount ?? "—")}
-              explainer="Validators currently in the bonded (active) set, earning rewards and signing blocks."
-            />
-            <Stat
-              label="Pending undelegations"
-              value={
-                undelegationsLoading
-                  ? "…"
-                  : undelegations
-                    ? formatNumber(undelegations.total, 0)
-                    : "—"
-              }
-              explainer="OSMO currently unbonding across the chain (in the ~14-day unbonding period), not yet liquid. Summed from every validator's actual unbonding delegations — NOT the staking pool's not-bonded tokens, which on Osmosis also include non-unbonding module balances and overstate this ~25x."
-            />
-          </div>
-        </CardContent>
-      </Card>
+      {/* Top KPI strip (replaces the old Decentralization stat card) */}
+      <section aria-label="Key network metrics">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {kpis.map((kpi) => (
+            <Card key={kpi.label} className="p-4">
+              <div className="text-xs uppercase tracking-wide text-osmo-200">
+                {kpi.label}
+              </div>
+              <div
+                className={`mt-1 text-2xl font-bold ${kpi.color ?? "text-white"}`}
+              >
+                {kpi.value}
+              </div>
+              {kpi.sub && (
+                <div className="mt-0.5 text-xs text-osmo-100">{kpi.sub}</div>
+              )}
+            </Card>
+          ))}
+        </div>
+      </section>
 
       {/* Nakamoto + Gini over time (history from the SmartStake import; the cron
-          keeps them current). */}
-      <MetricLineChart
-        title="Nakamoto Coefficient"
-        subtitle="Minimum validators to exceed ⅓ of bonded stake, over time. Higher is more decentralized."
-        data={historicalData}
-        dataKey="nakamotoCoefficient"
-        color="#4FC3F7"
-        decimals={0}
-      />
-      <MetricLineChart
-        title="Gini Coefficient"
-        subtitle="Stake-concentration inequality across the validator set (0 even → 1 concentrated), over time."
-        data={historicalData}
-        dataKey="giniCoefficient"
-        color="#FF66CC"
-        decimals={3}
-      />
-
-      {/* Staking ratio over time (moved here from Tokenomics: it's a
-          staking-health metric, not a tokenomics one). */}
-      <StakingRatioChart
-        stakingRatio={metrics?.stakingRatio ?? null}
-        historicalData={historicalData}
-      />
+          keeps them current). Side by side on desktop, stacked on mobile. */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <MetricLineChart
+          title="Nakamoto Coefficient"
+          explainer="Minimum validators to exceed ⅓ of bonded stake, over time. Higher is more decentralized."
+          data={historicalData}
+          dataKey="nakamotoCoefficient"
+          color="#4FC3F7"
+          decimals={0}
+        />
+        <MetricLineChart
+          title="Gini Coefficient"
+          explainer="Voting power inequality across the validator set. 0 is an even distribution, 1 is a single validator holding all voting power."
+          data={historicalData}
+          dataKey="giniCoefficient"
+          color="#FF66CC"
+          decimals={3}
+        />
+      </div>
 
       {/* Voting-power distribution */}
       <Card liftOnHover>
         <CardHeader>
-          <CardTitle as="h2">Voting Power Distribution</CardTitle>
-          <p className="mt-1 text-sm text-osmo-200">
-            Share of bonded stake per validator, with the ⅓ veto and ⅔ control
-            thresholds marked. Showing the consensus-relevant set by default;
-            click a validator to view it on Mintscan.
-          </p>
+          <span className="inline-flex items-center gap-1.5">
+            <CardTitle as="h2">Voting Power Distribution</CardTitle>
+            <InfoTooltip
+              text="Share of bonded stake per validator, with the ⅓ veto and ⅔ control thresholds marked. Shows the consensus-relevant set by default; click a validator to view it on Mintscan."
+              ariaLabel="About Voting Power Distribution"
+            />
+          </span>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -765,16 +780,24 @@ export function StakingView() {
         </CardContent>
       </Card>
 
+      {/* Staking ratio over time (moved here from Tokenomics: it's a
+          staking-health metric, not a tokenomics one). */}
+      <StakingRatioChart
+        stakingRatio={metrics?.stakingRatio ?? null}
+        historicalData={historicalData}
+      />
+
       {/* Pending undelegations — next 14 days */}
       <Card liftOnHover>
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
-            <div>
+            <span className="inline-flex items-center gap-1.5">
               <CardTitle as="h2">Pending Undelegations</CardTitle>
-              <p className="mt-1 text-sm text-osmo-200">
-                OSMO completing its unbonding period.
-              </p>
-            </div>
+              <InfoTooltip
+                text="OSMO completing its unbonding period. Summed from every validator's actual unbonding delegations. Undelegations may be cancelled before completion, so upcoming amounts are indicative."
+                ariaLabel="About Pending Undelegations"
+              />
+            </span>
             {undelegations != null && (
               <div className="shrink-0 text-right">
                 <div className="text-2xl font-bold text-[#7C4DFF] sm:text-3xl">
@@ -841,7 +864,6 @@ export function StakingView() {
           SmartStake import; the cron computes it from daily block-height deltas. */}
       <MetricLineChart
         title="Block Rate"
-        subtitle="Average seconds per block over time — Osmosis has fallen from ~6s to ~1.1s."
         data={historicalData}
         dataKey="blockRate"
         color="#81C784"
