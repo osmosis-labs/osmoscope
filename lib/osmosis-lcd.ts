@@ -12,7 +12,7 @@ import type {
   StakingPoolResponse,
 } from "@/types/osmosis";
 
-const LCD_BASE_URL =
+export const LCD_BASE_URL =
   process.env.NEXT_PUBLIC_LCD_BASE_URL || "https://lcd.osmosis.zone";
 const NUMIA_API_URL =
   process.env.NUMIA_API_URL || "https://public-osmosis-api.numia.xyz";
@@ -85,8 +85,14 @@ const longCache = new LRUCache<string, any>({
   updateAgeOnHas: false,
 });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function cachedFetch(url: string, useLongCache = false): Promise<any> {
+// Exported so sibling LCD modules (e.g. lib/validators.ts) reuse the exact same
+// fetch layer — retry, 429 backoff, and the shared LRU cache — rather than
+// duplicating it and drifting.
+export async function cachedFetch(
+  url: string,
+  useLongCache = false
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- generic LCD JSON
+): Promise<any> {
   const cache = useLongCache ? longCache : shortCache;
 
   // Check cache (has built-in TTL)

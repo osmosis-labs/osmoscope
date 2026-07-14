@@ -1874,6 +1874,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"bech32@npm:^2.0.0":
+  version: 2.0.0
+  resolution: "bech32@npm:2.0.0"
+  checksum: 10c0/45e7cc62758c9b26c05161b4483f40ea534437cf68ef785abadc5b62a2611319b878fef4f86ddc14854f183b645917a19addebc9573ab890e19194bc8f521942
+  languageName: node
+  linkType: hard
+
 "before-after-hook@npm:^4.0.0":
   version: 4.0.0
   resolution: "before-after-hook@npm:4.0.0"
@@ -4907,6 +4914,7 @@ __metadata:
     "@types/react": "npm:^18.3.12"
     "@types/react-dom": "npm:^18.3.1"
     autoprefixer: "npm:^10.4.22"
+    bech32: "npm:^2.0.0"
     clsx: "npm:^2.1.1"
     csv-parse: "npm:^6.1.0"
     dotenv: "npm:^17.2.3"

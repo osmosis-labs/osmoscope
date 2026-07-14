@@ -8,7 +8,6 @@ import { BurnChart } from "./charts/BurnChart";
 import { FeeFlowChart } from "./charts/FeeFlowChart";
 import { ProtocolRevenueChart } from "./charts/ProtocolRevenueChart";
 import { StakingAprChart } from "./charts/StakingAprChart";
-import { StakingRatioChart } from "./charts/StakingRatioChart";
 import { KpiSummary } from "./KpiSummary";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/Card";
 import { formatPercentage, formatNumberWithCommas } from "@/lib/utils";
@@ -219,12 +218,6 @@ export function OsmosisDashboard() {
       {/* Staking APR Chart */}
       <StakingAprChart
         currentApr={data.stakingApr}
-        historicalData={historicalData}
-      />
-
-      {/* Staking Ratio Chart */}
-      <StakingRatioChart
-        stakingRatio={data.stakingRatio}
         historicalData={historicalData}
       />
 
