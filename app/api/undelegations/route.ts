@@ -42,17 +42,21 @@ export async function GET() {
     // cron hasn't populated it yet (first deploy). The live fallback is the
     // expensive fan-out, so it should essentially never run in steady state.
     let schedule: UnbondingSchedule;
+    let computedAt: string | null;
     if (forecast?.data) {
       schedule = forecast.data as UnbondingSchedule;
+      computedAt = forecast.computedAt;
     } else {
       logger.warn(
         "No stored unbonding forecast; falling back to a live fan-out (first run?)."
       );
       schedule = await fetchUnbondingSchedule();
+      computedAt = new Date().toISOString();
     }
 
     return NextResponse.json(
-      { ...schedule, history },
+      // computedAt = when the forecast fan-out ran, so the UI can show staleness.
+      { ...schedule, history, computedAt },
       {
         headers: {
           "Cache-Control": "public, s-maxage=1800, stale-while-revalidate=3600",
