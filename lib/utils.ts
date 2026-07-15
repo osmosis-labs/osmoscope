@@ -106,6 +106,10 @@ export function makeMonthlyTicks(
 ): string[] | undefined {
   const wide = timeRange === "all" || timeRange === "1y";
   if (!wide) return undefined;
+  // No timestamps to thin by (e.g. a series whose dated portion is toggled
+  // off): fall back to default per-point ticks rather than returning [] and
+  // blanking the axis.
+  if (timestamps.length === 0) return undefined;
 
   const ticks: string[] = [];
   const seen = new Set<string>();

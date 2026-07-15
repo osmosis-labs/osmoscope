@@ -205,8 +205,8 @@ model UnbondingForecast {
   // Fixed key so the cron upserts one row. Always "latest".
   id String @id
 
-  // Full forecast payload: { total, bondedTotal, days: [{date, amount}],
-  // topEntries: [{delegator, validator, moniker, amount, completionTime}] }.
+  // Full forecast payload: { total, days: [{date, amount}], topEntries:
+  // [{delegator, validator, moniker, amount, completionTime}], fetchFailures }.
   // Shape owned by lib/validators.ts (UnbondingSchedule).
   data Json
 

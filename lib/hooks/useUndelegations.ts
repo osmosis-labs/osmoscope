@@ -2,9 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import type { UnbondingSchedule } from "@/lib/validators";
 
 // The route augments the live schedule with the per-completion-day history
-// series (UndelegationDay: backfilled + cron-written, keyed by completion day).
+// series (UndelegationDay: backfilled + cron-written, keyed by completion day)
+// and when the forecast fan-out was computed (for staleness display).
 export interface UndelegationsResponse extends UnbondingSchedule {
   history: { date: string; amountCompleting: number }[];
+  computedAt: string | null;
 }
 
 async function fetchUndelegations(): Promise<UndelegationsResponse> {

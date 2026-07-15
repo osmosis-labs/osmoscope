@@ -913,13 +913,15 @@ export function StakingView() {
     kind: "history" | "today" | "forecast";
   }[] = [
     ...(showHistory
-      ? undelegHistory.map((d, i) => ({
+      ? undelegHistory.map((d) => ({
           label: d.date,
           amount: d.amount,
-          // The final history row is today (the series runs up to today).
-          kind: (i === undelegHistory.length - 1 ? "today" : "history") as
-            | "history"
-            | "today",
+          // "today" by DATE, not by position: the history series is sparse (a
+          // day with no completions has no row, and a cron gap can leave the
+          // newest row days old), so the last row isn't necessarily today.
+          kind: (d.timestamp.slice(0, 10) === todayIso
+            ? "today"
+            : "history") as "history" | "today",
         }))
       : []),
     ...(showForecast
@@ -933,11 +935,13 @@ export function StakingView() {
   // "Today" divider only makes sense when both parts are shown (it marks the
   // history→forecast boundary). Positioned by INDEX via <Customized> (a category
   // ReferenceLine resolves unreliably on the mixed history+forecast label axis),
-  // sitting between the last history bar and the first forecast bar.
+  // centred on TODAY's bar — located by date, and hidden when today has no row
+  // (drawing it on the last bar would place it on an older day).
+  const undelegTodayIdx = undelegHistory.findIndex(
+    (d) => d.timestamp.slice(0, 10) === todayIso
+  );
   const undelegBoundaryIndex =
-    showHistory && showForecast && undelegHistory.length
-      ? undelegHistory.length - 1
-      : -1;
+    showHistory && showForecast && undelegTodayIdx >= 0 ? undelegTodayIdx : -1;
 
   // --- Top-of-page KPI strip (mirrors the Tokenomics KpiSummary look) ---------
   // Latest block rate = most recent historical row carrying it (not in the live
@@ -1570,7 +1574,11 @@ export function StakingView() {
                       undelegChartData.map((d) => d.label),
                       // Only history rows carry a real timestamp for month-tick
                       // thinning; forecast labels are short day labels that fit.
-                      undelegHistory.map((d) => d.timestamp),
+                      // Timestamps must track the History toggle: with History
+                      // off the chart holds only forecast rows, and pairing
+                      // history timestamps against them by index would emit
+                      // forecast labels as bogus month ticks.
+                      showHistory ? undelegHistory.map((d) => d.timestamp) : [],
                       undelegRange
                     )}
                     angle={-45}

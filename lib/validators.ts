@@ -602,7 +602,8 @@ export async function fetchUnbondingSchedule(): Promise<UnbondingSchedule> {
       // Follow pagination: a validator with >1000 concurrent unbonding
       // delegators (a mass-unbond event — exactly when this chart matters)
       // would otherwise be silently truncated. The page cap bounds a
-      // misbehaving endpoint; hitting it is logged as a known undercount.
+      // misbehaving endpoint; hitting it counts as a fetch failure so the
+      // cron's persist gate treats the run as an undercount.
       let pageKey: string | null = null;
       for (let page = 0; page < 10; page++) {
         const p = new URLSearchParams({ "pagination.limit": "1000" });
@@ -628,10 +629,16 @@ export async function fetchUnbondingSchedule(): Promise<UnbondingSchedule> {
         }
         pageKey = data.pagination?.next_key ?? null;
         if (!pageKey) break;
-        if (page === 9)
+        if (page === 9) {
+          // Cap reached with pages remaining: this validator's data is
+          // incomplete, so the run's totals are an undercount. Count it as a
+          // failure — otherwise the persist gate would bake the truncated
+          // figures into the historical series as if they were complete.
+          fetchFailures++;
           logger.warn(
-            `Unbonding pagination cap hit for ${v.operatorAddress}; totals undercount this run.`
+            `Unbonding pagination cap hit for ${v.operatorAddress}; marking run incomplete.`
           );
+        }
       }
     } catch (error) {
       // A single validator's endpoint failing shouldn't void the whole schedule
