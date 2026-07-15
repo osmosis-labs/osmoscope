@@ -1,6 +1,7 @@
 "use client";
 
 import { CardTitle } from "../ui/Card";
+import { InfoTooltip } from "../ui/InfoTooltip";
 import { TimeRangeSelector, TimeRange } from "../TimeRangeSelector";
 import { ScreenshotButtons } from "../ScreenshotButtons";
 import type { CsvRow } from "@/lib/csv";
@@ -8,6 +9,9 @@ import type { RefObject, ReactNode } from "react";
 
 interface ChartHeaderProps {
   title: string;
+  /** Optional explainer shown as a `?` tooltip beside the title (replaces a
+   *  separate subtitle line). */
+  titleExplainer?: string;
   timeRange: TimeRange;
   onRangeChange: (range: TimeRange) => void;
   /** Card ref for the screenshot capture. */
@@ -32,6 +36,9 @@ interface ChartHeaderProps {
   headlineColor?: string;
   /** Extra controls (e.g. a standard/cumulative toggle) rendered with the selector. */
   extraControls?: ReactNode;
+  /** Hide the time-range selector (e.g. a fixed-window forecast view where the
+   *  range is not user-selectable). `extraControls` still render. */
+  hideTimeRange?: boolean;
 }
 
 // Shared, responsive chart card header. Replaces the title + TimeRangeSelector +
@@ -44,6 +51,7 @@ interface ChartHeaderProps {
 // on one wrapping row, dropping to additional lines only when there isn't room.
 export function ChartHeader({
   title,
+  titleExplainer,
   timeRange,
   onRangeChange,
   cardRef,
@@ -55,6 +63,7 @@ export function ChartHeader({
   headlineLabel,
   headlineColor = "text-white",
   extraControls,
+  hideTimeRange = false,
 }: ChartHeaderProps) {
   return (
     // The LEFT column's height drives the layout (so the taller two-line headline
@@ -64,14 +73,20 @@ export function ChartHeader({
       {/* Title + controls + save: stacked on mobile, one wrapping row from `sm` up. */}
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
         {/* h2: sits under the page h1 (SiteHeader) so the tokenomics-page
-            outline is h1 -> h2 per chart, with no skipped level. All ChartHeader
-            users are tokenomics charts; the treasury page has its own h2s. */}
-        <CardTitle as="h2">{title}</CardTitle>
+            outline is h1 -> h2 per chart, with no skipped level. */}
+        <span className="inline-flex items-center gap-1.5">
+          <CardTitle as="h2">{title}</CardTitle>
+          {titleExplainer && (
+            <InfoTooltip text={titleExplainer} ariaLabel={`About ${title}`} />
+          )}
+        </span>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <TimeRangeSelector
-            selectedRange={timeRange}
-            onRangeChange={onRangeChange}
-          />
+          {!hideTimeRange && (
+            <TimeRangeSelector
+              selectedRange={timeRange}
+              onRangeChange={onRangeChange}
+            />
+          )}
           {extraControls}
         </div>
         <ScreenshotButtons

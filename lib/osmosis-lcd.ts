@@ -12,7 +12,7 @@ import type {
   StakingPoolResponse,
 } from "@/types/osmosis";
 
-const LCD_BASE_URL =
+export const LCD_BASE_URL =
   process.env.NEXT_PUBLIC_LCD_BASE_URL || "https://lcd.osmosis.zone";
 const NUMIA_API_URL =
   process.env.NUMIA_API_URL || "https://public-osmosis-api.numia.xyz";
@@ -85,8 +85,14 @@ const longCache = new LRUCache<string, any>({
   updateAgeOnHas: false,
 });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function cachedFetch(url: string, useLongCache = false): Promise<any> {
+// Exported so sibling LCD modules (e.g. lib/validators.ts) reuse the exact same
+// fetch layer — retry, 429 backoff, and the shared LRU cache — rather than
+// duplicating it and drifting.
+export async function cachedFetch(
+  url: string,
+  useLongCache = false
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- generic LCD JSON
+): Promise<any> {
   const cache = useLongCache ? longCache : shortCache;
 
   // Check cache (has built-in TTL)
@@ -285,6 +291,27 @@ export async function fetchDayEpoch(): Promise<DayEpochInfo> {
     currentEpoch: parseInt(day.current_epoch, 10),
     startTime: day.current_epoch_start_time,
     startHeight: parseInt(day.current_epoch_start_height, 10),
+  };
+}
+
+// Latest committed block: height + header time. Used by the snapshot to compute
+// the daily average block rate (seconds/block) from the delta vs the previous
+// snapshot's height/time. NOT cached — the point is a fresh current reading.
+export interface LatestBlock {
+  height: number;
+  time: string; // ISO block header time
+}
+export async function fetchLatestBlock(): Promise<LatestBlock> {
+  const resp = await fetchWithRetry(
+    `${LCD_BASE_URL}/cosmos/base/tendermint/v1beta1/blocks/latest`
+  );
+  if (!resp.ok) throw new Error(`Failed to fetch latest block: ${resp.status}`);
+  const data = (await resp.json()) as {
+    block: { header: { height: string; time: string } };
+  };
+  return {
+    height: parseInt(data.block.header.height, 10),
+    time: data.block.header.time,
   };
 }
 

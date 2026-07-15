@@ -159,6 +159,15 @@ export function ScreenshotButtons({
             p = p.parentElement;
           }
         });
+      // Scroll containers (e.g. a wide table's overflow-x-auto wrapper) render
+      // their scrollbar into the capture and can clip content. Force overflow
+      // visible on tagged containers so the full content is captured cleanly.
+      root
+        .querySelectorAll<HTMLElement>("[data-screenshot-overflow-visible]")
+        .forEach((el) => {
+          revealed.push({ el, cssText: el.style.cssText });
+          el.style.setProperty("overflow", "visible", "important");
+        });
 
       let originalCanvas: HTMLCanvasElement;
       try {

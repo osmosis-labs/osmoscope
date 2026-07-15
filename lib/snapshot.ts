@@ -12,9 +12,17 @@ import {
   fetchFullMintParams,
   fetchPoolManagerParams,
   fetchTotalStaked,
+  fetchLatestBlock,
   BURN_ADDRESS,
   DEVELOPER_VESTING_MODULE_ADDRESS,
 } from "./osmosis-lcd";
+import {
+  fetchBondedValidators,
+  nakamotoCoefficient,
+  giniCoefficient,
+  fetchUnbondingSchedule,
+  indexValidatorDaily,
+} from "./validators";
 import { saveSnapshot, getHistory, backfillRevenue } from "./historical-file";
 import { fetchDailyRevenue } from "./revenue";
 import { logger } from "./logger";
@@ -234,6 +242,106 @@ export async function buildAndSaveSnapshot(
       ? aprData.entries[aprData.entries.length - 1].apr
       : undefined;
 
+  // Decentralization / network metrics (Nakamoto, Gini, pending undelegations,
+  // block rate + height). These are analytics extras, NOT financial core, so the
+  // whole block is best-effort: any failure leaves the fields undefined and the
+  // snapshot still persists its supply data. Block rate is derived from the
+  // height/time delta vs the previous snapshot (so it's a ~1-day average and
+  // needs no archive node); the first snapshot after this ships has no prior
+  // blockHeight and so leaves blockRate unset until the next day.
+  let nakamoto: number | undefined;
+  let gini: number | undefined;
+  let pendingUndelegations: number | undefined;
+  let blockRate: number | undefined;
+  let blockHeight: number | undefined;
+  try {
+    const [validators, unbonding, latestBlock] = await Promise.all([
+      fetchBondedValidators(),
+      fetchUnbondingSchedule(),
+      fetchLatestBlock(),
+    ]);
+    if (validators.length > 0) {
+      nakamoto = nakamotoCoefficient(validators);
+      gini = giniCoefficient(validators);
+      // Self-index per-validator daily uptime + slash-event detection (feeds the
+      // leaderboard's long-run uptime + slash columns going forward). Non-fatal.
+      await indexValidatorDaily(validators);
+      // Governance participation is not self-indexed: votes can't be mapped to
+      // validators without a curated operator→voter-account map (no onchain link
+      // exists). The leaderboard uses the SmartStake govVotesLast10 import.
+    }
+    // pendingUndelegations on HistoricalRecord is the OUTSTANDING POOL total (a
+    // stock). The per-day COMPLETING amounts (a flow) live in UndelegationDay,
+    // written a day ahead (see below).
+    blockHeight = latestBlock.height;
+
+    // PERSIST GATE: if any validator's unbonding query failed, the total/days
+    // are a plausible-looking UNDERCOUNT. Displaying that live is acceptable;
+    // baking it into the permanent series (HistoricalRecord, the forecast blob,
+    // tomorrow's UndelegationDay row) is not — same refuse-to-persist philosophy
+    // as assertSnapshotSane. Leave the fields unset and let the 17:45 retry (or
+    // tomorrow's run) fill them from a clean fan-out.
+    if (unbonding.fetchFailures > 0) {
+      logger.warn(
+        `Unbonding fan-out had ${unbonding.fetchFailures} failed validator(s); ` +
+          `skipping persistence of pending-undelegation figures this run.`
+      );
+    } else {
+      pendingUndelegations = unbonding.total;
+
+      // Persist the full forecast blob so /api/undelegations serves it from the DB
+      // instead of re-running this ~71-call LCD fan-out on every page load (which the
+      // public LCD rate-limits / 403s). This cron IS the once-a-day fan-out. Non-fatal.
+      try {
+        const { saveUnbondingForecast } = await import("./historical-file-db");
+        await saveUnbondingForecast(unbonding, new Date());
+      } catch (e) {
+        logger.warn(
+          `Unbonding forecast save skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+
+      // Persist TOMORROW's completing amount into UndelegationDay, keyed to that
+      // completion day. We read it today because the bucket is still full — reading
+      // it on the day itself undercounts as entries complete through the day. Its
+      // own table means the per-day HistoricalRecord delete-then-create can't clobber
+      // this forward-dated value. Non-fatal: a failure here just leaves tomorrow's
+      // point to be filled by tomorrow's run.
+      try {
+        const tomorrow = new Date(Date.now() + 86_400_000);
+        const tomorrowIso = tomorrow.toISOString().slice(0, 10);
+        const bucket = unbonding.days.find((d) => d.date === tomorrowIso);
+        if (bucket) {
+          const { upsertUndelegationDay } = await import(
+            "./historical-file-db"
+          );
+          await upsertUndelegationDay(
+            new Date(`${tomorrowIso}T00:00:00.000Z`),
+            bucket.amount,
+            "cron"
+          );
+        }
+      } catch (e) {
+        logger.warn(
+          `UndelegationDay upsert skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+    // blockRate = elapsed seconds / blocks elapsed since the previous snapshot.
+    const prevHeight = prevSnapshot?.blockHeight;
+    if (prevHeight != null && latestBlock.height > prevHeight) {
+      const prevTime = new Date(prevSnapshot!.timestamp).getTime();
+      const elapsedSec =
+        (new Date(latestBlock.time).getTime() - prevTime) / 1000;
+      const blocks = latestBlock.height - prevHeight;
+      if (elapsedSec > 0 && blocks > 0) blockRate = elapsedSec / blocks;
+    }
+  } catch (e) {
+    logger.warn(
+      `Network metrics skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+
   const saved = await saveSnapshot({
     timestamp,
     dayEpoch,
@@ -248,6 +356,12 @@ export async function buildAndSaveSnapshot(
     totalStaked,
     stakingApr: todayApr,
     stakingRate: aprData.average,
+    // Decentralization / network metrics (best-effort; see above).
+    nakamotoCoefficient: nakamoto,
+    giniCoefficient: gini,
+    pendingUndelegations,
+    blockRate,
+    blockHeight,
     distributionProportions: mintParams
       ? {
           staking: mintParams.distribution_proportions.staking,

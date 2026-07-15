@@ -11,4 +11,27 @@
   .text-balance {
     text-wrap: balance;
   }
+
+  /* Themed scrollbar for the dark surfaces (tables/charts that scroll). A slim,
+     purple-tinted thumb on a transparent track, so a scrollbar that does appear
+     matches the dashboard rather than showing the OS default light bar. Applied
+     via `themed-scroll` on overflow containers. Covers WebKit + Firefox. */
+  .themed-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(124, 77, 255, 0.5) transparent;
+  }
+  .themed-scroll::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+  .themed-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .themed-scroll::-webkit-scrollbar-thumb {
+    background-color: rgba(124, 77, 255, 0.5);
+    border-radius: 9999px;
+  }
+  .themed-scroll::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(124, 77, 255, 0.75);
+  }
 }

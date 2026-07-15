@@ -40,6 +40,20 @@ model HistoricalRecord {
   stakingApr    Decimal? @db.Decimal(10, 6)
   stakingRate   Decimal? @db.Decimal(10, 6)
 
+  // Decentralization / validator metrics (daily). Backfilled from SmartStake CSV
+  // history (Nakamoto/Gini from 2022-01, undelegations from 2025-07) and kept
+  // current by the snapshot cron going forward. pendingUndelegations is the total
+  // OSMO unbonding on that date (distinct from the live forward 14-day schedule).
+  nakamotoCoefficient  Int?
+  giniCoefficient      Decimal? @db.Decimal(10, 6)
+  pendingUndelegations Decimal? @db.Decimal(20, 6)
+  // Average seconds per block on this date. Backfilled from SmartStake history
+  // (from 2022-10) and computed by the cron from daily block-height deltas.
+  blockRate            Decimal? @db.Decimal(10, 4)
+  // Latest block height at snapshot time; stored so the next day's cron can
+  // derive blockRate from the height/time delta vs this row.
+  blockHeight          BigInt?
+
   // Data-provenance markers. These make the one-off migration scripts idempotent
   // (normalize-supply-offset / backfill-genesis-2021 / recompute-inflation) and
   // flag the 2023 window where the restricted staked portion was reconstructed.
@@ -93,4 +107,112 @@ model TreasurySnapshot {
 
   @@index([timestamp(sort: Desc)])
   @@map("treasury_snapshots")
+}
+
+// Per-validator snapshot of metrics that can't be read live from the LCD:
+// governance recency, slashing history, and long-run signing uptime. Sourced by
+// importing SmartStake's Validators.csv (scripts/import-validator-snapshot.ts),
+// keyed by operator address and joined into /api/validators. It's a point-in-time
+// snapshot (updatedAt = "as of"), refreshed by re-importing — not live data.
+model ValidatorSnapshot {
+  operatorAddress String @id
+
+  // Governance participation: votes in the last 10 proposals (SmartStake import).
+  govVotesLast10 Int?
+
+  // Slashing history.
+  timesSlashed      Int?
+  latestSlashedTime DateTime? @db.Timestamptz(6)
+
+  // Long-run signing uptime % (SmartStake historicalPerSigned), a longer window
+  // than the live ~80k-block slashing-window uptime shown elsewhere. NOTE: since
+  // self-indexing, the leaderboard's long-run uptime is computed from ValidatorDaily
+  // (trailing-90 average) when available; this stays as the SmartStake fallback for
+  // validators with no accrued daily history yet.
+  longRunUptime Decimal? @db.Decimal(7, 4)
+
+  // Validator self-bond as a % of its own voting power (SmartStake selfBondPercentage).
+  // Skin-in-the-game signal; imported, not live.
+  selfBondPercentage Decimal? @db.Decimal(9, 4)
+
+  // Slash tracking, maintained by the cron (distinct from the SmartStake import's
+  // timesSlashed, which is the historical count as of the import). The cron
+  // increments cronSlashCount when it detects a NEW jailing (jailed_until advances)
+  // or a tombstone, and records the time. prevJailedUntil / prevTombstoned hold the
+  // last-seen slashing state so the next run can detect a transition.
+  cronSlashCount   Int?
+  cronLastSlashTime DateTime? @db.Timestamptz(6)
+  prevJailedUntil  DateTime? @db.Timestamptz(6)
+  prevTombstoned   Boolean?
+
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("validator_snapshots")
+}
+
+// Per-validator daily uptime reading (the ~80k-block slashing-window uptime, 0-1),
+// written once a day by the snapshot cron for every bonded validator. The
+// leaderboard's long-run uptime is the trailing-90-day average of these rows;
+// keeping per-day rows (vs a rolling aggregate) also leaves a per-validator uptime
+// history that can be charted later. ~135 rows/day; prune older-than-N-days
+// eventually if it grows (only the trailing 90 are read).
+model ValidatorDaily {
+  operatorAddress String
+  date            DateTime @db.Timestamptz(6) // UTC day
+  uptime          Decimal  @db.Decimal(7, 6) // 0-1 slashing-window uptime that day
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([operatorAddress, date])
+  @@index([operatorAddress, date(sort: Desc)])
+  @@map("validator_daily")
+}
+
+// Per-completion-day unbonding amount: how much OSMO completes its unbonding on
+// a given calendar day (UTC). This is a FLOW (amount completing that day),
+// distinct from HistoricalRecord.pendingUndelegations, which is the outstanding
+// POOL total (a stock). Kept in its own table because it's written a day AHEAD:
+// the snapshot cron on day D reads the still-full "completes tomorrow" bucket and
+// upserts the row for D+1 (reading it on D+1 itself would undercount, as entries
+// complete through the day). A separate table also means the HistoricalRecord
+// per-day delete-then-create can't clobber these forward-dated values.
+// Backfilled from SmartStake's Undelegation History export (same per-day-completing
+// definition) via scripts/import-undelegation-days.ts.
+model UndelegationDay {
+  // The UTC completion day (midnight), unique per day.
+  date DateTime @id @db.Timestamptz(6)
+
+  // OSMO completing unbonding on this day.
+  amountCompleting Decimal @db.Decimal(20, 6)
+
+  // "smartstake" (historical import) or "cron" (written going forward). Lets a
+  // cron write supersede an imported value for the same day without ambiguity.
+  source String
+
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([date(sort: Asc)])
+  @@map("undelegation_days")
+}
+
+// Latest unbonding FORECAST blob, computed once a day by the snapshot cron (which
+// already enumerates every validator's unbonding_delegations — a ~71-call fan-out).
+// Persisting it here means /api/undelegations reads one row instead of re-running
+// that fan-out on every page load (which was rate-limited / 403'd by the public
+// LCD). Single row, upserted each cron run (fixed id "latest"); we only ever need
+// the current forecast (per-day-completing HISTORY lives in UndelegationDay).
+model UnbondingForecast {
+  // Fixed key so the cron upserts one row. Always "latest".
+  id String @id
+
+  // Full forecast payload: { total, bondedTotal, days: [{date, amount}],
+  // topEntries: [{delegator, validator, moniker, amount, completionTime}] }.
+  // Shape owned by lib/validators.ts (UnbondingSchedule).
+  data Json
+
+  // When the cron computed this (for staleness display / debugging).
+  computedAt DateTime @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("unbonding_forecast")
 }
