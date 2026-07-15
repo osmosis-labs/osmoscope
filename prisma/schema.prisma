@@ -240,3 +240,40 @@ model ValidatorVote {
   @@id([operatorAddress, proposalId])
   @@map("validator_votes")
 }
+
+// Periodic capture of every configured IBC rate-limit path and its window
+// utilization, one row per UTC hour (latest cron run in the hour wins). The
+// accumulated history is the flow baseline consumed by the quarterly
+// rate-limit review, replacing the discontinued range.org dashboard.
+model RateLimitSnapshot {
+  id        BigInt   @id @default(autoincrement())
+  timestamp DateTime @unique @db.Timestamptz(6)
+
+  // Number of (channel, denom) paths carrying at least one quota.
+  pathCount Int
+
+  // Highest window utilization (percent of its binding cap) across all
+  // paths, mirrored from `data` for cheap trend/alert-history queries.
+  maxUtilizationPct Decimal @db.Decimal(8, 2)
+
+  // Full RateLimitSnapshotData payload (per-path windows with caps, flows,
+  // and utilization). Shape owned by lib/rate-limits/snapshot.ts.
+  data Json
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("rate_limit_snapshots")
+}
+
+// Last alerted level per quota window, used to de-duplicate Telegram alerts
+// across cron runs (alert on escalation, all-clear on recovery, silence on
+// steady state). pathKey = "<channel>|<denom>|<quota name>". Rows exist only
+// while the window sits at or above the warn threshold.
+model RateLimitAlertState {
+  pathKey   String   @id
+  level     String
+  pct       Decimal  @db.Decimal(8, 2)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("rate_limit_alert_states")
+}
