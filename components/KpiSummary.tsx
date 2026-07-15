@@ -59,12 +59,9 @@ export function KpiSummary({ data }: KpiSummaryProps) {
       sub: "price × total supply",
     },
     {
-      label: "Staked",
-      value:
-        data.stakingRatio != null
-          ? formatPercentage(data.stakingRatio, 2)
-          : "—",
-      sub: `${formatNumber(data.totalStaked)} OSMO of total`,
+      label: "Circulating Supply",
+      value: `${formatNumber(data.circulating)} OSMO`,
+      sub: `${formatNumber(data.totalSupply)} OSMO total`,
     },
     {
       label: "Staking APR",

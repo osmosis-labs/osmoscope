@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from "react";
 const NAV = [
   { href: "/", label: "Tokenomics" },
   { href: "/treasury", label: "Treasury" },
-  { href: "/staking", label: "Network" },
+  { href: "/network", label: "Network" },
 ] as const;
 
 export function SiteHeader({
@@ -23,7 +23,7 @@ export function SiteHeader({
   current,
 }: {
   subtitle: string;
-  current: "/" | "/treasury" | "/staking";
+  current: "/" | "/treasury" | "/network";
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const navRef = useRef<HTMLElement>(null);

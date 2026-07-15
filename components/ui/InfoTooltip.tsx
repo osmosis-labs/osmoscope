@@ -38,6 +38,7 @@ export function InfoTooltip({
   text,
   ariaLabel = "More information",
   placement = "bottom",
+  align = "center",
   onOpen,
 }: {
   text: string;
@@ -48,6 +49,12 @@ export function InfoTooltip({
   // UPWARD into the card rather than spilling past its bottom edge into whatever
   // is painted below.
   placement?: "top" | "bottom";
+  // Horizontal anchor. "center" (default) centres the popover on the `?`. "end"
+  // anchors its RIGHT edge to the `?` so it opens leftward/inward — use for a
+  // trigger near the right edge of a scroll container (e.g. the last table
+  // column's header) so the popover doesn't extend the container's scrollWidth
+  // and spawn a horizontal scrollbar.
+  align?: "center" | "end";
   // Reports effective open state up (e.g. so a parent card can lift its z-index
   // while the popover shows). Fired from an effect, after render.
   onOpen?: (open: boolean) => void;
@@ -152,9 +159,11 @@ export function InfoTooltip({
           inside has focus. */}
       <span
         role="tooltip"
-        className={`absolute left-1/2 z-20 w-64 -translate-x-1/2 rounded-lg border border-white/20 bg-osmo-900 p-3 text-left text-xs font-normal leading-relaxed text-osmo-100 shadow-xl transition-opacity duration-150 ${
-          placement === "top" ? "bottom-6" : "top-6"
-        } ${open ? "opacity-100" : "pointer-events-none opacity-0"}`}
+        className={`absolute z-20 w-64 rounded-lg border border-white/20 bg-osmo-900 p-3 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-osmo-100 shadow-xl transition-opacity duration-150 ${
+          align === "end" ? "right-0" : "left-1/2 -translate-x-1/2"
+        } ${placement === "top" ? "bottom-6" : "top-6"} ${
+          open ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
       >
         {linkify(text)}
       </span>

@@ -36,6 +36,9 @@ interface ChartHeaderProps {
   headlineColor?: string;
   /** Extra controls (e.g. a standard/cumulative toggle) rendered with the selector. */
   extraControls?: ReactNode;
+  /** Hide the time-range selector (e.g. a fixed-window forecast view where the
+   *  range is not user-selectable). `extraControls` still render. */
+  hideTimeRange?: boolean;
 }
 
 // Shared, responsive chart card header. Replaces the title + TimeRangeSelector +
@@ -60,6 +63,7 @@ export function ChartHeader({
   headlineLabel,
   headlineColor = "text-white",
   extraControls,
+  hideTimeRange = false,
 }: ChartHeaderProps) {
   return (
     // The LEFT column's height drives the layout (so the taller two-line headline
@@ -69,8 +73,7 @@ export function ChartHeader({
       {/* Title + controls + save: stacked on mobile, one wrapping row from `sm` up. */}
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
         {/* h2: sits under the page h1 (SiteHeader) so the tokenomics-page
-            outline is h1 -> h2 per chart, with no skipped level. All ChartHeader
-            users are tokenomics charts; the treasury page has its own h2s. */}
+            outline is h1 -> h2 per chart, with no skipped level. */}
         <span className="inline-flex items-center gap-1.5">
           <CardTitle as="h2">{title}</CardTitle>
           {titleExplainer && (
@@ -78,10 +81,12 @@ export function ChartHeader({
           )}
         </span>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <TimeRangeSelector
-            selectedRange={timeRange}
-            onRangeChange={onRangeChange}
-          />
+          {!hideTimeRange && (
+            <TimeRangeSelector
+              selectedRange={timeRange}
+              onRangeChange={onRangeChange}
+            />
+          )}
           {extraControls}
         </div>
         <ScreenshotButtons

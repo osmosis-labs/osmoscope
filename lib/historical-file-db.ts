@@ -35,6 +35,8 @@ function prismaToJson(record: PrismaRecord): JsonRecord {
     giniCoefficient: num(record.giniCoefficient),
     pendingUndelegations: num(record.pendingUndelegations),
     blockRate: num(record.blockRate),
+    blockHeight:
+      record.blockHeight == null ? undefined : Number(record.blockHeight),
     distributionProportions: record.distributionProportions as
       | JsonRecord["distributionProportions"]
       | undefined,
@@ -93,6 +95,7 @@ export function jsonToPrisma(
     giniCoefficient: record.giniCoefficient ?? null,
     pendingUndelegations: record.pendingUndelegations ?? null,
     blockRate: record.blockRate ?? null,
+    blockHeight: record.blockHeight ?? null,
     distributionProportions: toJson(record.distributionProportions),
     osmoTakerFeeDistribution: toJson(record.osmoTakerFeeDistribution),
     nonOsmoTakerFeeDistribution: toJson(record.nonOsmoTakerFeeDistribution),
@@ -142,6 +145,73 @@ export async function saveSnapshotToDatabase(data: JsonRecord): Promise<void> {
     logger.error("Failed to save snapshot to database:", error);
     throw error;
   }
+}
+
+// Upsert one per-completion-day unbonding amount into UndelegationDay. Written a
+// day ahead by the snapshot cron (the "completes tomorrow" bucket, read today
+// while it's still full). `date` is normalized to UTC midnight so it's the stable
+// row key. source is "cron" for these writes (superseding any "smartstake" import
+// for the same day). Non-fatal in the caller; throws on a real DB error.
+export async function upsertUndelegationDay(
+  date: Date,
+  amountCompleting: number,
+  source: string
+): Promise<void> {
+  if (!isDatabaseEnabled()) return;
+  const day = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+  );
+  await prisma.undelegationDay.upsert({
+    where: { date: day },
+    create: { date: day, amountCompleting, source },
+    update: { amountCompleting, source },
+  });
+}
+
+// Persist the latest unbonding FORECAST blob (upsert the single "latest" row).
+// Written once a day by the snapshot cron so /api/undelegations can read it
+// instead of re-running the ~71-call LCD fan-out per viewer. `data` is the full
+// UnbondingSchedule payload (structurally-typed here to avoid a hard import cycle;
+// validated by the caller). Non-fatal in the caller; throws on a real DB error.
+export async function saveUnbondingForecast(
+  data: unknown,
+  computedAt: Date
+): Promise<void> {
+  if (!isDatabaseEnabled()) return;
+  await prisma.unbondingForecast.upsert({
+    where: { id: "latest" },
+    create: { id: "latest", data: data as Prisma.InputJsonValue, computedAt },
+    update: { data: data as Prisma.InputJsonValue, computedAt },
+  });
+}
+
+// Read the latest unbonding forecast blob (or null if the cron hasn't run yet).
+// Returns the stored JSON payload plus when it was computed.
+export async function getUnbondingForecast(): Promise<{
+  data: unknown;
+  computedAt: string;
+} | null> {
+  if (!isDatabaseEnabled()) return null;
+  const row = await prisma.unbondingForecast.findUnique({
+    where: { id: "latest" },
+  });
+  if (!row) return null;
+  return { data: row.data, computedAt: row.computedAt.toISOString() };
+}
+
+// Read the full per-completion-day unbonding series (ascending). Powers the
+// History view of the Pending Undelegations chart. Returns [] when no DB.
+export async function getUndelegationDays(): Promise<
+  { date: string; amountCompleting: number }[]
+> {
+  if (!isDatabaseEnabled()) return [];
+  const rows = await prisma.undelegationDay.findMany({
+    orderBy: { date: "asc" },
+  });
+  return rows.map((r) => ({
+    date: r.date.toISOString(),
+    amountCompleting: Number(r.amountCompleting),
+  }));
 }
 
 // Fill protocol-revenue fields on DB rows from a date -> revenue map, for rows

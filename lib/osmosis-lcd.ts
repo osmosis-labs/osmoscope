@@ -294,6 +294,27 @@ export async function fetchDayEpoch(): Promise<DayEpochInfo> {
   };
 }
 
+// Latest committed block: height + header time. Used by the snapshot to compute
+// the daily average block rate (seconds/block) from the delta vs the previous
+// snapshot's height/time. NOT cached — the point is a fresh current reading.
+export interface LatestBlock {
+  height: number;
+  time: string; // ISO block header time
+}
+export async function fetchLatestBlock(): Promise<LatestBlock> {
+  const resp = await fetchWithRetry(
+    `${LCD_BASE_URL}/cosmos/base/tendermint/v1beta1/blocks/latest`
+  );
+  if (!resp.ok) throw new Error(`Failed to fetch latest block: ${resp.status}`);
+  const data = (await resp.json()) as {
+    block: { header: { height: string; time: string } };
+  };
+  return {
+    height: parseInt(data.block.header.height, 10),
+    time: data.block.header.time,
+  };
+}
+
 // Fetch total bonded tokens (staked OSMO)
 // Use long cache since staking pool only changes once a day
 export async function fetchTotalStaked(): Promise<number> {

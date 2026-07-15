@@ -25,9 +25,12 @@ export interface ValidatorInfo {
   // Snapshot metrics from the ValidatorSnapshot table (SmartStake import), joined
   // by operator address. Null when no snapshot row exists. These are point-in-time
   // (see snapshotAsOf), not live.
-  govVotesLast10: number | null; // votes in the last 10 proposals (0-10)
+  govVotesLast10: number | null; // votes in the last 10 proposals (0-10) — SmartStake import
   timesSlashed: number | null;
+  latestSlashedTime: string | null; // ISO time of the most recent slash, or null
   longRunUptime: number | null; // long-run signing uptime % (0-100)
+  selfBondPercentage: number | null; // validator's self-bond as % of its stake (SmartStake import)
+  website: string | null; // validator's self-declared website (onchain description), or null
 }
 
 // Raw LCD shapes (only the fields we use).
@@ -36,13 +39,33 @@ interface RawValidator {
   jailed: boolean;
   status: string;
   tokens: string; // uosmo
-  description: { moniker: string };
+  description: { moniker: string; website?: string };
   commission: { commission_rates: { rate: string } };
   consensus_pubkey: { "@type": string; key: string }; // ed25519, base64
 }
 interface ValidatorsResponse {
   validators: RawValidator[];
   pagination: { next_key: string | null };
+}
+
+// Normalize a validator's self-declared website from the onchain description:
+// trim, drop empties, and prefix a scheme when missing so the value is a valid
+// href. Rejects anything that isn't http(s) after normalization (some validators
+// put a bare handle or junk in the field) so we never render a broken/unsafe link.
+function normalizeWebsite(raw: string | undefined): string | null {
+  const s = raw?.trim();
+  if (!s) return null;
+  const withScheme = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+  try {
+    const u = new URL(withScheme);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    // Require a dotted hostname so "https://foo" (no TLD) or "https://localhost"
+    // junk doesn't slip through as a link.
+    if (!u.hostname.includes(".")) return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
 }
 
 // Fetch the full BONDED validator set, following pagination. Bonded-only because
@@ -61,7 +84,12 @@ export async function fetchBondedValidators(): Promise<ValidatorInfo[]> {
     if (key) params.set("pagination.key", key);
     const data: ValidatorsResponse = await cachedFetch(
       `${LCD_BASE_URL}/cosmos/staking/v1beta1/validators?${params.toString()}`,
-      true // long cache: the set changes at most once per epoch
+      // Short cache: set MEMBERSHIP changes at most once per epoch, but each
+      // validator's `tokens` (stake → voting power, Nakamoto, Gini) moves with
+      // every delegation. A 24h cache on a warm lambda served day-old voting
+      // power as "live"; the /api/validators edge cache (300s) already bounds
+      // how often this refetches.
+      false
     );
     for (const v of data.validators) {
       const info: ValidatorInfo = {
@@ -74,7 +102,10 @@ export async function fetchBondedValidators(): Promise<ValidatorInfo[]> {
         uptime: null, // set by enrichWithUptime
         govVotesLast10: null, // set by enrichWithSnapshot
         timesSlashed: null,
+        latestSlashedTime: null,
         longRunUptime: null,
+        selfBondPercentage: null,
+        website: normalizeWebsite(v.description?.website),
       };
       out.push(info);
       // Track the consensus address (for the uptime join) in a side map keyed by
@@ -119,6 +150,8 @@ function consensusAddressFromPubkey(pubkeyBase64: string): string {
 interface SigningInfo {
   address: string; // consensus address (osmovalcons1…)
   missed_blocks_counter: string;
+  jailed_until: string; // ISO; epoch-zero (1970) when never jailed
+  tombstoned: boolean;
 }
 interface SigningInfosResponse {
   info: SigningInfo[];
@@ -171,6 +204,143 @@ async function enrichWithUptime(validators: ValidatorInfo[]): Promise<void> {
   }
 }
 
+// Self-index per-validator daily data (called once a day by the snapshot cron):
+//   1. Write today's slashing-window uptime (0-1) to ValidatorDaily per validator
+//      — the leaderboard's long-run uptime is the trailing-90 average of these.
+//   2. Detect slash events by comparing each validator's jailed_until / tombstoned
+//      against the last-seen state stored on ValidatorSnapshot; on a NEW jailing
+//      (jailed_until advanced) or a tombstone, bump cronSlashCount + record the time.
+// BONDED-SET ONLY, by design: the leaderboard shows bonded validators, so slash
+// state is observed for them alone. A validator jailed at cron time is out of the
+// bonded set and its transition is picked up on RETURN (jailed_until advanced vs
+// the stored baseline); one that never returns (quit, or tombstoned for
+// double-signing) is not re-observed and its final event is not counted. Tracking
+// the full signing_infos set would need a consensus→operator map for unbonded
+// validators (not derivable from the bonded fetch) — deliberately out of scope.
+// DB-optional and non-fatal: skips cleanly without a DB and logs on error. Reuses
+// the consensus-address map populated by fetchBondedValidators (call after it).
+export async function indexValidatorDaily(
+  validators: ValidatorInfo[]
+): Promise<void> {
+  try {
+    const { prisma, isDatabaseEnabled } = await import("./database");
+    if (!isDatabaseEnabled()) return;
+
+    const paramsResp: SlashingParamsResponse = await cachedFetch(
+      `${LCD_BASE_URL}/cosmos/slashing/v1beta1/params`,
+      true
+    );
+    const window = Number(paramsResp.params?.signed_blocks_window) || 0;
+    if (window <= 0) return;
+
+    // consensus address -> signing info (uptime inputs + slash state).
+    const infoByAddr = new Map<string, SigningInfo>();
+    let key: string | null = null;
+    for (let page = 0; page < 20; page++) {
+      const p = new URLSearchParams({ "pagination.limit": "500" });
+      if (key) p.set("pagination.key", key);
+      const data: SigningInfosResponse = await cachedFetch(
+        `${LCD_BASE_URL}/cosmos/slashing/v1beta1/signing_infos?${p.toString()}`,
+        false
+      );
+      for (const s of data.info) infoByAddr.set(s.address, s);
+      key = data.pagination?.next_key ?? null;
+      if (!key) break;
+    }
+
+    // UTC midnight for today's ValidatorDaily key.
+    const now = new Date();
+    const day = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+    );
+
+    // Existing snapshot rows carry the last-seen slash state (for transition
+    // detection). Load once, keyed by operator.
+    const snaps = await prisma.validatorSnapshot.findMany();
+    const snapByOp = new Map(snaps.map((s) => [s.operatorAddress, s]));
+
+    for (const v of validators) {
+      const consAddr = consAddressByOperator.get(v.operatorAddress);
+      const info = consAddr ? infoByAddr.get(consAddr) : undefined;
+      if (!info) continue;
+
+      // 1. Daily uptime row (idempotent per operator+day).
+      const missed = Number(info.missed_blocks_counter) || 0;
+      const uptime = Math.max(0, Math.min(1, 1 - missed / window));
+      await prisma.validatorDaily.upsert({
+        where: {
+          operatorAddress_date: {
+            operatorAddress: v.operatorAddress,
+            date: day,
+          },
+        },
+        create: { operatorAddress: v.operatorAddress, date: day, uptime },
+        update: { uptime },
+      });
+
+      // 2. Slash-transition detection vs last-seen state.
+      const jailedUntil = new Date(info.jailed_until);
+      const jailedValid = !isNaN(jailedUntil.getTime());
+      const tombstoned = !!info.tombstoned;
+      const prev = snapByOp.get(v.operatorAddress);
+      const prevJailed = prev?.prevJailedUntil ?? null;
+      const prevTomb = prev?.prevTombstoned ?? null;
+      // FIRST observation of this validator (we've never recorded its jailed/
+      // tombstone state): SEED the baseline, do NOT count a slash. Otherwise every
+      // validator carrying an OLD jailed_until (from a slash months ago) would be
+      // falsely flagged as slashed "today" on the first cron run. A slash is only
+      // counted on a genuine transition from a known prior state.
+      const firstObservation = prevJailed == null && prevTomb == null;
+      // A new jailing = jailed_until advanced past the last-seen value; a new
+      // tombstone = tombstoned flipped true. Either is a slash event. A null
+      // baseline means "never jailed when last seen" (stored as null, time 0),
+      // so a validator's FIRST-ever jailing still counts once seeded — only the
+      // firstObservation guard below suppresses counting, never this comparison.
+      const newJailing =
+        jailedValid &&
+        jailedUntil.getTime() > 0 &&
+        jailedUntil.getTime() > (prevJailed?.getTime() ?? 0);
+      const newTombstone = tombstoned && prevTomb === false;
+      const slashed = !firstObservation && (newJailing || newTombstone);
+
+      const data: {
+        prevJailedUntil: Date | null;
+        prevTombstoned: boolean;
+        cronSlashCount?: number;
+        cronLastSlashTime?: Date;
+      } = {
+        prevJailedUntil:
+          jailedValid && jailedUntil.getTime() > 0 ? jailedUntil : null,
+        prevTombstoned: tombstoned,
+      };
+      if (slashed) {
+        // Plain set, NOT { increment: 1 }: rows created by the CSV import leave
+        // cronSlashCount NULL, and in SQL NULL + 1 = NULL — an increment there
+        // would silently discard every detected event. prev is already loaded,
+        // so compute the new count in JS.
+        data.cronSlashCount = (prev?.cronSlashCount ?? 0) + 1;
+        data.cronLastSlashTime = now;
+      }
+      // Upsert so validators without a SmartStake row still get slash tracking.
+      await prisma.validatorSnapshot.upsert({
+        where: { operatorAddress: v.operatorAddress },
+        create: {
+          operatorAddress: v.operatorAddress,
+          prevJailedUntil: data.prevJailedUntil,
+          prevTombstoned: data.prevTombstoned,
+          cronSlashCount: slashed ? 1 : 0,
+          cronLastSlashTime: slashed ? now : null,
+        },
+        update: data,
+      });
+    }
+  } catch (error) {
+    logger.warn(
+      `Validator daily indexing skipped: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 // Join the ValidatorSnapshot table (imported from SmartStake's Validators.csv)
 // onto the live set by operator address, filling govVotesLast10 / timesSlashed /
 // longRunUptime. Returns the snapshot's "as of" time (max updatedAt) so the UI can
@@ -185,17 +355,71 @@ async function enrichWithSnapshot(
     const { prisma, isDatabaseEnabled } = await import("./database");
     if (!isDatabaseEnabled()) return null;
     const snaps = await prisma.validatorSnapshot.findMany();
-    if (snaps.length === 0) return null;
     const byOp = new Map(snaps.map((s) => [s.operatorAddress, s]));
+
+    // Self-indexed long-run uptime: trailing-90-day average of ValidatorDaily.
+    // Computed per operator over the last 90 rows; falls back to the SmartStake
+    // longRunUptime for validators with no accrued daily history yet.
+    const cutoff = new Date(Date.now() - 90 * 86_400_000);
+    const daily = await prisma.validatorDaily.findMany({
+      where: { date: { gte: cutoff } },
+      orderBy: { date: "asc" },
+      select: { operatorAddress: true, uptime: true },
+    });
+    const dailyByOp = new Map<string, number[]>();
+    for (const d of daily) {
+      const arr = dailyByOp.get(d.operatorAddress) ?? [];
+      arr.push(Number(d.uptime));
+      dailyByOp.set(d.operatorAddress, arr);
+    }
+
+    if (snaps.length === 0 && daily.length === 0) return null;
+
     let asOf: Date | null = null;
     for (const v of validators) {
       const s = byOp.get(v.operatorAddress);
-      if (!s) continue;
-      v.govVotesLast10 = s.govVotesLast10 ?? null;
-      v.timesSlashed = s.timesSlashed ?? null;
-      v.longRunUptime =
-        s.longRunUptime == null ? null : Number(s.longRunUptime);
-      if (s.updatedAt && (!asOf || s.updatedAt > asOf)) asOf = s.updatedAt;
+      // Governance: votes in the last 10 proposals, from the SmartStake import.
+      v.govVotesLast10 = s?.govVotesLast10 ?? null;
+      // Slash count: prefer the SmartStake historical count as a baseline plus any
+      // cron-detected events since; when no import exists, use the cron count alone.
+      const importCount = s?.timesSlashed ?? null;
+      const cronCount = s?.cronSlashCount ?? null;
+      v.timesSlashed =
+        importCount == null && cronCount == null
+          ? null
+          : (importCount ?? 0) + (cronCount ?? 0);
+      // Last slash date: the later of the SmartStake import time and any
+      // cron-detected slash.
+      const importSlash = s?.latestSlashedTime ?? null;
+      const cronSlash = s?.cronLastSlashTime ?? null;
+      const latest =
+        importSlash && cronSlash
+          ? importSlash.getTime() >= cronSlash.getTime()
+            ? importSlash
+            : cronSlash
+          : (importSlash ?? cronSlash);
+      v.latestSlashedTime = latest ? latest.toISOString() : null;
+      v.selfBondPercentage =
+        s?.selfBondPercentage == null ? null : Number(s.selfBondPercentage);
+      // Long-run uptime: trailing-90 self-indexed average once enough daily
+      // readings have accrued; until then, keep the SmartStake import. Without
+      // the minimum-sample floor, the column labelled "last 90 days" would
+      // become a 1-day figure the day after the first cron run and only slowly
+      // grow back into its label.
+      const MIN_UPTIME_READINGS = 14;
+      const readings = dailyByOp.get(v.operatorAddress);
+      const importUptime =
+        s?.longRunUptime == null ? null : Number(s.longRunUptime);
+      if (
+        readings &&
+        (readings.length >= MIN_UPTIME_READINGS || importUptime == null)
+      ) {
+        const avg = readings.reduce((sum, u) => sum + u, 0) / readings.length;
+        v.longRunUptime = avg * 100; // stored 0-1 → displayed %
+      } else {
+        v.longRunUptime = importUptime;
+      }
+      if (s?.updatedAt && (!asOf || s.updatedAt > asOf)) asOf = s.updatedAt;
     }
     return asOf ? asOf.toISOString() : null;
   } catch (error) {
@@ -324,8 +548,11 @@ async function mapLimit<T, R>(
 
 interface UnbondingResponse {
   unbonding_responses: {
+    delegator_address: string;
+    validator_address: string;
     entries: { completion_time: string; balance: string }[];
   }[];
+  pagination?: { next_key: string | null };
 }
 
 // One day's total OSMO completing unbonding on that date (UTC, YYYY-MM-DD).
@@ -333,36 +560,84 @@ export interface UnbondingDay {
   date: string;
   amount: number;
 }
+// A single unbonding entry (one delegator's undelegation from one validator,
+// completing at a specific time). Surfaced for the "Top undelegations" table.
+export interface UnbondingEntry {
+  delegator: string; // osmo1… delegator address
+  validator: string; // osmovaloper1… validator address
+  moniker: string; // validator moniker (resolved from the bonded set)
+  amount: number; // OSMO in this entry
+  completionTime: string; // ISO completion time
+}
 export interface UnbondingSchedule {
   total: number; // true chain-wide unbonding total (OSMO)
   days: UnbondingDay[]; // per-completion-day, ascending
+  // The largest individual unbonding entries (amount desc), capped so the
+  // payload stays bounded. Powers the Top Undelegations table.
+  topEntries: UnbondingEntry[];
+  // How many validators' unbonding queries FAILED this run. When > 0 the total
+  // and days are an undercount: fine to display live (better than nothing), but
+  // the snapshot cron refuses to PERSIST such a run into the historical series.
+  fetchFailures: number;
 }
+
+// How many of the largest individual entries to return for the table.
+const TOP_UNBONDING_ENTRIES = 50;
 
 // Enumerate unbonding delegations across all bonded validators and bucket the
 // entries by completion day. Returns the full schedule (all future completion
 // days) plus the true total; the UI slices to the next N days.
 export async function fetchUnbondingSchedule(): Promise<UnbondingSchedule> {
   const validators = await fetchBondedValidators();
+  const monikerByOperator = new Map(
+    validators.map((v) => [v.operatorAddress, v.moniker])
+  );
   const byDay = new Map<string, number>();
+  const entries: UnbondingEntry[] = [];
   let total = 0;
+  let fetchFailures = 0;
 
   await mapLimit(validators, 6, async (v) => {
     try {
-      const data: UnbondingResponse = await cachedFetch(
-        `${LCD_BASE_URL}/cosmos/staking/v1beta1/validators/${v.operatorAddress}/unbonding_delegations?pagination.limit=1000`,
-        false // short cache: unbonding changes continuously
-      );
-      for (const r of data.unbonding_responses ?? []) {
-        for (const e of r.entries ?? []) {
-          const day = e.completion_time.slice(0, 10);
-          const amt = uosmoToOsmo(e.balance);
-          byDay.set(day, (byDay.get(day) ?? 0) + amt);
-          total += amt;
+      // Follow pagination: a validator with >1000 concurrent unbonding
+      // delegators (a mass-unbond event — exactly when this chart matters)
+      // would otherwise be silently truncated. The page cap bounds a
+      // misbehaving endpoint; hitting it is logged as a known undercount.
+      let pageKey: string | null = null;
+      for (let page = 0; page < 10; page++) {
+        const p = new URLSearchParams({ "pagination.limit": "1000" });
+        if (pageKey) p.set("pagination.key", pageKey);
+        const data: UnbondingResponse = await cachedFetch(
+          `${LCD_BASE_URL}/cosmos/staking/v1beta1/validators/${v.operatorAddress}/unbonding_delegations?${p.toString()}`,
+          false // short cache: unbonding changes continuously
+        );
+        for (const r of data.unbonding_responses ?? []) {
+          for (const e of r.entries ?? []) {
+            const day = e.completion_time.slice(0, 10);
+            const amt = uosmoToOsmo(e.balance);
+            byDay.set(day, (byDay.get(day) ?? 0) + amt);
+            total += amt;
+            entries.push({
+              delegator: r.delegator_address,
+              validator: r.validator_address,
+              moniker: monikerByOperator.get(r.validator_address) ?? v.moniker,
+              amount: amt,
+              completionTime: e.completion_time,
+            });
+          }
         }
+        pageKey = data.pagination?.next_key ?? null;
+        if (!pageKey) break;
+        if (page === 9)
+          logger.warn(
+            `Unbonding pagination cap hit for ${v.operatorAddress}; totals undercount this run.`
+          );
       }
     } catch (error) {
-      // A single validator's endpoint failing shouldn't void the whole schedule;
-      // log and continue (the total is then a slight undercount for this run).
+      // A single validator's endpoint failing shouldn't void the whole schedule
+      // for LIVE display; log, count the failure (so the cron knows this run is
+      // an undercount and refuses to persist it), and continue.
+      fetchFailures++;
       logger.warn(
         `Unbonding fetch failed for ${v.operatorAddress}: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -372,5 +647,9 @@ export async function fetchUnbondingSchedule(): Promise<UnbondingSchedule> {
   const days = [...byDay.entries()]
     .map(([date, amount]) => ({ date, amount }))
     .sort((a, b) => a.date.localeCompare(b.date));
-  return { total, days };
+  // Largest entries first, capped so the API payload stays small.
+  const topEntries = entries
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, TOP_UNBONDING_ENTRIES);
+  return { total, days, topEntries, fetchFailures };
 }

@@ -81,11 +81,15 @@ export function formatChartDate(
   timeRange: ChartRange
 ): string {
   const wide = timeRange === "all" || timeRange === "1y";
+  // timeZone UTC: every plotted series is keyed to UTC days (daily cron rows,
+  // UndelegationDay at UTC midnight). Rendering in the viewer's zone shifted
+  // labels a day for viewers west of UTC (a midnight-keyed bar showed the
+  // previous day); label by the day the data actually belongs to.
   return new Date(timestamp).toLocaleDateString(
     "en-GB",
     wide
-      ? { month: "short", year: "numeric" }
-      : { day: "2-digit", month: "short" }
+      ? { month: "short", year: "numeric", timeZone: "UTC" }
+      : { day: "2-digit", month: "short", timeZone: "UTC" }
   );
 }
 

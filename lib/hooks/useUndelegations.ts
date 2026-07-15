@@ -1,7 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import type { UnbondingSchedule } from "@/lib/validators";
 
-async function fetchUndelegations(): Promise<UnbondingSchedule> {
+// The route augments the live schedule with the per-completion-day history
+// series (UndelegationDay: backfilled + cron-written, keyed by completion day).
+export interface UndelegationsResponse extends UnbondingSchedule {
+  history: { date: string; amountCompleting: number }[];
+}
+
+async function fetchUndelegations(): Promise<UndelegationsResponse> {
   const response = await fetch("/api/undelegations");
   if (!response.ok) {
     throw new Error("Failed to fetch undelegations");

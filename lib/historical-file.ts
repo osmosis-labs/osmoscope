@@ -43,6 +43,7 @@ export interface HistoricalRecord {
   giniCoefficient?: number; // stake-concentration inequality (0-1)
   pendingUndelegations?: number; // total OSMO unbonding on this date
   blockRate?: number; // average seconds per block on this date
+  blockHeight?: number; // latest block height at snapshot time (for the next day's block-rate delta)
   // Revenue distribution parameters
   distributionProportions?: {
     staking: string;

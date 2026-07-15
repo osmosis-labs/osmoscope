@@ -4,9 +4,13 @@
 // slashing history, and long-run signing uptime — none of which are readable live
 // from the LCD. Keyed by operator address; upserted so re-imports refresh in place.
 //
-// This is a point-in-time snapshot (the leaderboard labels it "as of <updatedAt>"),
-// refreshed by re-running against a fresh CSV. Dry-run by default; APPLY=1 writes.
-// Requires a DB connection. data/ is gitignored, so run locally against prod.
+// ONE-SHOT: SmartStake's Osmosis pages are gone, so no fresh CSV will exist.
+// Do NOT re-run against the original CSV either — it would re-import a
+// timesSlashed baseline that may already include events the cron has since
+// counted in cronSlashCount (the leaderboard sums the two), double-counting
+// them. The cron's self-indexing supersedes this import going forward.
+// Dry-run by default; APPLY=1 writes. Requires a DB connection. data/ is
+// gitignored, so run locally against prod.
 import fs from "fs";
 import path from "path";
 import { prisma, isDatabaseEnabled } from "../lib/database";
@@ -85,8 +89,15 @@ async function main() {
     const gov = num(r.voteParticipation); // votes in last 10 proposals
     const times = num(r.timesSlashed);
     const uptime = num(r.historicalPerSigned);
+    const selfBond = num(r.selfBondPercentage);
+    // latestSlashedTime is a UNIX timestamp in SECONDS (e.g. "1774829266"), not an
+    // ISO string — parse as seconds → ms. (new Date("1774829266") would misparse.)
     const latestRaw = r.latestSlashedTime?.trim();
-    const latestSlashedTime = latestRaw ? new Date(latestRaw) : null;
+    const latestSecs = latestRaw ? Number(latestRaw) : NaN;
+    const latestSlashedTime =
+      Number.isFinite(latestSecs) && latestSecs > 0
+        ? new Date(latestSecs * 1000)
+        : null;
 
     if (written < 3) {
       console.log(
@@ -102,6 +113,7 @@ async function main() {
             ? latestSlashedTime
             : null,
         longRunUptime: uptime,
+        selfBondPercentage: selfBond,
       };
       await prisma.validatorSnapshot.upsert({
         where: { operatorAddress },
