@@ -5,6 +5,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { useTreasuryData } from "@/lib/hooks/useTreasuryData";
 import { Card } from "@/components/ui/Card";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
+import { AssetLogo } from "@/components/ui/AssetLogo";
 import { ScreenshotButtons } from "@/components/ScreenshotButtons";
 import { formatNumberWithCommas, formatUsd as usd } from "@/lib/utils";
 import { EXPLORER_BASE, tokenColor } from "@/config/community-pool";
@@ -102,9 +103,10 @@ function ExplorerLink({ addr }: { addr: HolderAddress }) {
 // --- One aggregated asset line ---------------------------------------------
 function AssetRow({ asset }: { asset: AssetTotal }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 py-1.5 text-sm">
-      <span className="min-w-0 truncate font-medium text-white">
-        {asset.symbol}
+    <div className="flex items-center justify-between gap-4 py-1.5 text-sm">
+      <span className="flex min-w-0 items-center gap-1.5 font-medium text-white">
+        <AssetLogo symbol={asset.symbol} />
+        <span className="truncate">{asset.symbol}</span>
       </span>
       <span className="flex shrink-0 items-baseline gap-4 text-right">
         <span className="tabular-nums text-osmo-200">
@@ -276,9 +278,12 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
         {pos.assets.map((a) => (
           <div
             key={a.denom}
-            className="flex items-baseline justify-between gap-3 text-sm"
+            className="flex items-center justify-between gap-3 text-sm"
           >
-            <span className="text-white">{a.symbol}</span>
+            <span className="flex min-w-0 items-center gap-1.5 text-white">
+              <AssetLogo symbol={a.symbol} />
+              <span className="truncate">{a.symbol}</span>
+            </span>
             <span className="flex items-baseline gap-3 text-right">
               <span className="tabular-nums text-osmo-200">
                 {amount(a.amount)}
@@ -293,10 +298,14 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
         {pos.rewards.map((r) => (
           <div
             key={`reward-${r.denom}`}
-            className="flex items-baseline justify-between gap-3 text-sm"
+            className="flex items-center justify-between gap-3 text-sm"
             title="Uncollected reward"
           >
-            <span className="text-osmo-pink">+ {r.symbol}</span>
+            <span className="flex min-w-0 items-center gap-1.5 text-osmo-pink">
+              +&nbsp;
+              <AssetLogo symbol={r.symbol} />
+              <span className="truncate">{r.symbol}</span>
+            </span>
             <span className="flex items-baseline gap-3 text-right">
               <span className="tabular-nums text-osmo-200">
                 {amount(r.amount)}
@@ -349,9 +358,12 @@ function VaultCard({ pos }: { pos: VaultPositionCard }) {
         {pos.assets.map((a, i) => (
           <div
             key={`${a.symbol}-${i}`}
-            className="flex items-baseline justify-between gap-3 text-sm"
+            className="flex items-center justify-between gap-3 text-sm"
           >
-            <span className="text-white">{a.symbol}</span>
+            <span className="flex min-w-0 items-center gap-1.5 text-white">
+              <AssetLogo symbol={a.symbol} />
+              <span className="truncate">{a.symbol}</span>
+            </span>
             <span className="flex items-baseline gap-3 text-right">
               <span className="tabular-nums text-osmo-200">
                 {amount(a.amount)}
@@ -527,6 +539,11 @@ function ValuePie({
                   className="mt-1 h-2.5 w-2.5 shrink-0 rounded-sm"
                   style={{ background: colorFor(s.name, i) }}
                 />
+                {/* Logos only on the by-ASSET pie (names are symbols there);
+                    the by-address pie's holder labels must never match. */}
+                {brandColors && (
+                  <AssetLogo symbol={s.name} className="mt-0.5" />
+                )}
                 <span className="min-w-0 break-words text-white">{s.name}</span>
               </span>
               {slices.some((x) => x.amount != null) && (
