@@ -106,6 +106,76 @@ test("ranking: tightest binding percentage first, quiet assets last alphabetical
   assert.equal(ranked[2].binding, null);
 });
 
+test("near-tie on remaining (within 10%): longest reset time wins", () => {
+  // Remaining 95 vs 100 — within 10% of each other, so the DAY window's
+  // smaller headroom does NOT win outright; WEEK resets later and surfaces.
+  const day = window({
+    quotaName: "DAY",
+    channelValue: "1000",
+    recvPct: 10,
+    inflow: "5",
+    utilizationPct: 5,
+    periodEnd: "1000000000000000000",
+  });
+  const week = window({
+    quotaName: "WEEK",
+    durationSeconds: 604_800,
+    channelValue: "1000",
+    recvPct: 10,
+    inflow: "0",
+    utilizationPct: 0,
+    periodEnd: "2000000000000000000",
+  });
+  const [group] = buildAssetGroups([path("uosmo", "OSMO", [day, week])]);
+  assert.equal(group.binding?.window.quotaName, "WEEK");
+});
+
+test("clear gap in remaining (>10%): least remaining wins regardless of reset", () => {
+  const tight = window({
+    quotaName: "DAY",
+    channelValue: "1000",
+    recvPct: 10,
+    inflow: "50", // remaining 50
+    utilizationPct: 50,
+    periodEnd: "1000000000000000000", // resets sooner
+  });
+  const loose = window({
+    quotaName: "WEEK",
+    durationSeconds: 604_800,
+    channelValue: "1000",
+    recvPct: 10,
+    inflow: "0", // remaining 100
+    utilizationPct: 0,
+    periodEnd: "2000000000000000000", // resets later
+  });
+  const [group] = buildAssetGroups([path("uosmo", "OSMO", [tight, loose])]);
+  assert.equal(group.binding?.window.quotaName, "DAY");
+});
+
+test("both windows fully blocked (0 remaining): longest reset surfaces", () => {
+  const shortBlock = window({
+    quotaName: "DAY",
+    channelValue: "1000",
+    recvPct: 10,
+    inflow: "100",
+    utilizationPct: 100,
+    periodEnd: "1000000000000000000",
+  });
+  const longBlock = window({
+    quotaName: "WEEK",
+    durationSeconds: 604_800,
+    channelValue: "1000",
+    recvPct: 10,
+    inflow: "100",
+    utilizationPct: 100,
+    periodEnd: "2000000000000000000",
+  });
+  const [group] = buildAssetGroups([
+    path("uosmo", "OSMO", [shortBlock, longBlock]),
+  ]);
+  assert.equal(group.binding?.window.quotaName, "WEEK");
+});
+
 test("multiple paths of one denom fold into one group", () => {
   const a = path("uosmo", "OSMO", [
     window({ quotaName: "D", inflow: "10", recvPct: 10, utilizationPct: 10 }),

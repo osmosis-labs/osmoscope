@@ -253,7 +253,7 @@ export function RateLimitsCard() {
             <span className="inline-flex items-center gap-1.5">
               IBC Rate Limits
               <InfoTooltip
-                text="Osmosis caps how much of an asset can flow in or out over IBC within a time window (a percentage of the channel's value, enforced onchain by the rate-limiter contract). Utilization is the share of the binding cap consumed by net flow in the current window; at 100% further transfers in that direction are rejected until the window resets. Each row shows the asset's tightest window: the one with the least capacity remaining, which is the first that would block a transfer. Click a row for the full breakdown, and hover a bar for capacity detail. Yellow marks 50%+, amber 70%+, red 90%+."
+                text="Osmosis caps how much of an asset can flow in or out over IBC within a time window (a percentage of the channel's value, enforced onchain by the rate-limiter contract)."
                 ariaLabel="About IBC rate limits"
               />
               {current && (
