@@ -154,10 +154,11 @@ function consensusAddressFromPubkey(pubkeyBase64: string): string {
 // A validator's account address (osmo1…) from its operator address
 // (osmovaloper1…). They share the same underlying 20-byte key — only the bech32
 // prefix differs — so re-encoding the operator's data words with the "osmo"
-// prefix yields the account most validators cast governance votes from
-// (verified: 64/70 bonded validators have onchain votes from this account; see
-// config/gov-voter-overrides.ts for the exceptions). Returns null if the
-// operator address can't be decoded.
+// prefix yields the account validators cast governance votes from (verified:
+// every voting validator among the 70 bonded — 65 — has onchain votes from
+// this account; config/gov-voter-overrides.ts is the escape hatch should one
+// ever vote from elsewhere). Returns null if the operator address can't be
+// decoded.
 export function accountAddressFromOperator(operator: string): string | null {
   try {
     const { words } = bech32.decode(operator);
@@ -464,21 +465,28 @@ export async function indexGovParticipation(
         (votedByOp.get(r.operatorAddress) ?? 0) + 1
       );
     }
+    // Interactive (callback) form: the array form's default 5s transaction
+    // timeout is NOT overridable and ~70 upserts over a remote connection take
+    // longer — the whole score rolled back when tried (observed live). The
+    // callback form accepts real headroom; the cron runs this once a day.
     await prisma.$transaction(
-      validators.map((v) => {
-        const unknownVoter = GOV_VOTER_OVERRIDES[v.operatorAddress] === null;
-        const data = {
-          govVotedRecent: unknownVoter
-            ? null
-            : (votedByOp.get(v.operatorAddress) ?? 0),
-          govRecentWindow: unknownVoter ? null : windowIds.size,
-        };
-        return prisma.validatorSnapshot.upsert({
-          where: { operatorAddress: v.operatorAddress },
-          create: { operatorAddress: v.operatorAddress, ...data },
-          update: data,
-        });
-      })
+      async (tx) => {
+        for (const v of validators) {
+          const unknownVoter = GOV_VOTER_OVERRIDES[v.operatorAddress] === null;
+          const data = {
+            govVotedRecent: unknownVoter
+              ? null
+              : (votedByOp.get(v.operatorAddress) ?? 0),
+            govRecentWindow: unknownVoter ? null : windowIds.size,
+          };
+          await tx.validatorSnapshot.upsert({
+            where: { operatorAddress: v.operatorAddress },
+            create: { operatorAddress: v.operatorAddress, ...data },
+            update: data,
+          });
+        }
+      },
+      { timeout: 60_000, maxWait: 10_000 }
     );
   } catch (error) {
     logger.warn(
