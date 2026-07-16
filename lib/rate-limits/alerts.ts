@@ -1,11 +1,11 @@
-// Alert thresholds, de-duplication, and Telegram delivery for the rate-limit
-// monitor.
+// Alert thresholds and transition computation for the rate-limit monitor.
+// Pure compute: delivery (Telegram/Slack channels, chunking, escaping) lives
+// in lib/rate-limits/notify.ts.
 //
 // The monitor alerts on level ESCALATION and recovery only, never on steady
 // state: the previous alerted level per window lives in the database
 // (RateLimitAlertState), so a window sitting at 85% for a week produces one
 // warning and one all-clear, not a message every cron run.
-import { logger } from "../logger";
 import { shortDenom, type RateLimitSnapshotData } from "./snapshot";
 
 export type AlertLevel = "warn" | "urgent" | "blocking";
@@ -18,12 +18,6 @@ const LEVEL_RANK: Record<AlertLevel, number> = {
   warn: 1,
   urgent: 2,
   blocking: 3,
-};
-
-const LEVEL_EMOJI: Record<AlertLevel, string> = {
-  warn: "⚠️",
-  urgent: "🚨",
-  blocking: "⛔",
 };
 
 export function levelFor(pct: number): AlertLevel | null {
@@ -121,108 +115,4 @@ export function computeAlertTransitions(
   }
 
   return { transitions, nextStates };
-}
-
-// Symbols and quota names come from external data (the assetlist, contract
-// state); one `&` or `<` in either would make Telegram reject the HTML
-// message — permanently, since delivery failure blocks state persistence and
-// the same poisoned batch retries forever. Escape at the boundary. Exported
-// for other callers composing HTML-mode messages (the cron's degraded notice).
-export function escapeHtml(s: string): string {
-  return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function describe(transition: AlertTransition): string {
-  const directionLabel =
-    transition.direction === "out"
-      ? "outflow"
-      : transition.direction === "in"
-        ? "inflow"
-        : "flow";
-  const symbol = escapeHtml(transition.symbol);
-  const quotaName = escapeHtml(transition.quotaName);
-  if (transition.to === null) {
-    return `✅ <b>${symbol}</b> ${quotaName}: back below ${WARN_PCT}%`;
-  }
-  const suffix = transition.to === "blocking" ? " — transfers blocked" : "";
-  return `${LEVEL_EMOJI[transition.to]} <b>${symbol}</b> ${quotaName}: ${transition.pct.toFixed(1)}% of ${directionLabel} cap${suffix}`;
-}
-
-// Telegram rejects messages over 4096 characters; one mass-escalation event
-// (channel_value repricing at window rollover can move every path at once)
-// must not produce an oversized — and therefore permanently failing — batch.
-// Pure and exported for tests.
-export const TELEGRAM_MAX_LEN = 4096;
-export function chunkTelegramText(header: string, lines: string[]): string[] {
-  const chunks: string[] = [];
-  let current = header;
-  for (const line of lines) {
-    if (current.length + 1 + line.length > TELEGRAM_MAX_LEN) {
-      chunks.push(current);
-      current = header;
-    }
-    // A single line that can never fit is truncated rather than wedging the
-    // whole batch (not expected: lines are ~100 chars).
-    const room = TELEGRAM_MAX_LEN - current.length - 1;
-    current += `\n${line.length > room ? line.slice(0, Math.max(0, room)) : line}`;
-  }
-  chunks.push(current);
-  return chunks;
-}
-
-// Low-level Telegram delivery for ONE message. Returns false (after logging
-// the content) when the bot env vars are not configured; throws on delivery
-// failure.
-export async function sendTelegramMessage(text: string): Promise<boolean> {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) {
-    logger.warn(`Telegram not configured; message:\n${text}`);
-    return false;
-  }
-
-  const response = await fetch(
-    `https://api.telegram.org/bot${token}/sendMessage`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    }
-  );
-  const body = (await response.json().catch(() => null)) as {
-    ok?: boolean;
-    description?: string;
-  } | null;
-  if (!response.ok || !body?.ok) {
-    throw new Error(
-      `Telegram send failed: ${response.status} ${body?.description ?? ""}`
-    );
-  }
-  return true;
-}
-
-// Send the run's transitions as one batched message (chunked only when a mass
-// event exceeds Telegram's length cap). Throws on delivery failure so the
-// caller can skip persisting alert states and retry next run.
-export async function sendTelegramAlerts(
-  transitions: AlertTransition[]
-): Promise<boolean> {
-  const chunks = chunkTelegramText(
-    "<b>Osmosis IBC rate limits</b>",
-    transitions.map(describe)
-  );
-  let delivered = false;
-  for (const chunk of chunks) {
-    delivered = (await sendTelegramMessage(chunk)) || delivered;
-  }
-  return delivered;
 }
