@@ -10,6 +10,10 @@
 //   - an osmo1… address: the validator's actual voting account (score from it)
 //   - null: the voting account is KNOWN to differ but hasn't been identified;
 //     display null rather than a wrong 0 from the derived account.
+//
+// Filling in a previously-null entry needs no manual backfill: the account has
+// zero accumulated ValidatorVote rows, so the next daily cron first-seeds it
+// from BOTH tx-index sources (archive + recent) automatically.
 export const GOV_VOTER_OVERRIDES: Record<string, string | null> = {
   // bitszn | valopers.com — SmartStake shows recent participation (7/10) but the
   // operator-derived account has zero onchain votes, so it votes from an

@@ -24,6 +24,7 @@ import {
   indexValidatorDaily,
   indexGovParticipation,
 } from "./validators";
+import type { ValidatorInfo } from "./validators";
 import { saveSnapshot, getHistory, backfillRevenue } from "./historical-file";
 import { fetchDailyRevenue } from "./revenue";
 import { logger } from "./logger";
@@ -255,6 +256,11 @@ export async function buildAndSaveSnapshot(
   let pendingUndelegations: number | undefined;
   let blockRate: number | undefined;
   let blockHeight: number | undefined;
+  // Held for the gov-participation indexing, which runs AFTER saveSnapshot:
+  // it feeds no snapshot field (only ValidatorVote/ValidatorSnapshot rows) and
+  // its ~70-account fan-out must never spend the route's remaining time budget
+  // before the day's supply row is persisted.
+  let validatorsForGov: ValidatorInfo[] = [];
   try {
     const [validators, unbonding, latestBlock] = await Promise.all([
       fetchBondedValidators(),
@@ -264,14 +270,10 @@ export async function buildAndSaveSnapshot(
     if (validators.length > 0) {
       nakamoto = nakamotoCoefficient(validators);
       gini = giniCoefficient(validators);
+      validatorsForGov = validators;
       // Self-index per-validator daily uptime + slash-event detection (feeds the
       // leaderboard's long-run uptime + slash columns going forward). Non-fatal.
       await indexValidatorDaily(validators);
-      // Self-index governance participation: accumulate each validator's votes
-      // (by-voter tx queries against the recent-index node) and score the
-      // last-90-day window. Non-fatal; per-validator failures self-heal on the
-      // next run.
-      await indexGovParticipation(validators);
     }
     // pendingUndelegations on HistoricalRecord is the OUTSTANDING POOL total (a
     // stock). The per-day COMPLETING amounts (a flow) live in UndelegationDay,
@@ -410,6 +412,15 @@ export async function buildAndSaveSnapshot(
       ? `Snapshot persisted for ${timestamp}`
       : `Snapshot skipped (already captured) for ${timestamp}`
   );
+
+  // Self-index governance participation LAST: the day's financial snapshot is
+  // already persisted, so however long this ~70-account fan-out takes (or if
+  // the platform kills the function mid-way), it can only cost gov data —
+  // which self-heals on the next run. Non-fatal internally.
+  if (validatorsForGov.length > 0) {
+    await indexGovParticipation(validatorsForGov);
+  }
+
   return { saved, timestamp, dayEpoch };
 }
 

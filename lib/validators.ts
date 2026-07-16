@@ -362,12 +362,17 @@ export async function indexValidatorDaily(
 }
 
 // Self-index validator governance participation (called once a day by the
-// snapshot cron):
-//   1. ACCUMULATE: query each validator's voting account BY VOTER on the
-//      recent-index full node and union any new proposal ids into ValidatorVote
-//      (insert-only; scripts/backfill-validator-votes.ts seeded history from the
-//      archive once). Per-validator failures are non-fatal and self-healing —
-//      the next run re-queries the same full recent window.
+// snapshot cron, AFTER the financial snapshot has been persisted — this
+// fan-out must never cost the day's supply row):
+//   1. ACCUMULATE: query each validator's voting account BY VOTER and union
+//      any new proposal ids into ValidatorVote (insert-only). Already-seeded
+//      operators query only the recent-index node; an operator with NO
+//      accumulated rows yet (newly bonded validator, or a just-identified
+//      override account) is first-seeded from the archive AND the recent node,
+//      because the recent index's floor (~60 days) sits inside the 90-day
+//      window. scripts/backfill-validator-votes.ts did the same union for the
+//      initial population. Per-validator failures are non-fatal and
+//      self-healing — the next run re-queries the same window.
 //   2. SCORE: govVotedRecent = |accumulated set ∩ proposals decided in the last
 //      90 days|, govRecentWindow = window size; upserted on ValidatorSnapshot.
 // The voting account is the operator-derived account (osmo1… with the same key)
@@ -380,25 +385,54 @@ export async function indexGovParticipation(
   try {
     const { prisma, isDatabaseEnabled } = await import("./database");
     if (!isDatabaseEnabled()) return;
-    const { fetchRecentlyEndedProposals, fetchVoterProposalIds, RECENT_LCD } =
-      await import("./governance");
+    const {
+      fetchRecentlyEndedProposals,
+      fetchVoterProposalIds,
+      RECENT_LCD,
+      ARCHIVE_LCD,
+    } = await import("./governance");
     const { GOV_VOTER_OVERRIDES } = await import(
       "../config/gov-voter-overrides"
     );
 
     const windowIds = new Set(await fetchRecentlyEndedProposals(Date.now()));
-    // Nothing decided in the window — leave prior values untouched.
+    // Nothing decided in the window — leave prior values untouched (a >90-day
+    // gov quiet spell would otherwise clear real scores; implausible on
+    // Osmosis, but the guard is free).
     if (windowIds.size === 0) return;
 
-    // 1. Accumulate new votes, a few validators at a time (the recent-index
-    //    node tolerates light concurrency; failures just defer to tomorrow).
+    // Which operators already have accumulated votes. A never-seeded operator
+    // (newly bonded validator, or a null override whose voter account was just
+    // identified) must be seeded from BOTH sources: the recent node's tx index
+    // only reaches ~60 days back, inside the 90-day window, so recent-only
+    // first-seeding would score a confident wrong-low number.
+    const seeded = new Set(
+      (
+        await prisma.validatorVote.groupBy({
+          by: ["operatorAddress"],
+        })
+      ).map((g) => g.operatorAddress)
+    );
+
+    // 1. Accumulate new votes, a few validators at a time (the nodes tolerate
+    //    light concurrency; failures just defer to tomorrow — for a first-seed
+    //    validator a PARTIAL union isn't persisted as "seeded" wrongly, because
+    //    a source failure throws before any insert for that validator).
     await mapLimit(validators, 3, async (v) => {
       const override = GOV_VOTER_OVERRIDES[v.operatorAddress];
       if (override === null) return; // known-unknown voter: nothing to query
       const account = override ?? accountAddressFromOperator(v.operatorAddress);
       if (!account) return;
       try {
-        const ids = await fetchVoterProposalIds(account, RECENT_LCD);
+        const sources = seeded.has(v.operatorAddress)
+          ? [RECENT_LCD]
+          : [ARCHIVE_LCD, RECENT_LCD];
+        const ids = new Set<number>();
+        for (const source of sources) {
+          for (const id of await fetchVoterProposalIds(account, source)) {
+            ids.add(id);
+          }
+        }
         if (ids.size > 0) {
           await prisma.validatorVote.createMany({
             data: [...ids].map((proposalId) => ({
@@ -415,33 +449,37 @@ export async function indexGovParticipation(
       }
     });
 
-    // 2. Score every validator from the accumulated sets.
+    // 2. Score every validator from the accumulated sets. The window
+    //    intersection happens in the query; the ~70 upserts run as one
+    //    transaction so a mid-loop failure can't leave half the set scored
+    //    against the new window and half against yesterday's.
     const votes = await prisma.validatorVote.findMany({
+      where: { proposalId: { in: [...windowIds] } },
       select: { operatorAddress: true, proposalId: true },
     });
-    const votedByOp = new Map<string, Set<number>>();
+    const votedByOp = new Map<string, number>();
     for (const r of votes) {
-      const set = votedByOp.get(r.operatorAddress) ?? new Set<number>();
-      set.add(r.proposalId);
-      votedByOp.set(r.operatorAddress, set);
+      votedByOp.set(
+        r.operatorAddress,
+        (votedByOp.get(r.operatorAddress) ?? 0) + 1
+      );
     }
-    for (const v of validators) {
-      const override = GOV_VOTER_OVERRIDES[v.operatorAddress];
-      const unknownVoter = override === null;
-      const set = votedByOp.get(v.operatorAddress);
-      const voted = unknownVoter
-        ? null
-        : [...windowIds].filter((id) => set?.has(id)).length;
-      const data = {
-        govVotedRecent: voted,
-        govRecentWindow: unknownVoter ? null : windowIds.size,
-      };
-      await prisma.validatorSnapshot.upsert({
-        where: { operatorAddress: v.operatorAddress },
-        create: { operatorAddress: v.operatorAddress, ...data },
-        update: data,
-      });
-    }
+    await prisma.$transaction(
+      validators.map((v) => {
+        const unknownVoter = GOV_VOTER_OVERRIDES[v.operatorAddress] === null;
+        const data = {
+          govVotedRecent: unknownVoter
+            ? null
+            : (votedByOp.get(v.operatorAddress) ?? 0),
+          govRecentWindow: unknownVoter ? null : windowIds.size,
+        };
+        return prisma.validatorSnapshot.upsert({
+          where: { operatorAddress: v.operatorAddress },
+          create: { operatorAddress: v.operatorAddress, ...data },
+          update: data,
+        });
+      })
+    );
   } catch (error) {
     logger.warn(
       `Gov participation indexing skipped: ${error instanceof Error ? error.message : String(error)}`

@@ -31,6 +31,11 @@ async function withRetries<T>(fn: () => Promise<T>, label: string): Promise<T> {
     try {
       return await fn();
     } catch (e) {
+      // The >1000-tx page-cap throw is deterministic — retrying it just burns
+      // half a minute of sleeps before failing identically.
+      if (e instanceof Error && e.message.includes("refusing to truncate")) {
+        throw new Error(`${label}: ${e.message}`);
+      }
       lastErr = e;
       await sleep(3000 * (attempt + 1));
     }
@@ -68,16 +73,16 @@ async function main() {
       continue;
     }
     try {
-      const [archiveIds, recentIds] = [
-        await withRetries(
-          () => fetchVoterProposalIds(account, ARCHIVE_LCD),
-          `${v.moniker} (archive)`
-        ),
-        await withRetries(
-          () => fetchVoterProposalIds(account, RECENT_LCD),
-          `${v.moniker} (recent)`
-        ),
-      ];
+      // Sequential on purpose (archive pacing), so written as two statements
+      // rather than a Promise.all-looking destructure.
+      const archiveIds = await withRetries(
+        () => fetchVoterProposalIds(account, ARCHIVE_LCD),
+        `${v.moniker} (archive)`
+      );
+      const recentIds = await withRetries(
+        () => fetchVoterProposalIds(account, RECENT_LCD),
+        `${v.moniker} (recent)`
+      );
       const union = new Set([...archiveIds, ...recentIds]);
       console.log(
         `  ${v.moniker}: archive ${archiveIds.size} + recent ${recentIds.size} → ${union.size} proposals`

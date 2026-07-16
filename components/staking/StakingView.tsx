@@ -832,7 +832,7 @@ export function StakingView() {
         ? `of ${govWindowN} proposals (90 days)`
         : "last 10 proposals",
       info: hasSelfGov
-        ? `Number of the ${govWindowN} governance proposals decided in the last 90 days the validator voted on, counted from its onchain votes. A dash means the validator's voting account isn't identifiable onchain.`
+        ? `Number of the ${govWindowN} governance proposals decided in the last 90 days the validator voted on, counted from its onchain votes. A dash means the validator's voting account isn't identifiable onchain, or the validator is newly bonded and not yet indexed.`
         : "Number of the last 10 governance proposals the validator voted on.",
       align: "right",
       // Self-computed 90-day participation (govVotedRecent) once indexed;

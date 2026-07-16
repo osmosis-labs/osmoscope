@@ -21,11 +21,15 @@ const NUMIA_API_KEY = process.env.NUMIA_API_KEY;
 // Helper to add delay between requests
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Helper to perform fetch with retry logic for rate limiting
-async function fetchWithRetry(
+// Helper to perform fetch with retry logic for rate limiting. Exported so
+// sibling LCD modules (lib/governance.ts) reuse the same 429 backoff instead
+// of hand-rolling bare fetches. `timeoutMs` bounds each ATTEMPT (not the
+// whole retry loop); omitted = no timeout, preserving existing callers.
+export async function fetchWithRetry(
   url: string,
   maxRetries = 3,
-  baseDelay = 1000
+  baseDelay = 1000,
+  timeoutMs?: number
 ): Promise<Response> {
   let lastError: Error | null = null;
 
@@ -35,6 +39,7 @@ async function fetchWithRetry(
         headers: {
           Accept: "application/json",
         },
+        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       });
 
       // If we get a 429, wait and retry with exponential backoff
