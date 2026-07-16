@@ -302,8 +302,7 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
             title="Uncollected reward"
           >
             <span className="flex min-w-0 items-center gap-1.5 text-osmo-pink">
-              +&nbsp;
-              <AssetLogo symbol={r.symbol} />
+              +<AssetLogo symbol={r.symbol} />
               <span className="truncate">{r.symbol}</span>
             </span>
             <span className="flex items-baseline gap-3 text-right">
@@ -412,6 +411,7 @@ function ValuePie({
   full,
   exOsmo,
   brandColors,
+  namesAreSymbols,
   shareText,
   shareFilename,
 }: {
@@ -421,6 +421,11 @@ function ValuePie({
   // When true, color each slice by its token's brand color (tokenColor),
   // falling back to the palette. Used for the by-token pie.
   brandColors?: boolean;
+  // When true, slice names are ASSET SYMBOLS, so the legend may decorate them
+  // with asset logos. Kept separate from brandColors (a colouring choice) so
+  // neither behavior silently implies the other; the by-address pie sets
+  // neither, and its holder labels can never pick up a spurious logo.
+  namesAreSymbols?: boolean;
   // When provided, a share pill (X + copy, no CSV) is shown; the caption is
   // prefilled into the X composer and the whole card is the screenshot target.
   shareText?: string;
@@ -539,9 +544,9 @@ function ValuePie({
                   className="mt-1 h-2.5 w-2.5 shrink-0 rounded-sm"
                   style={{ background: colorFor(s.name, i) }}
                 />
-                {/* Logos only on the by-ASSET pie (names are symbols there);
-                    the by-address pie's holder labels must never match. */}
-                {brandColors && (
+                {/* Logos only when slice names are asset symbols; the
+                    by-address pie's holder labels must never match. */}
+                {namesAreSymbols && (
                   <AssetLogo symbol={s.name} className="mt-0.5" />
                 )}
                 <span className="min-w-0 break-words text-white">{s.name}</span>
@@ -674,6 +679,7 @@ export function TreasuryView() {
           full={tokenFull}
           exOsmo={tokenExOsmo}
           brandColors
+          namesAreSymbols
           shareText="Osmosis community treasury by asset"
           shareFilename="osmosis-treasury-by-asset"
         />
