@@ -39,21 +39,30 @@ function formatDuration(seconds: number): string {
 // (minutes under two hours, whole hours above). The contract resets windows
 // lazily, so a past period_end shows as "due" (it clears on the next transfer).
 function formatReset(periodEndNs: string): string {
-  const endMs = Number(BigInt(periodEndNs) / 1_000_000n);
-  const diff = endMs - Date.now();
-  if (diff <= 0) return "due";
-  const stamp = new Date(endMs).toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-  });
-  const rel =
-    diff < 2 * 3_600_000
-      ? `${Math.max(1, Math.round(diff / 60_000))}m`
-      : `${Math.round(diff / 3_600_000)}h`;
-  return `${stamp} (${rel})`;
+  try {
+    const endMs = Number(BigInt(periodEndNs) / 1_000_000n);
+    if (!Number.isFinite(endMs)) return "—";
+
+    const end = new Date(endMs);
+    if (Number.isNaN(end.getTime())) return "—";
+
+    const diff = endMs - Date.now();
+    if (diff <= 0) return "due";
+    const stamp = end.toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "UTC",
+    });
+    const rel =
+      diff < 2 * 3_600_000
+        ? `${Math.max(1, Math.round(diff / 60_000))}m`
+        : `${Math.round(diff / 3_600_000)}h`;
+    return `${stamp} (${rel})`;
+  } catch {
+    return "—";
+  }
 }
 
 // Why a window has no utilization figure: its counters no longer bind.

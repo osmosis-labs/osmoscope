@@ -65,7 +65,7 @@ interface StatePage {
 // Decode a cw-storage-plus composite Map key: 2-byte big-endian namespace
 // length, namespace bytes, then a 2-byte length-prefixed first component
 // (channel) with the raw remainder as the last component (denom).
-function decodeFlowKey(
+export function decodeFlowKey(
   hexKey: string
 ): { channel: string; denom: string } | null {
   const raw = Buffer.from(hexKey, "hex");
@@ -125,6 +125,11 @@ async function dumpStateFrom(endpoint: string): Promise<RateLimitPath[]> {
   if (nextKey) {
     throw new Error(
       "rate-limiter state dump exceeded the page cap; refusing a truncated dump"
+    );
+  }
+  if (paths.length === 0) {
+    throw new Error(
+      "rate-limiter state dump decoded no flow paths; refusing an empty dump"
     );
   }
   return paths;
