@@ -4,12 +4,10 @@ import { useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
 import { InfoTooltip } from "../ui/InfoTooltip";
 import { ScreenshotButtons } from "../ScreenshotButtons";
-import {
-  useRateLimits,
-  type EnrichedPathUtilization,
-} from "@/lib/hooks/useRateLimits";
+import { useRateLimits } from "@/lib/hooks/useRateLimits";
 import type { WindowUtilization } from "@/lib/rate-limits/snapshot";
-import { formatNumber } from "@/lib/utils";
+import { buildAssetGroups, remainingBase } from "@/lib/rate-limits/grouping";
+import { formatCurrency, formatNumber } from "@/lib/utils";
 
 // How many of the most-utilized assets get a row by default; "Show all"
 // expands to the full set.
@@ -65,44 +63,12 @@ function windowStatus(w: WindowUtilization): string {
   return "—";
 }
 
-// Absolute remaining capacity in a window's binding direction, in BASE units
-// (comparable across windows of the same denom without a price). Null when the
-// window has no computable utilization.
-function remainingBase(w: WindowUtilization): number | null {
-  if (w.utilizationPct == null || !w.direction || !w.channelValue) return null;
-  const chan = Number(w.channelValue);
-  const dirPct = w.direction === "in" ? w.recvPct : w.sendPct;
-  const inflow = Number(w.inflow);
-  const outflow = Number(w.outflow);
-  const used =
-    w.direction === "in"
-      ? Math.max(0, inflow - outflow)
-      : Math.max(0, outflow - inflow);
-  return Math.max(0, chan * (dirPct / 100) - used);
-}
-
 // Window label from the quota NAME (the limiter names quotas "…DAY…"/"…WEEK…"),
 // falling back to the duration when the name carries no period word.
 function windowLabel(w: WindowUtilization): string {
   const m = w.quotaName.match(/day|week|month|hour/i);
   if (m) return m[0].charAt(0).toUpperCase() + m[0].slice(1).toLowerCase();
   return formatDuration(w.durationSeconds);
-}
-
-// One asset's rate-limit summary: every (channel, window) pair for its denom.
-// The headline is the BINDING window — the one with the least absolute
-// capacity remaining, i.e. the first that would block a transfer — not simply
-// the highest percentage (a small-cap Day window can have less headroom than a
-// big-cap Week window at a higher %).
-interface AssetGroup {
-  denom: string;
-  symbol: string;
-  paths: EnrichedPathUtilization[];
-  binding: {
-    path: EnrichedPathUtilization;
-    window: WindowUtilization;
-    remaining: number;
-  } | null;
 }
 
 // A utilization bar with its trailing "% · direction · window · resets" info
@@ -130,35 +96,32 @@ function UtilBar({
       : null;
   const chanUsd =
     chanDisp != null && priceUsd != null ? chanDisp * priceUsd : null;
-  let remainingDisp: number | null = null;
-  if (chanBase != null && exponent != null && w.direction) {
-    const dirPct = w.direction === "in" ? w.recvPct : w.sendPct;
-    const inflow = Number(w.inflow);
-    const outflow = Number(w.outflow);
-    const usedBase =
-      w.direction === "in"
-        ? Math.max(0, inflow - outflow)
-        : Math.max(0, outflow - inflow);
-    remainingDisp =
-      Math.max(0, chanBase * (dirPct / 100) - usedBase) /
-      Math.pow(10, exponent);
-  }
+  // Same base-unit remaining the binding-window selection uses (one source of
+  // truth in lib/rate-limits/grouping.ts), converted here for display only.
+  const remBase = remainingBase(w);
+  const remainingDisp =
+    remBase != null && exponent != null
+      ? remBase / Math.pow(10, exponent)
+      : null;
 
   return (
     <>
       {/* Binding direction, just before the bar. Fixed width so bars stay
-          aligned when a row has no computable direction. */}
+          aligned when a row has no arrow. Idle windows (0% utilization) show
+          no arrow: the contract assigns them a nominal direction, but painting
+          a green "inbound" on every quiet row reads as signal that isn't
+          there. */}
       <span
         className="inline-flex w-4 shrink-0 items-center justify-center self-stretch text-xs font-bold leading-none"
         title={
-          w.direction
+          w.direction && (pct ?? 0) > 0
             ? w.direction === "in"
               ? "inbound"
               : "outbound"
             : undefined
         }
         aria-label={
-          w.direction
+          w.direction && (pct ?? 0) > 0
             ? w.direction === "in"
               ? "inbound"
               : "outbound"
@@ -177,7 +140,7 @@ function UtilBar({
             their ink in a corner of the em box (↗ top-right, ↙ bottom-left),
             so they never look vertically centered. The SVG is geometrically
             centered; out = up-right, in = the same path rotated 180°. */}
-        {w.direction && (
+        {w.direction && (pct ?? 0) > 0 && (
           <svg
             xmlns="http://www.w3.org/2000/svg"
             width="14"
@@ -219,16 +182,15 @@ function UtilBar({
             {chanDisp == null ? "—" : `${formatNumber(chanDisp)} ${symbol}`}
           </span>
           <span className="block">
-            Channel value:{" "}
-            {chanUsd == null ? "$—" : `$${formatNumber(chanUsd)}`}
+            Channel value: {chanUsd == null ? "—" : formatCurrency(chanUsd)}
           </span>
           <span className="block">
             Caps: in {w.recvPct}%
             {chanUsd != null &&
-              ` ($${formatNumber((chanUsd * w.recvPct) / 100)})`}{" "}
+              ` (${formatCurrency((chanUsd * w.recvPct) / 100)})`}{" "}
             / out {w.sendPct}%
             {chanUsd != null &&
-              ` ($${formatNumber((chanUsd * w.sendPct) / 100)})`}
+              ` (${formatCurrency((chanUsd * w.sendPct) / 100)})`}
           </span>
           <span className="block">
             Remaining{w.direction ? ` (${w.direction})` : ""}:{" "}
@@ -248,10 +210,10 @@ function UtilBar({
   );
 }
 
-// IBC rate-limit utilization: how close each rate-limited asset is to its cap
-// right now (max across all its channels and windows; click a row to swap the
-// aggregate bar for the full per-channel/per-window breakdown), plus the
-// max-utilization trend from the 15-minute monitor snapshots.
+// IBC rate-limit utilization: one row per rate-limited asset, headlined by its
+// BINDING window (least absolute capacity remaining — the first that would
+// block a transfer); click a row to swap the aggregate bar for the full
+// per-window breakdown. Data from the 15-minute monitor snapshots.
 export function RateLimitsCard() {
   const { data, isLoading, isError } = useRateLimits();
   const cardRef = useRef<HTMLDivElement>(null);
@@ -261,40 +223,9 @@ export function RateLimitsCard() {
   const [showAll, setShowAll] = useState(false);
 
   const current = data?.current;
-  // Group paths by denom: the headline row is per ASSET, the expansion shows
-  // its channels and windows. The binding window (least absolute capacity
-  // remaining) is resolved per group as it's built.
-  const groups = new Map<string, AssetGroup>();
-  for (const p of current?.paths ?? []) {
-    const g = groups.get(p.denom) ?? {
-      denom: p.denom,
-      symbol: p.symbol,
-      paths: [],
-      binding: null,
-    };
-    g.paths.push(p);
-    for (const w of p.windows) {
-      const remaining = remainingBase(w);
-      if (remaining == null) continue;
-      if (g.binding == null || remaining < g.binding.remaining) {
-        g.binding = { path: p, window: w, remaining };
-      }
-    }
-    groups.set(p.denom, g);
-  }
-  // Tightest assets first (highest binding-window utilization), then the quiet
-  // ones (no computable current-window utilization) alphabetically — so "show
-  // all" has a stable, meaningful order.
-  const headlinePct = (g: AssetGroup): number | null =>
-    g.binding?.window.utilizationPct ?? null;
-  const ranked = [...groups.values()].sort((a, b) => {
-    const ap = headlinePct(a);
-    const bp = headlinePct(b);
-    if (ap != null && bp != null) return bp - ap;
-    if (ap != null) return -1;
-    if (bp != null) return 1;
-    return a.symbol.localeCompare(b.symbol);
-  });
+  // Grouping, binding-window selection, and ranking are pure derivation in
+  // lib/rate-limits/grouping.ts (unit-tested there).
+  const ranked = buildAssetGroups(current?.paths ?? []);
   const top = showAll ? ranked : ranked.slice(0, TOP_PATHS);
 
   const toggle = (denom: string) =>
@@ -313,7 +244,7 @@ export function RateLimitsCard() {
             <span className="inline-flex items-center gap-1.5">
               IBC Rate Limits
               <InfoTooltip
-                text="Osmosis caps how much of an asset can flow in or out over IBC within a time window (a percentage of the channel's value, enforced onchain by the rate-limiter contract). Utilization is the share of the binding cap consumed by net flow in the current window; at 100% further transfers in that direction are rejected until the window resets. Each row shows an asset's highest utilization across its channels and windows; click a row for the full breakdown, and hover a bar for capacity detail. Yellow marks 50%+, amber 70%+, red 90%+."
+                text="Osmosis caps how much of an asset can flow in or out over IBC within a time window (a percentage of the channel's value, enforced onchain by the rate-limiter contract). Utilization is the share of the binding cap consumed by net flow in the current window; at 100% further transfers in that direction are rejected until the window resets. Each row shows the asset's tightest window: the one with the least capacity remaining, which is the first that would block a transfer. Click a row for the full breakdown, and hover a bar for capacity detail. Yellow marks 50%+, amber 70%+, red 90%+."
                 ariaLabel="About IBC rate limits"
               />
               {current && (

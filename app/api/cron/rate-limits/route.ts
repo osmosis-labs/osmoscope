@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { buildRateLimitSnapshot } from "@/lib/rate-limits/snapshot";
 import {
   computeAlertTransitions,
+  escapeHtml,
   sendTelegramAlerts,
+  sendTelegramMessage,
 } from "@/lib/rate-limits/alerts";
 import {
   saveRateLimitSnapshot,
@@ -27,6 +29,24 @@ import { logger } from "@/lib/logger";
 // without the matching bearer token are rejected.
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
+
+// A safety monitor's worst state is "dead and nobody knows": a broken run
+// (DB outage, dump failure) only produces 500s that nothing watches. Send a
+// best-effort degraded notice to the same Telegram channel, rate-limited per
+// warm instance so an extended outage doesn't page every 15 minutes.
+const DEGRADED_NOTICE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let lastDegradedNoticeAt = 0;
+async function sendDegradedNotice(message: string): Promise<void> {
+  if (Date.now() - lastDegradedNoticeAt < DEGRADED_NOTICE_INTERVAL_MS) return;
+  try {
+    await sendTelegramMessage(
+      `🛑 <b>Rate-limit monitor degraded</b>\n${escapeHtml(message)}\nRuns are failing; utilization is NOT being watched.`
+    );
+    lastDegradedNoticeAt = Date.now();
+  } catch {
+    // Telegram itself unreachable — nothing more to do beyond the logs.
+  }
+}
 
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
@@ -66,12 +86,8 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     logger.error("Rate-limit cron failed:", error);
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "Unknown error";
+    await sendDegradedNotice(message);
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

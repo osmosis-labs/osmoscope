@@ -31,12 +31,16 @@ export async function saveRateLimitSnapshot(
   const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000);
 
   // The per-denom raw flow readings (the queryable series), one row per
-  // window: same hour-dedupe as the blob so the two stay in lockstep.
+  // window: same hour-dedupe as the blob so the two stay in lockstep. Keyed by
+  // quota NAME (names are unique within a path), not duration — two quotas
+  // sharing a duration would otherwise collide on the PK and roll back the
+  // whole transaction, killing the monitor until a schema change.
   const readings = data.paths.flatMap((p) =>
     p.windows.map((w) => ({
       timestamp: ts,
       channel: p.channel,
       denom: p.denom,
+      quotaName: w.quotaName,
       durationSeconds: w.durationSeconds,
       channelValue: w.channelValue,
       inflow: w.inflow,
@@ -59,7 +63,12 @@ export async function saveRateLimitSnapshot(
     prisma.rateLimitReading.deleteMany({
       where: { timestamp: { gte: hourStart, lt: hourEnd } },
     }),
-    prisma.rateLimitReading.createMany({ data: readings }),
+    // skipDuplicates as a belt-and-braces guard: even an unforeseen key
+    // collision must degrade to a dropped row, never a rolled-back snapshot.
+    prisma.rateLimitReading.createMany({
+      data: readings,
+      skipDuplicates: true,
+    }),
   ]);
   logger.info(
     `Saved rate-limit snapshot: ${data.timestamp} (${readings.length} readings)`

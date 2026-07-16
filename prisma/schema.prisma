@@ -284,14 +284,17 @@ model RateLimitAlertState {
 // outflow are the contract's raw counters (base units); net movement, net %
 // and utilization are all derivable, and the caps needed for utilization can
 // be joined from the same-hour RateLimitSnapshot blob (cap changes are rare
-// governance events). durationSeconds identifies the quota window (86400 day,
-// 604800 week); a window reset shows as the counters dropping between
-// consecutive readings. channel is "any" on every live limit but stays in the
-// key so a channel-scoped limit can never collide.
+// governance events). The window is identified by quota NAME (unique within a
+// path — two quotas can share a duration, so duration alone would collide);
+// durationSeconds rides along as data. A window reset shows as the counters
+// dropping between consecutive readings. channel is "any" on every live limit
+// but stays in the key so a channel-scoped limit can never collide.
 model RateLimitReading {
-  timestamp       DateTime @db.Timestamptz(6)
-  channel         String
-  denom           String
+  timestamp DateTime @db.Timestamptz(6)
+  channel   String
+  denom     String
+  quotaName String
+
   durationSeconds Int
 
   // Uint256 strings from the contract; Decimal(78,0) holds the full range.
@@ -299,7 +302,7 @@ model RateLimitReading {
   inflow       Decimal  @db.Decimal(78, 0)
   outflow      Decimal  @db.Decimal(78, 0)
 
-  @@id([timestamp, channel, denom, durationSeconds])
+  @@id([timestamp, channel, denom, quotaName])
   @@index([denom, timestamp(sort: Asc)])
   @@map("rate_limit_readings")
 }

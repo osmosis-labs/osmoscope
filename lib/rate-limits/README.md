@@ -10,9 +10,11 @@ Watches the onchain IBC rate limiter and does two jobs:
    steady state.
 2. **Flow history.** Each run stores a snapshot (deduped to one row per UTC
    hour) of every configured path's caps and net flows in
-   `rate_limit_snapshots`. The accumulated history is the flow baseline for
-   the quarterly rate-limit review, replacing the discontinued range.org
-   dashboard.
+   `rate_limit_snapshots`, plus one queryable row per quota window in
+   `rate_limit_readings` (timestamp, channel, denom, quota name, raw
+   channelValue/inflow/outflow — net movement, net % and utilization are all
+   derivable). The accumulated history is the flow baseline for the quarterly
+   rate-limit review, replacing the discontinued range.org dashboard.
 
 ## How enumeration works
 
@@ -32,8 +34,11 @@ Two situations are deliberately not alerted on:
 
 ## Setup
 
-1. Apply the schema: `npx prisma db push` (adds `rate_limit_snapshots` and
-   `rate_limit_alert_states`).
+1. Apply the schema (adds `rate_limit_snapshots`, `rate_limit_alert_states`,
+   and `rate_limit_readings`). Note: while sibling branches with their own
+   schema additions are unmerged, apply the three CREATE TABLEs surgically via
+   `prisma db execute` rather than `db push` (push would drop the siblings'
+   objects).
 2. Create the Telegram bot: message @BotFather, `/newbot`, keep the token.
 3. Create a private channel, add the bot as an administrator, then get the
    chat id: post a message in the channel and read `chat.id` from
@@ -55,4 +60,11 @@ curl -H "Authorization: Bearer $CRON_SECRET" https://<deployment>/api/cron/rate-
 The snapshot is saved first, alerts are sent second, and alert states are
 persisted last. If Telegram delivery fails the states are not advanced, so the
 same transitions fire again on the next run (at-least-once) instead of being
-swallowed by the de-duplication.
+swallowed by the de-duplication. Messages are HTML-escaped and chunked under
+Telegram's 4096-character limit so one odd symbol or a mass-escalation event
+can't wedge the batch. A failing run (DB outage, dump failure) sends a
+best-effort "monitor degraded" notice, rate-limited to one per six hours per
+warm instance, so a dead monitor is distinguishable from a quiet one.
+
+A Slack transport is a potential follow-up alongside the Telegram bot setup;
+`sendTelegramMessage` in `alerts.ts` is the seam to generalise.

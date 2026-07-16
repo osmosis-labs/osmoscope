@@ -9,17 +9,15 @@
 // here so downstream code only sees real limits.
 import { logger } from "../logger";
 import { LCD_BASE_URL } from "../osmosis-lcd";
+import {
+  RATE_LIMITER_CONTRACT,
+  RATE_LIMIT_LCD_FALLBACKS,
+} from "@/config/rate-limits";
 
-export const RATE_LIMITER_CONTRACT =
-  "osmo17r7qdw2zk6jyw62cvwm6flmhtj9q7zd26r8zc6sqyf0pnaq46cfss8hgxg";
+export { RATE_LIMITER_CONTRACT };
 
-// Primary first. The dump is a handful of plain REST pages (not CosmWasm smart
-// queries), so public fallbacks hold up fine when the primary throttles.
-const LCD_ENDPOINTS = [
-  LCD_BASE_URL,
-  "https://osmosis-rest.publicnode.com",
-  "https://rest.cosmos.directory/osmosis",
-];
+// Primary first, then the config-listed public fallbacks.
+const LCD_ENDPOINTS = [LCD_BASE_URL, ...RATE_LIMIT_LCD_FALLBACKS];
 
 // Generated frontend assetlist, used only to label denoms with human-readable
 // symbols in alerts. A fetch failure degrades to truncated denoms, never to a
@@ -87,7 +85,9 @@ function decodeFlowKey(
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, {
     headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(30_000),
+    // Short enough that a slow-but-alive endpoint can't burn the cron's whole
+    // time budget across ~8 pages before the failover chain gets its turn.
+    signal: AbortSignal.timeout(12_000),
   });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText} for ${url}`);
@@ -118,6 +118,15 @@ async function dumpStateFrom(endpoint: string): Promise<RateLimitPath[]> {
     nextKey = data.pagination?.next_key ?? null;
     if (!nextKey) break;
   }
+  // A surviving next_key means the page cap cut the dump short. Returning it
+  // would violate the "a partial dump is never returned" contract below —
+  // downstream, missing paths read as recovered limits and trigger false
+  // all-clear alerts — so refuse instead.
+  if (nextKey) {
+    throw new Error(
+      "rate-limiter state dump exceeded the page cap; refusing a truncated dump"
+    );
+  }
   return paths;
 }
 
@@ -142,45 +151,44 @@ export async function fetchRateLimitPaths(): Promise<{
   );
 }
 
-// Best-effort denom -> symbol map for readable alerts.
-export async function fetchSymbolMap(): Promise<Map<string, string>> {
-  try {
-    const data = await fetchJson<{
-      assets: Array<{ coinMinimalDenom?: string; symbol?: string }>;
-    }>(ASSETLIST_URL);
-    const map = new Map<string, string>();
-    for (const asset of data.assets ?? []) {
-      if (asset.coinMinimalDenom && asset.symbol) {
-        map.set(asset.coinMinimalDenom, asset.symbol);
-      }
-    }
-    return map;
-  } catch (error) {
-    logger.warn("Assetlist fetch failed; alerts will show raw denoms:", error);
-    return new Map();
-  }
-}
-
-// Best-effort denom -> logo URI map (SVG preferred) for the dashboard card.
-// Display metadata only — deliberately not part of the stored snapshot payload.
-export async function fetchLogoMap(): Promise<Map<string, string>> {
+// Both assetlist projections from ONE fetch: denom -> symbol (readable
+// alerts) and denom -> logo URI, SVG preferred (dashboard card decoration).
+// Best-effort: a fetch failure degrades to empty maps (raw denoms / no logos),
+// never a hard error. Display metadata only — deliberately not part of the
+// stored snapshot payload.
+export async function fetchAssetMaps(): Promise<{
+  symbols: Map<string, string>;
+  logos: Map<string, string>;
+}> {
+  const symbols = new Map<string, string>();
+  const logos = new Map<string, string>();
   try {
     const data = await fetchJson<{
       assets: Array<{
         coinMinimalDenom?: string;
+        symbol?: string;
         logoURIs?: { svg?: string; png?: string };
       }>;
     }>(ASSETLIST_URL);
-    const map = new Map<string, string>();
     for (const asset of data.assets ?? []) {
+      if (!asset.coinMinimalDenom) continue;
+      if (asset.symbol) symbols.set(asset.coinMinimalDenom, asset.symbol);
       const logo = asset.logoURIs?.svg ?? asset.logoURIs?.png;
-      if (asset.coinMinimalDenom && logo) {
-        map.set(asset.coinMinimalDenom, logo);
-      }
+      if (logo) logos.set(asset.coinMinimalDenom, logo);
     }
-    return map;
   } catch (error) {
-    logger.warn("Assetlist logo fetch failed; card shows symbols only:", error);
-    return new Map();
+    logger.warn(
+      "Assetlist fetch failed; alerts show raw denoms, card shows no logos:",
+      error
+    );
   }
+  return { symbols, logos };
+}
+
+// Back-compat single-projection wrappers.
+export async function fetchSymbolMap(): Promise<Map<string, string>> {
+  return (await fetchAssetMaps()).symbols;
+}
+export async function fetchLogoMap(): Promise<Map<string, string>> {
+  return (await fetchAssetMaps()).logos;
 }
