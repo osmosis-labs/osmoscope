@@ -118,7 +118,13 @@ model ValidatorSnapshot {
   operatorAddress String @id
 
   // Governance participation: votes in the last 10 proposals (SmartStake import).
+  // Fallback display only, superseded by the self-computed fields below.
   govVotesLast10 Int?
+  // Self-computed participation: proposals voted on out of those whose voting
+  // ENDED in the last 90 days (govRecentWindow = size of that proposal set).
+  // Refreshed daily by the cron from the accumulated ValidatorVote sets.
+  govVotedRecent  Int?
+  govRecentWindow Int?
 
   // Slashing history.
   timesSlashed      Int?
@@ -215,4 +221,22 @@ model UnbondingForecast {
   updatedAt  DateTime @updatedAt @db.Timestamptz(6)
 
   @@map("unbonding_forecast")
+}
+
+// One row per (validator, proposal) vote observed onchain, accumulated over time:
+// the daily cron queries each validator's voting account BY VOTER on a fresh full
+// node (small result sets, so tx pagination never truncates) and unions new
+// proposal ids in; scripts/backfill-validator-votes.ts seeds history once from the
+// archive LCD (whose tx index lags weeks behind, so it is never re-read after
+// that). The governance-participation score is computed by intersecting a
+// validator's accumulated set with the proposals decided in the last 90 days.
+// Insert-only (votes are facts; a re-vote changes the option, not participation).
+model ValidatorVote {
+  operatorAddress String
+  proposalId      Int
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([operatorAddress, proposalId])
+  @@map("validator_votes")
 }
