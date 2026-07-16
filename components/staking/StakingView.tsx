@@ -687,13 +687,25 @@ export function StakingView() {
       .map((v) => v.longRunUptime)
       .filter((u): u is number => u != null)
   );
-  // Governance colour: hard red at 0 (voted on none of the last 10), amber for low
+  // Governance metric: the self-computed last-90-day participation (proposals
+  // voted on out of those decided in the window, indexed daily from onchain
+  // votes) once the index has run; SmartStake's static last-10 import as the
+  // fallback before that. A null value in self-computed mode means the
+  // validator's voting account is unidentified (see config/gov-voter-overrides),
+  // shown as "—" rather than a wrong 0.
+  const hasSelfGov = allValidators.some((v) => v.govRecentWindow != null);
+  const govWindowN = hasSelfGov
+    ? Math.max(...allValidators.map((v) => v.govRecentWindow ?? 0))
+    : 10;
+  const govValue = (v: ValidatorInfo): number | null =>
+    hasSelfGov ? v.govVotedRecent : v.govVotesLast10;
+  // Governance colour: hard red at 0 (voted on none of the window), amber for low
   // participation, neutral above. No green top-quartile (unlike uptime) — only low
   // participation is flagged. The amber cutoff is the STRICTER of: the bottom-quartile
-  // vote count across the set, OR 25% of the sample max (e.g. 2.5 of 10) — i.e. the
+  // vote count across the set, OR 25% of the sample max — i.e. the
   // HIGHER of the two, so a validator must clear both bars to avoid amber.
   const govVotes = allValidators
-    .map((v) => v.govVotesLast10)
+    .map(govValue)
     .filter((n): n is number => n != null)
     .sort((a, b) => a - b);
   const govBottomQuartile =
@@ -816,13 +828,18 @@ export function StakingView() {
     {
       key: "governance",
       label: "Governance Participation",
-      subLabel: "last 10 proposals",
-      info: "Number of the last 10 governance proposals the validator voted on.",
+      subLabel: hasSelfGov
+        ? `of ${govWindowN} proposals (90 days)`
+        : "last 10 proposals",
+      info: hasSelfGov
+        ? `Number of the ${govWindowN} governance proposals decided in the last 90 days the validator voted on, counted from its onchain votes. A dash means the validator's voting account isn't identifiable onchain.`
+        : "Number of the last 10 governance proposals the validator voted on.",
       align: "right",
-      // Votes in the last 10 proposals, from the SmartStake import (govVotesLast10).
+      // Self-computed 90-day participation (govVotedRecent) once indexed;
+      // SmartStake's last-10 import (govVotesLast10) as the fallback.
       render: (v) => (
-        <span className={govColorClass(v.govVotesLast10)}>
-          {v.govVotesLast10 == null ? "—" : v.govVotesLast10}
+        <span className={govColorClass(govValue(v))}>
+          {govValue(v) == null ? "—" : govValue(v)}
         </span>
       ),
     },
@@ -1104,6 +1121,8 @@ export function StakingView() {
                     uptimePct:
                       v.uptime == null ? null : +(v.uptime * 100).toFixed(4),
                     longRunUptimePct: v.longRunUptime ?? null,
+                    govVotedRecent: v.govVotedRecent ?? null,
+                    govRecentWindow: v.govRecentWindow ?? null,
                     govVotesLast10: v.govVotesLast10 ?? null,
                     timesSlashed: v.timesSlashed ?? null,
                     latestSlashedTime: v.latestSlashedTime ?? null,
@@ -1188,7 +1207,9 @@ export function StakingView() {
                               ? { display: "inline-block", width: "5.5rem" }
                               : c.key === "governance"
                                 ? { display: "inline-block", width: "7.5rem" }
-                                : undefined
+                                : c.key === "longRunUptime"
+                                  ? { display: "inline-block", width: "6rem" }
+                                  : undefined
                           }
                         >
                           {c.label}

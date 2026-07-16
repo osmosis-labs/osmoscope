@@ -22,6 +22,7 @@ import {
   giniCoefficient,
   fetchUnbondingSchedule,
   indexValidatorDaily,
+  indexGovParticipation,
 } from "./validators";
 import { saveSnapshot, getHistory, backfillRevenue } from "./historical-file";
 import { fetchDailyRevenue } from "./revenue";
@@ -266,9 +267,11 @@ export async function buildAndSaveSnapshot(
       // Self-index per-validator daily uptime + slash-event detection (feeds the
       // leaderboard's long-run uptime + slash columns going forward). Non-fatal.
       await indexValidatorDaily(validators);
-      // Governance participation is not self-indexed: votes can't be mapped to
-      // validators without a curated operator→voter-account map (no onchain link
-      // exists). The leaderboard uses the SmartStake govVotesLast10 import.
+      // Self-index governance participation: accumulate each validator's votes
+      // (by-voter tx queries against the recent-index node) and score the
+      // last-90-day window. Non-fatal; per-validator failures self-heal on the
+      // next run.
+      await indexGovParticipation(validators);
     }
     // pendingUndelegations on HistoricalRecord is the OUTSTANDING POOL total (a
     // stock). The per-day COMPLETING amounts (a flow) live in UndelegationDay,

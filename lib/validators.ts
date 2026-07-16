@@ -25,7 +25,9 @@ export interface ValidatorInfo {
   // Snapshot metrics from the ValidatorSnapshot table (SmartStake import), joined
   // by operator address. Null when no snapshot row exists. These are point-in-time
   // (see snapshotAsOf), not live.
-  govVotesLast10: number | null; // votes in the last 10 proposals (0-10) — SmartStake import
+  govVotesLast10: number | null; // votes in the last 10 proposals (0-10) — SmartStake import, fallback
+  govVotedRecent: number | null; // proposals voted on out of the last-90-day set (self-computed)
+  govRecentWindow: number | null; // size of that 90-day proposal set (the denominator)
   timesSlashed: number | null;
   latestSlashedTime: string | null; // ISO time of the most recent slash, or null
   longRunUptime: number | null; // long-run signing uptime % (0-100)
@@ -101,6 +103,8 @@ export async function fetchBondedValidators(): Promise<ValidatorInfo[]> {
         votingPowerShare: 0, // set below
         uptime: null, // set by enrichWithUptime
         govVotesLast10: null, // set by enrichWithSnapshot
+        govVotedRecent: null,
+        govRecentWindow: null,
         timesSlashed: null,
         latestSlashedTime: null,
         longRunUptime: null,
@@ -145,6 +149,22 @@ function consensusAddressFromPubkey(pubkeyBase64: string): string {
   const raw = Buffer.from(pubkeyBase64, "base64");
   const hash = createHash("sha256").update(raw).digest().subarray(0, 20);
   return bech32.encode("osmovalcons", bech32.toWords(hash));
+}
+
+// A validator's account address (osmo1…) from its operator address
+// (osmovaloper1…). They share the same underlying 20-byte key — only the bech32
+// prefix differs — so re-encoding the operator's data words with the "osmo"
+// prefix yields the account most validators cast governance votes from
+// (verified: 64/70 bonded validators have onchain votes from this account; see
+// config/gov-voter-overrides.ts for the exceptions). Returns null if the
+// operator address can't be decoded.
+export function accountAddressFromOperator(operator: string): string | null {
+  try {
+    const { words } = bech32.decode(operator);
+    return bech32.encode("osmo", words);
+  } catch {
+    return null;
+  }
 }
 
 interface SigningInfo {
@@ -341,6 +361,94 @@ export async function indexValidatorDaily(
   }
 }
 
+// Self-index validator governance participation (called once a day by the
+// snapshot cron):
+//   1. ACCUMULATE: query each validator's voting account BY VOTER on the
+//      recent-index full node and union any new proposal ids into ValidatorVote
+//      (insert-only; scripts/backfill-validator-votes.ts seeded history from the
+//      archive once). Per-validator failures are non-fatal and self-healing —
+//      the next run re-queries the same full recent window.
+//   2. SCORE: govVotedRecent = |accumulated set ∩ proposals decided in the last
+//      90 days|, govRecentWindow = window size; upserted on ValidatorSnapshot.
+// The voting account is the operator-derived account (osmo1… with the same key)
+// unless config/gov-voter-overrides.ts says otherwise; a null override means the
+// voter is known to differ but unidentified, so the score is cleared to null
+// rather than shown as a wrong 0. DB-optional and non-fatal.
+export async function indexGovParticipation(
+  validators: ValidatorInfo[]
+): Promise<void> {
+  try {
+    const { prisma, isDatabaseEnabled } = await import("./database");
+    if (!isDatabaseEnabled()) return;
+    const { fetchRecentlyEndedProposals, fetchVoterProposalIds, RECENT_LCD } =
+      await import("./governance");
+    const { GOV_VOTER_OVERRIDES } = await import(
+      "../config/gov-voter-overrides"
+    );
+
+    const windowIds = new Set(await fetchRecentlyEndedProposals(Date.now()));
+    // Nothing decided in the window — leave prior values untouched.
+    if (windowIds.size === 0) return;
+
+    // 1. Accumulate new votes, a few validators at a time (the recent-index
+    //    node tolerates light concurrency; failures just defer to tomorrow).
+    await mapLimit(validators, 3, async (v) => {
+      const override = GOV_VOTER_OVERRIDES[v.operatorAddress];
+      if (override === null) return; // known-unknown voter: nothing to query
+      const account = override ?? accountAddressFromOperator(v.operatorAddress);
+      if (!account) return;
+      try {
+        const ids = await fetchVoterProposalIds(account, RECENT_LCD);
+        if (ids.size > 0) {
+          await prisma.validatorVote.createMany({
+            data: [...ids].map((proposalId) => ({
+              operatorAddress: v.operatorAddress,
+              proposalId,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      } catch (e) {
+        logger.warn(
+          `Gov vote fetch failed for ${v.moniker}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    });
+
+    // 2. Score every validator from the accumulated sets.
+    const votes = await prisma.validatorVote.findMany({
+      select: { operatorAddress: true, proposalId: true },
+    });
+    const votedByOp = new Map<string, Set<number>>();
+    for (const r of votes) {
+      const set = votedByOp.get(r.operatorAddress) ?? new Set<number>();
+      set.add(r.proposalId);
+      votedByOp.set(r.operatorAddress, set);
+    }
+    for (const v of validators) {
+      const override = GOV_VOTER_OVERRIDES[v.operatorAddress];
+      const unknownVoter = override === null;
+      const set = votedByOp.get(v.operatorAddress);
+      const voted = unknownVoter
+        ? null
+        : [...windowIds].filter((id) => set?.has(id)).length;
+      const data = {
+        govVotedRecent: voted,
+        govRecentWindow: unknownVoter ? null : windowIds.size,
+      };
+      await prisma.validatorSnapshot.upsert({
+        where: { operatorAddress: v.operatorAddress },
+        create: { operatorAddress: v.operatorAddress, ...data },
+        update: data,
+      });
+    }
+  } catch (error) {
+    logger.warn(
+      `Gov participation indexing skipped: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 // Join the ValidatorSnapshot table (imported from SmartStake's Validators.csv)
 // onto the live set by operator address, filling govVotesLast10 / timesSlashed /
 // longRunUptime. Returns the snapshot's "as of" time (max updatedAt) so the UI can
@@ -378,8 +486,13 @@ async function enrichWithSnapshot(
     let asOf: Date | null = null;
     for (const v of validators) {
       const s = byOp.get(v.operatorAddress);
-      // Governance: votes in the last 10 proposals, from the SmartStake import.
+      // Governance: the self-computed last-90-day participation (indexed daily by
+      // indexGovParticipation) is the primary metric; the SmartStake
+      // govVotesLast10 import remains as a fallback for display before the first
+      // index run.
       v.govVotesLast10 = s?.govVotesLast10 ?? null;
+      v.govVotedRecent = s?.govVotedRecent ?? null;
+      v.govRecentWindow = s?.govRecentWindow ?? null;
       // Slash count: prefer the SmartStake historical count as a baseline plus any
       // cron-detected events since; when no import exists, use the cron count alone.
       const importCount = s?.timesSlashed ?? null;
