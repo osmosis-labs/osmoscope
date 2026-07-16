@@ -30,6 +30,20 @@ export async function saveRateLimitSnapshot(
   );
   const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000);
 
+  // The per-denom raw flow readings (the queryable series), one row per
+  // window: same hour-dedupe as the blob so the two stay in lockstep.
+  const readings = data.paths.flatMap((p) =>
+    p.windows.map((w) => ({
+      timestamp: ts,
+      channel: p.channel,
+      denom: p.denom,
+      durationSeconds: w.durationSeconds,
+      channelValue: w.channelValue,
+      inflow: w.inflow,
+      outflow: w.outflow,
+    }))
+  );
+
   await prisma.$transaction([
     prisma.rateLimitSnapshot.deleteMany({
       where: { timestamp: { gte: hourStart, lt: hourEnd } },
@@ -42,8 +56,14 @@ export async function saveRateLimitSnapshot(
         data: data as unknown as Prisma.InputJsonValue,
       },
     }),
+    prisma.rateLimitReading.deleteMany({
+      where: { timestamp: { gte: hourStart, lt: hourEnd } },
+    }),
+    prisma.rateLimitReading.createMany({ data: readings }),
   ]);
-  logger.info(`Saved rate-limit snapshot: ${data.timestamp}`);
+  logger.info(
+    `Saved rate-limit snapshot: ${data.timestamp} (${readings.length} readings)`
+  );
 }
 
 export async function loadAlertStates(): Promise<

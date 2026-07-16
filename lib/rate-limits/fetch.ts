@@ -160,3 +160,27 @@ export async function fetchSymbolMap(): Promise<Map<string, string>> {
     return new Map();
   }
 }
+
+// Best-effort denom -> logo URI map (SVG preferred) for the dashboard card.
+// Display metadata only — deliberately not part of the stored snapshot payload.
+export async function fetchLogoMap(): Promise<Map<string, string>> {
+  try {
+    const data = await fetchJson<{
+      assets: Array<{
+        coinMinimalDenom?: string;
+        logoURIs?: { svg?: string; png?: string };
+      }>;
+    }>(ASSETLIST_URL);
+    const map = new Map<string, string>();
+    for (const asset of data.assets ?? []) {
+      const logo = asset.logoURIs?.svg ?? asset.logoURIs?.png;
+      if (asset.coinMinimalDenom && logo) {
+        map.set(asset.coinMinimalDenom, logo);
+      }
+    }
+    return map;
+  } catch (error) {
+    logger.warn("Assetlist logo fetch failed; card shows symbols only:", error);
+    return new Map();
+  }
+}

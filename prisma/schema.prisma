@@ -277,3 +277,29 @@ model RateLimitAlertState {
 
   @@map("rate_limit_alert_states")
 }
+
+// Per-denom raw flow readings, one row per (window, hour): the queryable flow
+// series for per-asset analysis and the quarterly limit review, without
+// stitching JSON blobs. Deliberately minimal — channelValue, inflow and
+// outflow are the contract's raw counters (base units); net movement, net %
+// and utilization are all derivable, and the caps needed for utilization can
+// be joined from the same-hour RateLimitSnapshot blob (cap changes are rare
+// governance events). durationSeconds identifies the quota window (86400 day,
+// 604800 week); a window reset shows as the counters dropping between
+// consecutive readings. channel is "any" on every live limit but stays in the
+// key so a channel-scoped limit can never collide.
+model RateLimitReading {
+  timestamp       DateTime @db.Timestamptz(6)
+  channel         String
+  denom           String
+  durationSeconds Int
+
+  // Uint256 strings from the contract; Decimal(78,0) holds the full range.
+  channelValue Decimal? @db.Decimal(78, 0)
+  inflow       Decimal  @db.Decimal(78, 0)
+  outflow      Decimal  @db.Decimal(78, 0)
+
+  @@id([timestamp, channel, denom, durationSeconds])
+  @@index([denom, timestamp(sort: Asc)])
+  @@map("rate_limit_readings")
+}

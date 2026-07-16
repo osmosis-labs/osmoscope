@@ -34,6 +34,7 @@ import { ChartHeader } from "../charts/ChartHeader";
 import { ScreenshotButtons } from "../ScreenshotButtons";
 import { InfoTooltip } from "../ui/InfoTooltip";
 import { StakingRatioChart } from "../charts/StakingRatioChart";
+import { RateLimitsCard } from "./RateLimitsCard";
 import {
   NETWORK_EVENTS,
   EVENT_COLOR,
@@ -1807,6 +1808,9 @@ export function StakingView() {
         events={NETWORK_EVENTS}
         defaultRange="90d"
       />
+
+      {/* IBC rate-limit utilization (15-minute monitor snapshots). */}
+      <RateLimitsCard />
 
       {/* Footer: data sources + snapshot disclaimer (mirrors the Tokenomics
           footer). Validator set / voting power / uptime / undelegations are live
