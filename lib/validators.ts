@@ -8,6 +8,7 @@ import { cachedFetch, LCD_BASE_URL, uosmoToOsmo } from "./osmosis-lcd";
 import { logger } from "./logger";
 import { bech32 } from "bech32";
 import { createHash } from "crypto";
+import { REST_FALLBACK_ENDPOINTS } from "@/config/lcd-endpoints";
 
 // One bonded validator, normalized. `tokens` is bonded OSMO (display units).
 export interface ValidatorInfo {
@@ -388,9 +389,8 @@ export async function indexGovParticipation(
     if (!isDatabaseEnabled()) return;
     const {
       fetchRecentlyEndedProposals,
-      fetchVoterProposalIds,
-      RECENT_LCD,
-      ARCHIVE_LCD,
+      fetchVoterProposalIdsRecent,
+      fetchVoterProposalIdsFullDepth,
     } = await import("./governance");
     const { GOV_VOTER_OVERRIDES } = await import(
       "../config/gov-voter-overrides"
@@ -404,9 +404,9 @@ export async function indexGovParticipation(
 
     // Which operators already have accumulated votes. A never-seeded operator
     // (newly bonded validator, or a null override whose voter account was just
-    // identified) must be seeded from BOTH sources: the recent node's tx index
-    // only reaches ~60 days back, inside the 90-day window, so recent-only
-    // first-seeding would score a confident wrong-low number.
+    // identified) must be seeded at FULL depth — the recent indexes don't reach
+    // the whole 90-day window, so recent-only first-seeding would score a
+    // confident wrong-low number.
     const seeded = new Set(
       (
         await prisma.validatorVote.groupBy({
@@ -418,22 +418,18 @@ export async function indexGovParticipation(
     // 1. Accumulate new votes, a few validators at a time (the nodes tolerate
     //    light concurrency; failures just defer to tomorrow — for a first-seed
     //    validator a PARTIAL union isn't persisted as "seeded" wrongly, because
-    //    a source failure throws before any insert for that validator).
+    //    a required-source failure throws before any insert for that validator).
+    //    Seeded validators use the own-node-first failover chain; first seeds
+    //    union all index sources (see lib/governance.ts for the depth policy).
     await mapLimit(validators, 3, async (v) => {
       const override = GOV_VOTER_OVERRIDES[v.operatorAddress];
       if (override === null) return; // known-unknown voter: nothing to query
       const account = override ?? accountAddressFromOperator(v.operatorAddress);
       if (!account) return;
       try {
-        const sources = seeded.has(v.operatorAddress)
-          ? [RECENT_LCD]
-          : [ARCHIVE_LCD, RECENT_LCD];
-        const ids = new Set<number>();
-        for (const source of sources) {
-          for (const id of await fetchVoterProposalIds(account, source)) {
-            ids.add(id);
-          }
-        }
+        const ids = seeded.has(v.operatorAddress)
+          ? await fetchVoterProposalIdsRecent(account)
+          : await fetchVoterProposalIdsFullDepth(account);
         if (ids.size > 0) {
           await prisma.validatorVote.createMany({
             data: [...ids].map((proposalId) => ({
@@ -767,10 +763,24 @@ export async function fetchUnbondingSchedule(): Promise<UnbondingSchedule> {
       for (let page = 0; page < 10; page++) {
         const p = new URLSearchParams({ "pagination.limit": "1000" });
         if (pageKey) p.set("pagination.key", pageKey);
-        const data: UnbondingResponse = await cachedFetch(
-          `${LCD_BASE_URL}/cosmos/staking/v1beta1/validators/${v.operatorAddress}/unbonding_delegations?${p.toString()}`,
-          false // short cache: unbonding changes continuously
-        );
+        // Own node first, public fallbacks after: this fan-out has tripped the
+        // persist gate on primary 403s, and a whole day's undelegation series
+        // shouldn't hinge on one endpoint's rate limiter (the gate still
+        // catches the all-endpoints-down case).
+        let data: UnbondingResponse | null = null;
+        let lastError: unknown = null;
+        for (const base of REST_FALLBACK_ENDPOINTS) {
+          try {
+            data = (await cachedFetch(
+              `${base}/cosmos/staking/v1beta1/validators/${v.operatorAddress}/unbonding_delegations?${p.toString()}`,
+              false // short cache: unbonding changes continuously
+            )) as UnbondingResponse;
+            break;
+          } catch (e) {
+            lastError = e;
+          }
+        }
+        if (data == null) throw lastError ?? new Error("no endpoints");
         for (const r of data.unbonding_responses ?? []) {
           for (const e of r.entries ?? []) {
             const day = e.completion_time.slice(0, 10);

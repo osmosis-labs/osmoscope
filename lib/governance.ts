@@ -9,30 +9,33 @@
 // through authz/REStake wrappers, so wrapped votes are found too; proposal ids
 // are then read from the events whose voter attribute matches the account.
 //
-// Two sources with different index coverage:
-//   - the ARCHIVE LCD retains pruned history but its tx index lags weeks behind
-//     (currently stops around prop ~1018) — read by the backfill script and by
-//     the cron's first-seed path for newly appeared voters;
-//   - a fresh full node (default polkachu) indexes the recent window — its
-//     index FLOOR is ~60 days back, INSIDE the 90-day scoring window, which is
-//     why an already-seeded validator can accumulate from it alone but a
-//     never-seeded one cannot.
-// INVARIANT the two-source union depends on: archive index tip >= recent index
-// floor (verified 2026-07: archive reaches ~prop 1018, polkachu back to ~1016).
-// If the archive ever lags past the recent floor, a coverage gap opens between
-// them for first-seeds.
+// Endpoint policy (config/lcd-endpoints.ts): our own nodes first, third-party
+// only as failover or where our coverage genuinely falls short. Three tx-index
+// sources with different depth (all verified 2026-07):
+//   - the ARCHIVE LCD retains pruned history but its index lags weeks behind
+//     the tip (~prop 1018 era);
+//   - lcd.osmosis.zone's index works but is SHALLOW (roughly two weeks;
+//     props 1022+) — plenty for the daily incremental accumulate, never
+//     enough for a first seed;
+//   - the deep third-party index (polkachu) bridges the archive-to-primary
+//     gap (props 1019+).
+// Daily accumulates use own-first FAILOVER (third party only when the primary
+// errors); first seeds UNION the sources, and the archive + deep source must
+// both succeed or the seed throws — a failover there would silently miss the
+// bridge range.
 //
 // Metric: of the proposals whose voting ENDED in the last 90 days, how many did
 // the validator vote on. Age-neutral (fixed proposal set for everyone).
 import { LCD_BASE_URL, fetchWithRetry } from "./osmosis-lcd";
+import { logger } from "./logger";
+import {
+  ARCHIVE_LCD,
+  DEEP_TX_INDEX_LCD,
+  LCD_PRIMARY,
+  TX_INDEX_ENDPOINTS,
+} from "@/config/lcd-endpoints";
 
-// Archive LCD (pruned-history tx index; lags weeks behind the chain tip).
-export const ARCHIVE_LCD =
-  process.env.ARCHIVE_LCD_BASE_URL || "https://lcd.archive.osmosis.zone";
-// Fresh full node whose tx index covers the recent window the archive lacks.
-// lcd.osmosis.zone is not used here: it 403s under fan-out load.
-export const RECENT_LCD =
-  process.env.GOV_RECENT_LCD_BASE_URL || "https://osmosis-api.polkachu.com";
+export { ARCHIVE_LCD };
 
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -166,4 +169,51 @@ export async function fetchVoterProposalIds(
     }
   }
   throw new Error(`voter ${account}: >1000 vote txs, refusing to truncate`);
+}
+
+// Recent votes for an already-seeded voter: only days of depth needed, so this
+// is own-node first with the deep third-party index as FAILOVER — in steady
+// state the fallback never fires. Throws only when every endpoint fails.
+export async function fetchVoterProposalIdsRecent(
+  account: string
+): Promise<Set<number>> {
+  let lastError: unknown = null;
+  for (const endpoint of TX_INDEX_ENDPOINTS) {
+    try {
+      return await fetchVoterProposalIds(account, endpoint);
+    } catch (e) {
+      lastError = e;
+      logger.warn(
+        `Recent vote fetch failed on ${endpoint} for ${account}; trying next: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+  throw lastError ?? new Error("no tx-index endpoints configured");
+}
+
+// FULL-depth votes for a first seed (new validator, override change, or the
+// backfill script): union across all three index sources. The archive (old
+// history) and the deep index (the archive-to-primary bridge, currently props
+// 1019-1021) are REQUIRED — failing either would silently under-seed, which is
+// worse than deferring the seed to the next run — while the shallow primary is
+// redundancy on the newest slice and may fail with only a warning.
+export async function fetchVoterProposalIdsFullDepth(
+  account: string
+): Promise<Set<number>> {
+  const ids = new Set<number>();
+  for (const source of [ARCHIVE_LCD, DEEP_TX_INDEX_LCD]) {
+    for (const id of await fetchVoterProposalIds(account, source)) {
+      ids.add(id);
+    }
+  }
+  try {
+    for (const id of await fetchVoterProposalIds(account, LCD_PRIMARY)) {
+      ids.add(id);
+    }
+  } catch (e) {
+    logger.warn(
+      `Primary tx-index skipped in full-depth fetch for ${account}: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+  return ids;
 }
