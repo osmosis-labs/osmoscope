@@ -96,6 +96,9 @@ export function InfoTooltip({
     // Escape closes it.
     <span
       className="relative inline-flex shrink-0"
+      // Interactive-only explainer: dropped from screenshot exports (a `?`
+      // trigger reads oddly as a static image, and its popover never shows).
+      data-screenshot-hide
       onMouseEnter={() => {
         setDismissed(false);
         setHovered(true);
