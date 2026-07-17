@@ -1,10 +1,8 @@
 #!/usr/bin/env tsx
 // One-time seed of the ValidatorVote table: for every bonded validator, fetch
-// every proposal id its voting account has EVER voted on, from BOTH tx-index
-// sources (the archive LCD, whose index retains pruned history but lags weeks
-// behind the tip, and the recent-index full node that covers what the archive
-// lacks), and insert the union. The daily cron only queries the recent source
-// going forward, so this is the one place the archive is read.
+// every proposal id its voting account has EVER voted on at FULL depth (the
+// archive + deep + primary tx-index union in lib/governance.ts) and insert.
+// The daily cron only needs the recent chain going forward.
 //
 // Paced for the archive's rate limiting (sequential, delay between validators,
 // backoff on 429). Idempotent (insert-only with skipDuplicates); dry-run by
@@ -14,11 +12,7 @@ import {
   fetchBondedValidators,
   accountAddressFromOperator,
 } from "../lib/validators";
-import {
-  fetchVoterProposalIds,
-  ARCHIVE_LCD,
-  RECENT_LCD,
-} from "../lib/governance";
+import { fetchVoterProposalIdsFullDepth } from "../lib/governance";
 import { GOV_VOTER_OVERRIDES } from "../config/gov-voter-overrides";
 
 const APPLY = process.env.APPLY === "1";
@@ -73,20 +67,11 @@ async function main() {
       continue;
     }
     try {
-      // Sequential on purpose (archive pacing), so written as two statements
-      // rather than a Promise.all-looking destructure.
-      const archiveIds = await withRetries(
-        () => fetchVoterProposalIds(account, ARCHIVE_LCD),
-        `${v.moniker} (archive)`
+      const union = await withRetries(
+        () => fetchVoterProposalIdsFullDepth(account),
+        v.moniker
       );
-      const recentIds = await withRetries(
-        () => fetchVoterProposalIds(account, RECENT_LCD),
-        `${v.moniker} (recent)`
-      );
-      const union = new Set([...archiveIds, ...recentIds]);
-      console.log(
-        `  ${v.moniker}: archive ${archiveIds.size} + recent ${recentIds.size} → ${union.size} proposals`
-      );
+      console.log(`  ${v.moniker}: ${union.size} proposals (full depth)`);
       totalRows += union.size;
       if (APPLY && union.size > 0) {
         await prisma.validatorVote.createMany({
