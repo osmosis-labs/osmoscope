@@ -199,6 +199,35 @@ export async function getUnbondingForecast(): Promise<{
   return { data: row.data, computedAt: row.computedAt.toISOString() };
 }
 
+// Fill TODAY's HistoricalRecord.pendingUndelegations (the outstanding-pool
+// stock) when the epoch-gated snapshot left it unset — i.e. when its unbonding
+// fan-out failed and the persist gate skipped the field. Only touches a row
+// from today (UTC) whose value is null: never patches history retroactively
+// and never overwrites a figure the gated build persisted. Returns whether a
+// row was filled.
+export async function fillPendingUndelegationsToday(
+  value: number
+): Promise<boolean> {
+  if (!isDatabaseEnabled()) return false;
+  const latest = await prisma.historicalRecord.findFirst({
+    orderBy: { timestamp: "desc" },
+    select: { id: true, timestamp: true, pendingUndelegations: true },
+  });
+  if (!latest || latest.pendingUndelegations != null) return false;
+  const now = new Date();
+  const t = latest.timestamp;
+  const isToday =
+    t.getUTCFullYear() === now.getUTCFullYear() &&
+    t.getUTCMonth() === now.getUTCMonth() &&
+    t.getUTCDate() === now.getUTCDate();
+  if (!isToday) return false;
+  await prisma.historicalRecord.update({
+    where: { id: latest.id },
+    data: { pendingUndelegations: value },
+  });
+  return true;
+}
+
 // Read the full per-completion-day unbonding series (ascending). Powers the
 // History view of the Pending Undelegations chart. Returns [] when no DB.
 export async function getUndelegationDays(): Promise<

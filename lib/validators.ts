@@ -730,96 +730,130 @@ export interface UnbondingSchedule {
   // The largest individual unbonding entries (amount desc), capped so the
   // payload stays bounded. Powers the Top Undelegations table.
   topEntries: UnbondingEntry[];
-  // How many validators' unbonding queries FAILED this run. When > 0 the total
-  // and days are an undercount: fine to display live (better than nothing), but
-  // the snapshot cron refuses to PERSIST such a run into the historical series.
+  // How many validators' unbonding queries FAILED this run (after the retry
+  // pass). When > 0 the total and days are an undercount: fine to display live
+  // (better than nothing), but the snapshot cron refuses to PERSIST such a run
+  // into the historical series.
   fetchFailures: number;
+  // First few failure messages, surfaced through the cron response so a
+  // persistently-failing prod fan-out can be diagnosed without function logs.
+  failureSamples: string[];
 }
 
 // How many of the largest individual entries to return for the table.
 const TOP_UNBONDING_ENTRIES = 50;
 
+// One validator's complete unbonding entry list, following pagination. Throws
+// on any failure — including the pagination cap — and accumulates into a LOCAL
+// array merged only by the caller on full success, so a retried validator can
+// never double-count the pages that landed before a mid-pagination failure.
+async function fetchValidatorUnbondingEntries(
+  v: ValidatorInfo,
+  monikerByOperator: Map<string, string>
+): Promise<UnbondingEntry[]> {
+  const collected: UnbondingEntry[] = [];
+  // Follow pagination: a validator with >1000 concurrent unbonding delegators
+  // (a mass-unbond event — exactly when this chart matters) would otherwise be
+  // silently truncated. The page cap bounds a misbehaving endpoint; hitting it
+  // throws so the run counts as incomplete rather than baking a truncated
+  // figure into the series.
+  let pageKey: string | null = null;
+  for (let page = 0; page < 10; page++) {
+    const p = new URLSearchParams({ "pagination.limit": "1000" });
+    if (pageKey) p.set("pagination.key", pageKey);
+    // Own node first, public fallbacks after: this fan-out has tripped the
+    // persist gate on primary 403s, and a whole day's undelegation series
+    // shouldn't hinge on one endpoint's rate limiter (the gate still
+    // catches the all-endpoints-down case).
+    let data: UnbondingResponse | null = null;
+    let lastError: unknown = null;
+    for (const base of REST_FALLBACK_ENDPOINTS) {
+      try {
+        data = (await cachedFetch(
+          `${base}/cosmos/staking/v1beta1/validators/${v.operatorAddress}/unbonding_delegations?${p.toString()}`,
+          false // short cache: unbonding changes continuously
+        )) as UnbondingResponse;
+        break;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (data == null) throw lastError ?? new Error("no endpoints");
+    for (const r of data.unbonding_responses ?? []) {
+      for (const e of r.entries ?? []) {
+        collected.push({
+          delegator: r.delegator_address,
+          validator: r.validator_address,
+          moniker: monikerByOperator.get(r.validator_address) ?? v.moniker,
+          amount: uosmoToOsmo(e.balance),
+          completionTime: e.completion_time,
+        });
+      }
+    }
+    pageKey = data.pagination?.next_key ?? null;
+    if (!pageKey) return collected;
+  }
+  throw new Error("pagination cap hit (>10 pages of unbonding entries)");
+}
+
 // Enumerate unbonding delegations across all bonded validators and bucket the
 // entries by completion day. Returns the full schedule (all future completion
 // days) plus the true total; the UI slices to the next N days.
+//
+// Validators whose queries fail in the concurrent sweep get a SECOND,
+// sequential pass after a settle delay: the prod failure mode is rate-limit
+// pressure from the fan-out itself, which a lone retry usually clears. Only a
+// validator failing both passes counts toward fetchFailures (the cron's
+// persist gate).
 export async function fetchUnbondingSchedule(): Promise<UnbondingSchedule> {
   const validators = await fetchBondedValidators();
   const monikerByOperator = new Map(
     validators.map((v) => [v.operatorAddress, v.moniker])
   );
-  const byDay = new Map<string, number>();
   const entries: UnbondingEntry[] = [];
-  let total = 0;
+  const failedFirstPass: ValidatorInfo[] = [];
   let fetchFailures = 0;
+  const failureSamples: string[] = [];
 
   await mapLimit(validators, 6, async (v) => {
     try {
-      // Follow pagination: a validator with >1000 concurrent unbonding
-      // delegators (a mass-unbond event — exactly when this chart matters)
-      // would otherwise be silently truncated. The page cap bounds a
-      // misbehaving endpoint; hitting it counts as a fetch failure so the
-      // cron's persist gate treats the run as an undercount.
-      let pageKey: string | null = null;
-      for (let page = 0; page < 10; page++) {
-        const p = new URLSearchParams({ "pagination.limit": "1000" });
-        if (pageKey) p.set("pagination.key", pageKey);
-        // Own node first, public fallbacks after: this fan-out has tripped the
-        // persist gate on primary 403s, and a whole day's undelegation series
-        // shouldn't hinge on one endpoint's rate limiter (the gate still
-        // catches the all-endpoints-down case).
-        let data: UnbondingResponse | null = null;
-        let lastError: unknown = null;
-        for (const base of REST_FALLBACK_ENDPOINTS) {
-          try {
-            data = (await cachedFetch(
-              `${base}/cosmos/staking/v1beta1/validators/${v.operatorAddress}/unbonding_delegations?${p.toString()}`,
-              false // short cache: unbonding changes continuously
-            )) as UnbondingResponse;
-            break;
-          } catch (e) {
-            lastError = e;
-          }
-        }
-        if (data == null) throw lastError ?? new Error("no endpoints");
-        for (const r of data.unbonding_responses ?? []) {
-          for (const e of r.entries ?? []) {
-            const day = e.completion_time.slice(0, 10);
-            const amt = uosmoToOsmo(e.balance);
-            byDay.set(day, (byDay.get(day) ?? 0) + amt);
-            total += amt;
-            entries.push({
-              delegator: r.delegator_address,
-              validator: r.validator_address,
-              moniker: monikerByOperator.get(r.validator_address) ?? v.moniker,
-              amount: amt,
-              completionTime: e.completion_time,
-            });
-          }
-        }
-        pageKey = data.pagination?.next_key ?? null;
-        if (!pageKey) break;
-        if (page === 9) {
-          // Cap reached with pages remaining: this validator's data is
-          // incomplete, so the run's totals are an undercount. Count it as a
-          // failure — otherwise the persist gate would bake the truncated
-          // figures into the historical series as if they were complete.
-          fetchFailures++;
-          logger.warn(
-            `Unbonding pagination cap hit for ${v.operatorAddress}; marking run incomplete.`
-          );
-        }
-      }
+      entries.push(
+        ...(await fetchValidatorUnbondingEntries(v, monikerByOperator))
+      );
     } catch (error) {
-      // A single validator's endpoint failing shouldn't void the whole schedule
-      // for LIVE display; log, count the failure (so the cron knows this run is
-      // an undercount and refuses to persist it), and continue.
-      fetchFailures++;
+      // A single validator's endpoint failing shouldn't void the whole
+      // schedule; queue it for the sequential retry pass.
+      failedFirstPass.push(v);
       logger.warn(
-        `Unbonding fetch failed for ${v.operatorAddress}: ${error instanceof Error ? error.message : String(error)}`
+        `Unbonding fetch failed for ${v.operatorAddress} (will retry): ${error instanceof Error ? error.message : String(error)}`
       );
     }
   });
 
+  if (failedFirstPass.length > 0) {
+    // Let rate limiters cool off, then retry one validator at a time.
+    await new Promise((r) => setTimeout(r, 5_000));
+    for (const v of failedFirstPass) {
+      try {
+        entries.push(
+          ...(await fetchValidatorUnbondingEntries(v, monikerByOperator))
+        );
+      } catch (error) {
+        fetchFailures++;
+        const message = `${v.operatorAddress}: ${error instanceof Error ? error.message : String(error)}`;
+        if (failureSamples.length < 5) failureSamples.push(message);
+        logger.warn(`Unbonding fetch failed after retry for ${message}`);
+      }
+    }
+  }
+
+  const byDay = new Map<string, number>();
+  let total = 0;
+  for (const e of entries) {
+    const day = e.completionTime.slice(0, 10);
+    byDay.set(day, (byDay.get(day) ?? 0) + e.amount);
+    total += e.amount;
+  }
   const days = [...byDay.entries()]
     .map(([date, amount]) => ({ date, amount }))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -827,5 +861,5 @@ export async function fetchUnbondingSchedule(): Promise<UnbondingSchedule> {
   const topEntries = entries
     .sort((a, b) => b.amount - a.amount)
     .slice(0, TOP_UNBONDING_ENTRIES);
-  return { total, days, topEntries, fetchFailures };
+  return { total, days, topEntries, fetchFailures, failureSamples };
 }

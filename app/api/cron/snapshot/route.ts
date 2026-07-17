@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { buildAndSaveSnapshot } from "@/lib/snapshot";
+import {
+  buildAndSaveSnapshot,
+  refreshUnbondingForecastIfStale,
+} from "@/lib/snapshot";
 import { fetchDayEpoch } from "@/lib/osmosis-lcd";
 import { getHistory } from "@/lib/historical-file";
 import { logger } from "@/lib/logger";
@@ -106,9 +109,36 @@ export async function GET(request: Request) {
   // (/api/cron/revenue), NOT here: this snapshot cron only fires twice a day in a
   // 30-minute window, so tying revenue to it left the series up to a day behind
   // when Data Lenses published after that window. See app/api/cron/revenue.
+  const startedAt = Date.now();
   try {
     const result = await runEpochSnapshot();
-    return NextResponse.json({ ok: true, ...result });
+
+    // Pending-undelegation retry: the epoch-gated build above only attempts
+    // the unbonding fan-out on the ONE run where the epoch advances; if that
+    // fan-out failed, nothing used to retry it until the next day (the 17:45
+    // run exits as "already-captured-today"), so a single rate-limited
+    // validator left a permanent gap. Now every invocation — the 17:45 run and
+    // manual triggers included — re-runs the fan-out while the day's forecast
+    // is stale. Skipped when the epoch poll + build already consumed most of
+    // maxDuration (300s); the next invocation picks it up.
+    let unbonding: Record<string, unknown>;
+    if (Date.now() - startedAt < 200_000) {
+      try {
+        unbonding = await refreshUnbondingForecastIfStale();
+      } catch (e) {
+        logger.warn(
+          `Unbonding refresh failed (non-critical): ${e instanceof Error ? e.message : String(e)}`
+        );
+        unbonding = {
+          refreshed: false,
+          reason: e instanceof Error ? e.message : "Unknown error",
+        };
+      }
+    } else {
+      unbonding = { refreshed: false, reason: "time-budget-exhausted" };
+    }
+
+    return NextResponse.json({ ok: true, ...result, unbonding });
   } catch (error) {
     logger.error("Snapshot cron failed:", error);
     return NextResponse.json(
