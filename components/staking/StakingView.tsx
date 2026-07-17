@@ -1486,7 +1486,13 @@ export function StakingView() {
             }
             csvFilename="osmosis-pending-undelegations"
             extraControls={
-              <div className="flex flex-wrap items-center gap-2 text-sm">
+              // Interactive-only toggles: dropped from screenshots like the
+              // time-range selector (styled differently from the standard pill,
+              // they read oddly as a static image).
+              <div
+                className="flex flex-wrap items-center gap-2 text-sm"
+                data-screenshot-compact
+              >
                 {/* History + its timespan share ONE pill (merged background) so the
                     range reads as belonging to History. Selecting a range also
                     turns History on. */}

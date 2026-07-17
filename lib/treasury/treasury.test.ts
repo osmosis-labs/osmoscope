@@ -164,3 +164,8 @@ test("isOsmoExposure: WOSMO and non-OSMO assets are NOT exposure", () => {
   for (const s of ["WOSMO", "USDC", "ATOM", "BTC"])
     assert.equal(isOsmoExposure(s), false, s);
 });
+
+test("isOsmoExposure: ION counts as protocol-native exposure", () => {
+  assert.equal(isOsmoExposure("ION"), true);
+  assert.equal(isOsmoExposure("ion"), true);
+});

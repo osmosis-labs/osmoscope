@@ -107,7 +107,12 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
           }}
           csvFilename="osmo-burned"
           extraControls={
-            <div className="flex rounded-lg bg-white/5 p-1 text-sm">
+            // Interactive-only toggle: dropped from screenshots like the
+            // time-range selector (a live control reads oddly as a static image).
+            <div
+              className="flex rounded-lg bg-white/5 p-1 text-sm"
+              data-screenshot-compact
+            >
               {(
                 [
                   { key: "cumulative", label: "Cumulative" },

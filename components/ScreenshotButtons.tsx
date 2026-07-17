@@ -168,6 +168,19 @@ export function ScreenshotButtons({
           revealed.push({ el, cssText: el.style.cssText });
           el.style.setProperty("overflow", "visible", "important");
         });
+      // Card titles must never wrap in the export. The rasterizer's font
+      // metrics can differ from the live render by a fraction of a pixel, and
+      // each element's box is pixel-locked from its live computed style, so a
+      // heading that overflows its baked width by even 1px wraps its last word
+      // onto a second line (environment-dependent: "OSMO Inflation" split for
+      // some users while identical captures elsewhere stayed on one line).
+      // Runs AFTER the inline-suffix un-clipping above so this nowrap wins on
+      // a title both passes touch (restore is reverse-order, so both undo
+      // cleanly).
+      root.querySelectorAll<HTMLElement>("h2, h3").forEach((el) => {
+        revealed.push({ el, cssText: el.style.cssText });
+        el.style.setProperty("white-space", "nowrap", "important");
+      });
 
       let originalCanvas: HTMLCanvasElement;
       try {
@@ -189,10 +202,14 @@ export function ScreenshotButtons({
           },
         });
       } finally {
-        // Restore every element we touched to its exact prior inline style.
-        revealed.forEach(({ el, cssText }) => {
-          el.style.cssText = cssText;
-        });
+        // Restore every element we touched to its exact prior inline style,
+        // in REVERSE order: an element mutated by two passes (e.g. a treasury
+        // title hit by both the inline-suffix un-clip and the heading nowrap)
+        // has two snapshots, and only last-in-first-out replay lands it back
+        // on the original.
+        for (let i = revealed.length - 1; i >= 0; i--) {
+          revealed[i].el.style.cssText = revealed[i].cssText;
+        }
       }
 
       // Copy into a fresh canvas we own, so we can composite the watermark onto

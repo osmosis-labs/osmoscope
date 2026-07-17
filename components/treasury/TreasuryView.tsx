@@ -665,7 +665,7 @@ export function TreasuryView() {
             {usd(data.nonOsmoValue)}
           </div>
           <div className="mt-1 text-sm text-osmo-300">
-            Excludes OSMO and OSMO liquid-staking tokens.
+            Excludes OSMO, OSMO liquid-staking tokens, and ION.
           </div>
         </Card>
       </div>

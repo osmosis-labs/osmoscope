@@ -424,9 +424,15 @@ const OSMO_EXPOSURE_EXCLUDE = new Set<string>(
   ["WOSMO"].map((s) => s.toUpperCase())
 );
 
+// Symbols that do NOT contain "OSMO" but ARE protocol-native exposure: ION is
+// Osmosis's second native token, so "non-OSMO" views exclude it alongside
+// OSMO and its derivatives.
+const OSMO_EXPOSURE_INCLUDE = new Set<string>(["ION"]);
+
 export function isOsmoExposure(symbol: string): boolean {
   const s = symbol.toUpperCase();
   if (OSMO_EXPOSURE_EXCLUDE.has(s)) return false;
+  if (OSMO_EXPOSURE_INCLUDE.has(s)) return true;
   return s.includes("OSMO");
 }
 
