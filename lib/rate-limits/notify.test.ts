@@ -8,6 +8,7 @@ import {
   dispatchAlerts,
   escapeHtml,
   escapeMrkdwn,
+  parseTelegramChatIds,
   sendOpsNotice,
   type AlertChannel,
 } from "./notify";
@@ -48,6 +49,17 @@ function mockChannel(over: Partial<AlertChannel> = {}): AlertChannel & {
 test("escapeHtml and escapeMrkdwn cover the reserved characters", () => {
   assert.equal(escapeHtml("A&B <t>"), "A&amp;B &lt;t&gt;");
   assert.equal(escapeMrkdwn("A&B <t>"), "A&amp;B &lt;t&gt;");
+});
+
+test("parseTelegramChatIds: comma list with whitespace and empties", () => {
+  assert.deepEqual(parseTelegramChatIds("123456789"), ["123456789"]);
+  assert.deepEqual(parseTelegramChatIds(" 123, -1009876,  ,42 ,"), [
+    "123",
+    "-1009876",
+    "42",
+  ]);
+  assert.deepEqual(parseTelegramChatIds(undefined), []);
+  assert.deepEqual(parseTelegramChatIds("  "), []);
 });
 
 test("chunkLines splits under the cap with the header repeated", () => {

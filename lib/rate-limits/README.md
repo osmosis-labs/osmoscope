@@ -49,7 +49,10 @@ Two situations are deliberately not alerted on:
      post a message, and read `chat.id` from the same getUpdates URL (channel
      ids look like `-100xxxxxxxxxx`).
 4. Set Vercel env vars: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. `CRON_SECRET`
-   is shared with the existing crons.
+   is shared with the existing crons. `TELEGRAM_CHAT_ID` accepts a
+   comma-separated list of chat ids (DMs, channels, groups, any mix): trip
+   alerts fan out to every id, while "monitor degraded" ops notices go to the
+   FIRST id only — put the ops target first.
 5. Slack (optional second channel): create an incoming webhook for the target
    channel (Slack app directory → Incoming Webhooks) and set
    `SLACK_WEBHOOK_URL`. Formatting is mrkdwn; delivery hardening (escaping,

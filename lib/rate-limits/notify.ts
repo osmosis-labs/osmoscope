@@ -115,9 +115,19 @@ const TELEGRAM_MAX_LEN = 4096;
 // limit anyway for readability.
 const SLACK_MAX_LEN = 3900;
 
-async function postTelegram(text: string): Promise<void> {
+// TELEGRAM_CHAT_ID accepts a comma-separated list of chat ids (DMs, channels,
+// groups — any mix). Trip alerts fan out to every id; the degraded ops notice
+// goes to the FIRST id only, making position one the designated ops target.
+// Pure and exported for tests.
+export function parseTelegramChatIds(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+async function postTelegram(chatId: string, text: string): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
   const response = await fetch(
     `https://api.telegram.org/bot${token}/sendMessage`,
     {
@@ -138,7 +148,7 @@ async function postTelegram(text: string): Promise<void> {
   } | null;
   if (!response.ok || !body?.ok) {
     throw new Error(
-      `Telegram send failed: ${response.status} ${body?.description ?? ""}`
+      `Telegram send to ${chatId} failed: ${response.status} ${body?.description ?? ""}`
     );
   }
 }
@@ -146,21 +156,32 @@ async function postTelegram(text: string): Promise<void> {
 export const telegramChannel: AlertChannel = {
   name: "telegram",
   configured: () =>
-    !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID),
+    !!process.env.TELEGRAM_BOT_TOKEN &&
+    parseTelegramChatIds(process.env.TELEGRAM_CHAT_ID).length > 0,
   async sendAlerts(transitions) {
     const lines = transitions.map((t) =>
       describeWith(t, escapeHtml, (s) => `<b>${s}</b>`)
     );
-    for (const chunk of chunkLines(
+    const chunks = chunkLines(
       "<b>Osmosis IBC rate limits</b>",
       lines,
       TELEGRAM_MAX_LEN
-    )) {
-      await postTelegram(chunk);
+    );
+    // Any chat failing throws, so states are held back and the batch re-fires
+    // to every chat next run — same duplicates-beat-silent-loss rule as the
+    // cross-channel dispatcher.
+    for (const chatId of parseTelegramChatIds(process.env.TELEGRAM_CHAT_ID)) {
+      for (const chunk of chunks) {
+        await postTelegram(chatId, chunk);
+      }
     }
   },
   async sendNotice(title, body) {
-    await postTelegram(`🛑 <b>${escapeHtml(title)}</b>\n${escapeHtml(body)}`);
+    const [opsChat] = parseTelegramChatIds(process.env.TELEGRAM_CHAT_ID);
+    await postTelegram(
+      opsChat,
+      `🛑 <b>${escapeHtml(title)}</b>\n${escapeHtml(body)}`
+    );
   },
 };
 
