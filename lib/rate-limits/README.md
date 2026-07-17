@@ -40,10 +40,14 @@ Two situations are deliberately not alerted on:
    `prisma db execute` rather than `db push` (push would drop the siblings'
    objects).
 2. Create the Telegram bot: message @BotFather, `/newbot`, keep the token.
-3. Create a private channel, add the bot as an administrator, then get the
-   chat id: post a message in the channel and read `chat.id` from
-   `https://api.telegram.org/bot<TOKEN>/getUpdates` (channel ids look like
-   `-100xxxxxxxxxx`).
+3. Point it at a chat — either works, the code doesn't care:
+   - **Direct messages**: open the bot's t.me link and press Start (bots can't
+     initiate DMs, so this step is mandatory), then read `message.chat.id`
+     from `https://api.telegram.org/bot<TOKEN>/getUpdates` — a plain positive
+     number.
+   - **Channel**: create a private channel, add the bot as an administrator,
+     post a message, and read `chat.id` from the same getUpdates URL (channel
+     ids look like `-100xxxxxxxxxx`).
 4. Set Vercel env vars: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. `CRON_SECRET`
    is shared with the existing crons.
 5. Slack (optional second channel): create an incoming webhook for the target
