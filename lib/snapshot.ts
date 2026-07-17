@@ -24,10 +24,136 @@ import {
   indexValidatorDaily,
   indexGovParticipation,
 } from "./validators";
-import type { ValidatorInfo } from "./validators";
+import type { ValidatorInfo, UnbondingSchedule } from "./validators";
 import { saveSnapshot, getHistory, backfillRevenue } from "./historical-file";
 import { fetchDailyRevenue } from "./revenue";
 import { logger } from "./logger";
+
+// Persist the artifacts of a CLEAN unbonding fan-out (fetchFailures === 0):
+// the forecast blob (so /api/undelegations serves it from the DB instead of
+// re-running the ~71-call LCD fan-out per page load, which the public LCD
+// rate-limits / 403s) and every FUTURE day's completing amount into
+// UndelegationDay, keyed to its completion day. An entry completing on day D
+// was initiated on D-14, so buckets more than a day out are already near-final
+// (only cancel-unbonding or slashing can change them); writing the whole
+// forward window means a few days of failed runs can't leave gaps — each later
+// run supersedes with a more settled value, and tomorrow's write (read while
+// the bucket is maximally settled, never on the day itself, which undercounts
+// as entries complete through the day) stays the final one. Its own table
+// means the per-day HistoricalRecord delete-then-create can't clobber the
+// forward-dated values. Both saves are non-fatal: a failure just leaves the
+// values to a later run.
+// Returns per-artifact success so callers can report an honest outcome: a
+// swallowed save failure must not masquerade as a completed refresh. A false
+// forecastSaved also means computedAt stayed stale, so the next invocation
+// retries the whole refresh.
+async function persistUnbondingArtifacts(
+  unbonding: UnbondingSchedule
+): Promise<{ forecastSaved: boolean; daysSaved: boolean }> {
+  let forecastSaved = false;
+  let daysSaved = false;
+  try {
+    const { saveUnbondingForecast } = await import("./historical-file-db");
+    await saveUnbondingForecast(unbonding, new Date());
+    forecastSaved = true;
+  } catch (e) {
+    logger.warn(
+      `Unbonding forecast save skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+
+  try {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const { upsertUndelegationDay } = await import("./historical-file-db");
+    for (const bucket of unbonding.days) {
+      // Strictly future days only: today's bucket has already partially
+      // drained and would be recorded as an undercount.
+      if (bucket.date <= todayIso) continue;
+      await upsertUndelegationDay(
+        new Date(`${bucket.date}T00:00:00.000Z`),
+        bucket.amount,
+        "cron"
+      );
+    }
+    daysSaved = true;
+  } catch (e) {
+    logger.warn(
+      `UndelegationDay upsert skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+  return { forecastSaved, daysSaved };
+}
+
+// Retry path for the pending-undelegation figures, called on EVERY snapshot
+// cron invocation (including the 17:45 run and manual triggers, which exit the
+// epoch gate early as "already-captured-today"). The epoch-gated build only
+// attempts the unbonding fan-out once, at ~17:15; when a validator's query
+// failed there, the persist gate correctly skipped the day's figures — but
+// nothing ever retried them, so a single rate-limited validator at 17:15 left
+// a permanent gap in the forecast and the series (prod, 2026-07-14 onward).
+// If the stored forecast wasn't computed today, re-run the fan-out and persist
+// when clean; also fill today's HistoricalRecord.pendingUndelegations if the
+// gated build left it unset. Returns a summary for the cron response so a
+// persistently-failing fan-out is diagnosable without function logs.
+export async function refreshUnbondingForecastIfStale(): Promise<
+  Record<string, unknown>
+> {
+  const { getUnbondingForecast, fillPendingUndelegationsToday } = await import(
+    "./historical-file-db"
+  );
+  const existing = await getUnbondingForecast();
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const guardedFill = (total: number) =>
+    fillPendingUndelegationsToday(total).catch((e) => {
+      logger.warn(
+        `pendingUndelegations fill skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
+      );
+      return false;
+    });
+
+  if (existing && existing.computedAt.slice(0, 10) === todayIso) {
+    // The forecast being fresh doesn't guarantee today's stock figure is set:
+    // a pre-epoch invocation can refresh the forecast BEFORE today's snapshot
+    // row exists, and if the 17:15 build's own fan-out then fails, the row is
+    // created with pendingUndelegations null and this branch would otherwise
+    // skip it all day. Attempt the guarded fill (null-only, today-only) from
+    // the stored forecast's total.
+    const total = (existing.data as { total?: number } | null)?.total;
+    const filledToday =
+      typeof total === "number" ? await guardedFill(total) : false;
+    return { refreshed: false, reason: "forecast-fresh", filledToday };
+  }
+
+  const unbonding = await fetchUnbondingSchedule();
+  if (unbonding.fetchFailures > 0) {
+    logger.warn(
+      `Unbonding refresh: fan-out still incomplete (${unbonding.fetchFailures} validator(s) failed); not persisting.`
+    );
+    // No fill here: the stored total (if any) is from a PRIOR day, and this
+    // run's own total is an undercount — either would bake a wrong figure into
+    // today's row. Same refuse-to-persist philosophy as the gate itself.
+    return {
+      refreshed: false,
+      reason: "fetch-failures",
+      fetchFailures: unbonding.fetchFailures,
+      failureSamples: unbonding.failureSamples,
+    };
+  }
+
+  const persisted = await persistUnbondingArtifacts(unbonding);
+  const filledToday = await guardedFill(unbonding.total);
+  // refreshed reflects the forecast actually landing: on a save failure
+  // computedAt stays stale, the next invocation retries, and reporting
+  // success here would mask the DB problem.
+  return {
+    refreshed: persisted.forecastSaved,
+    ...(persisted.forecastSaved && persisted.daysSaved
+      ? {}
+      : { reason: "persist-failures", ...persisted }),
+    total: unbonding.total,
+    filledToday,
+  };
+}
 
 export interface SnapshotResult {
   saved: boolean;
@@ -293,44 +419,7 @@ export async function buildAndSaveSnapshot(
       );
     } else {
       pendingUndelegations = unbonding.total;
-
-      // Persist the full forecast blob so /api/undelegations serves it from the DB
-      // instead of re-running this ~71-call LCD fan-out on every page load (which the
-      // public LCD rate-limits / 403s). This cron IS the once-a-day fan-out. Non-fatal.
-      try {
-        const { saveUnbondingForecast } = await import("./historical-file-db");
-        await saveUnbondingForecast(unbonding, new Date());
-      } catch (e) {
-        logger.warn(
-          `Unbonding forecast save skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
-        );
-      }
-
-      // Persist TOMORROW's completing amount into UndelegationDay, keyed to that
-      // completion day. We read it today because the bucket is still full — reading
-      // it on the day itself undercounts as entries complete through the day. Its
-      // own table means the per-day HistoricalRecord delete-then-create can't clobber
-      // this forward-dated value. Non-fatal: a failure here just leaves tomorrow's
-      // point to be filled by tomorrow's run.
-      try {
-        const tomorrow = new Date(Date.now() + 86_400_000);
-        const tomorrowIso = tomorrow.toISOString().slice(0, 10);
-        const bucket = unbonding.days.find((d) => d.date === tomorrowIso);
-        if (bucket) {
-          const { upsertUndelegationDay } = await import(
-            "./historical-file-db"
-          );
-          await upsertUndelegationDay(
-            new Date(`${tomorrowIso}T00:00:00.000Z`),
-            bucket.amount,
-            "cron"
-          );
-        }
-      } catch (e) {
-        logger.warn(
-          `UndelegationDay upsert skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
-        );
-      }
+      await persistUnbondingArtifacts(unbonding);
     }
     // blockRate = elapsed seconds / blocks elapsed since the previous snapshot.
     const prevHeight = prevSnapshot?.blockHeight;

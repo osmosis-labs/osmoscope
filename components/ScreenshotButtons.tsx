@@ -369,7 +369,7 @@ export function ScreenshotButtons({
 
   return (
     <div
-      className="relative flex w-fit shrink-0 gap-1 self-start rounded-lg bg-white/5 p-1"
+      className="relative flex w-fit shrink-0 gap-1 rounded-lg bg-white/5 p-1"
       data-screenshot-hide
     >
       {/* Copied feedback */}
