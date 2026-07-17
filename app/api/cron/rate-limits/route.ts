@@ -58,6 +58,41 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Manual delivery test (?test=1): push a clearly-labelled synthetic alert
+  // through the REAL dispatcher (every configured channel and chat, real
+  // formatting and chunking) plus a test ops-notice, without touching the
+  // snapshot or alert states. Verifies the wiring end to end the moment env
+  // vars land, instead of waiting for a genuine threshold trip.
+  if (new URL(request.url).searchParams.get("test") === "1") {
+    try {
+      const result = await dispatchAlerts([
+        {
+          pathKey: "test|test|TEST",
+          symbol: "DELIVERY TEST",
+          quotaName: "(ignore me)",
+          direction: "out",
+          pct: 80,
+          from: null,
+          to: "warn",
+        },
+      ]);
+      await sendOpsNotice(
+        "Delivery test",
+        "This is a test of the ops-notice path. Ignore."
+      );
+      return NextResponse.json({ ok: true, test: true, ...result });
+    } catch (error) {
+      return NextResponse.json(
+        {
+          ok: false,
+          test: true,
+          error: error instanceof Error ? error.message : "Unknown error",
+        },
+        { status: 500 }
+      );
+    }
+  }
+
   try {
     const snapshot = await buildRateLimitSnapshot();
     await saveRateLimitSnapshot(snapshot);

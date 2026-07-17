@@ -69,6 +69,14 @@ Manual trigger:
 curl -H "Authorization: Bearer $CRON_SECRET" https://<deployment>/api/cron/rate-limits
 ```
 
+Delivery test — pushes a clearly-labelled synthetic alert through the real
+dispatcher (every configured channel and chat) plus a test ops-notice, without
+touching the snapshot or alert states:
+
+```
+curl -H "Authorization: Bearer $CRON_SECRET" "https://<deployment>/api/cron/rate-limits?test=1"
+```
+
 ## Delivery semantics
 
 The snapshot is saved first, alerts are sent second, and alert states are
