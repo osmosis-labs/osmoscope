@@ -221,11 +221,15 @@ export async function fillPendingUndelegationsToday(
     t.getUTCMonth() === now.getUTCMonth() &&
     t.getUTCDate() === now.getUTCDate();
   if (!isToday) return false;
-  await prisma.historicalRecord.update({
-    where: { id: latest.id },
+  // Guarded write: re-assert null-ness inside the UPDATE itself so a
+  // concurrent writer (the gated build's delete-then-create, or a parallel
+  // invocation) that set the value between our read and this write is never
+  // overwritten. count === 0 means someone else won; report unfilled.
+  const { count } = await prisma.historicalRecord.updateMany({
+    where: { id: latest.id, pendingUndelegations: null },
     data: { pendingUndelegations: value },
   });
-  return true;
+  return count === 1;
 }
 
 // Read the full per-completion-day unbonding series (ascending). Powers the

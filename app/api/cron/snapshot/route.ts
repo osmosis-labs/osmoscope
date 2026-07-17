@@ -120,11 +120,27 @@ export async function GET(request: Request) {
     // validator left a permanent gap. Now every invocation — the 17:45 run and
     // manual triggers included — re-runs the fan-out while the day's forecast
     // is stale. Skipped when the epoch poll + build already consumed most of
-    // maxDuration (300s); the next invocation picks it up.
+    // maxDuration (300s), and raced against the remaining budget while it
+    // runs: a fan-out with many rate-limit backoffs could otherwise push the
+    // invocation past maxDuration and lose the response entirely. Losing the
+    // race abandons the in-flight refresh rather than aborting it — that's
+    // safe (its persists are idempotent upserts behind the same gate, so a
+    // late completion writes clean data or nothing) and keeps the deadline
+    // out of the shared LCD fetch layer; the next invocation retries.
     let unbonding: Record<string, unknown>;
-    if (Date.now() - startedAt < 200_000) {
+    const budgetLeftMs = startedAt + 280_000 - Date.now();
+    if (budgetLeftMs > 80_000) {
       try {
-        unbonding = await refreshUnbondingForecastIfStale();
+        unbonding = await Promise.race([
+          refreshUnbondingForecastIfStale(),
+          new Promise<Record<string, unknown>>((resolve) =>
+            setTimeout(
+              () =>
+                resolve({ refreshed: false, reason: "time-budget-exhausted" }),
+              budgetLeftMs
+            )
+          ),
+        ]);
       } catch (e) {
         logger.warn(
           `Unbonding refresh failed (non-critical): ${e instanceof Error ? e.message : String(e)}`

@@ -43,12 +43,19 @@ import { logger } from "./logger";
 // means the per-day HistoricalRecord delete-then-create can't clobber the
 // forward-dated values. Both saves are non-fatal: a failure just leaves the
 // values to a later run.
+// Returns per-artifact success so callers can report an honest outcome: a
+// swallowed save failure must not masquerade as a completed refresh. A false
+// forecastSaved also means computedAt stayed stale, so the next invocation
+// retries the whole refresh.
 async function persistUnbondingArtifacts(
   unbonding: UnbondingSchedule
-): Promise<void> {
+): Promise<{ forecastSaved: boolean; daysSaved: boolean }> {
+  let forecastSaved = false;
+  let daysSaved = false;
   try {
     const { saveUnbondingForecast } = await import("./historical-file-db");
     await saveUnbondingForecast(unbonding, new Date());
+    forecastSaved = true;
   } catch (e) {
     logger.warn(
       `Unbonding forecast save skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
@@ -68,11 +75,13 @@ async function persistUnbondingArtifacts(
         "cron"
       );
     }
+    daysSaved = true;
   } catch (e) {
     logger.warn(
       `UndelegationDay upsert skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
     );
   }
+  return { forecastSaved, daysSaved };
 }
 
 // Retry path for the pending-undelegation figures, called on EVERY snapshot
@@ -94,8 +103,25 @@ export async function refreshUnbondingForecastIfStale(): Promise<
   );
   const existing = await getUnbondingForecast();
   const todayIso = new Date().toISOString().slice(0, 10);
+  const guardedFill = (total: number) =>
+    fillPendingUndelegationsToday(total).catch((e) => {
+      logger.warn(
+        `pendingUndelegations fill skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
+      );
+      return false;
+    });
+
   if (existing && existing.computedAt.slice(0, 10) === todayIso) {
-    return { refreshed: false, reason: "forecast-fresh" };
+    // The forecast being fresh doesn't guarantee today's stock figure is set:
+    // a pre-epoch invocation can refresh the forecast BEFORE today's snapshot
+    // row exists, and if the 17:15 build's own fan-out then fails, the row is
+    // created with pendingUndelegations null and this branch would otherwise
+    // skip it all day. Attempt the guarded fill (null-only, today-only) from
+    // the stored forecast's total.
+    const total = (existing.data as { total?: number } | null)?.total;
+    const filledToday =
+      typeof total === "number" ? await guardedFill(total) : false;
+    return { refreshed: false, reason: "forecast-fresh", filledToday };
   }
 
   const unbonding = await fetchUnbondingSchedule();
@@ -103,6 +129,9 @@ export async function refreshUnbondingForecastIfStale(): Promise<
     logger.warn(
       `Unbonding refresh: fan-out still incomplete (${unbonding.fetchFailures} validator(s) failed); not persisting.`
     );
+    // No fill here: the stored total (if any) is from a PRIOR day, and this
+    // run's own total is an undercount — either would bake a wrong figure into
+    // today's row. Same refuse-to-persist philosophy as the gate itself.
     return {
       refreshed: false,
       reason: "fetch-failures",
@@ -111,16 +140,19 @@ export async function refreshUnbondingForecastIfStale(): Promise<
     };
   }
 
-  await persistUnbondingArtifacts(unbonding);
-  const filledToday = await fillPendingUndelegationsToday(
-    unbonding.total
-  ).catch((e) => {
-    logger.warn(
-      `pendingUndelegations fill skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
-    );
-    return false;
-  });
-  return { refreshed: true, total: unbonding.total, filledToday };
+  const persisted = await persistUnbondingArtifacts(unbonding);
+  const filledToday = await guardedFill(unbonding.total);
+  // refreshed reflects the forecast actually landing: on a save failure
+  // computedAt stays stale, the next invocation retries, and reporting
+  // success here would mask the DB problem.
+  return {
+    refreshed: persisted.forecastSaved,
+    ...(persisted.forecastSaved && persisted.daysSaved
+      ? {}
+      : { reason: "persist-failures", ...persisted }),
+    total: unbonding.total,
+    filledToday,
+  };
 }
 
 export interface SnapshotResult {
