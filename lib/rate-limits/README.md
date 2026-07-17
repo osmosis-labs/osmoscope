@@ -45,9 +45,16 @@ Two situations are deliberately not alerted on:
    `https://api.telegram.org/bot<TOKEN>/getUpdates` (channel ids look like
    `-100xxxxxxxxxx`).
 4. Set Vercel env vars: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. `CRON_SECRET`
-   is shared with the existing crons. With the Telegram vars unset the monitor
-   still runs and logs would-be alerts, so it degrades to a log-only checker.
-5. The cron is registered in `vercel.json` (`*/15 * * * *`).
+   is shared with the existing crons.
+5. Slack (optional second channel): create an incoming webhook for the target
+   channel (Slack app directory → Incoming Webhooks) and set
+   `SLACK_WEBHOOK_URL`. Formatting is mrkdwn; delivery hardening (escaping,
+   chunking) mirrors Telegram's.
+6. With no channel vars set the monitor still runs and logs would-be alerts,
+   so it degrades to a log-only checker. Trip alerts go to EVERY configured
+   channel; "monitor degraded" ops notices go to the FIRST configured channel
+   only (Telegram, then Slack).
+7. The cron is registered in `vercel.json` (`*/15 * * * *`).
 
 Manual trigger:
 
@@ -60,11 +67,12 @@ curl -H "Authorization: Bearer $CRON_SECRET" https://<deployment>/api/cron/rate-
 The snapshot is saved first, alerts are sent second, and alert states are
 persisted last. If Telegram delivery fails the states are not advanced, so the
 same transitions fire again on the next run (at-least-once) instead of being
-swallowed by the de-duplication. Messages are HTML-escaped and chunked under
-Telegram's 4096-character limit so one odd symbol or a mass-escalation event
-can't wedge the batch. A failing run (DB outage, dump failure) sends a
-best-effort "monitor degraded" notice, rate-limited to one per six hours per
+swallowed by the de-duplication. Messages are escaped per channel
+(HTML for Telegram, mrkdwn for Slack) and chunked under each channel's length
+limit so one odd symbol or a mass-escalation event can't wedge a batch. With
+several channels configured, alert states advance only when EVERY channel
+delivered: on a partial failure the batch re-fires everywhere next run, and a
+duplicate on the channel that did deliver beats a silent loss on the other. A
+failing run (DB outage, dump failure) sends a best-effort "monitor degraded"
+notice to the first configured channel, rate-limited to one per six hours per
 warm instance, so a dead monitor is distinguishable from a quiet one.
-
-A Slack transport is a potential follow-up alongside the Telegram bot setup;
-`sendTelegramMessage` in `alerts.ts` is the seam to generalise.

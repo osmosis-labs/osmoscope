@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildRateLimitSnapshot } from "@/lib/rate-limits/snapshot";
-import {
-  computeAlertTransitions,
-  escapeHtml,
-  sendTelegramAlerts,
-  sendTelegramMessage,
-} from "@/lib/rate-limits/alerts";
+import { computeAlertTransitions } from "@/lib/rate-limits/alerts";
+import { dispatchAlerts, sendOpsNotice } from "@/lib/rate-limits/notify";
 import {
   saveRateLimitSnapshot,
   loadAlertStates,
@@ -15,7 +11,8 @@ import { logger } from "@/lib/logger";
 
 // IBC rate-limit trip monitor. Triggered by Vercel Cron (see vercel.json)
 // every 15 minutes: dumps the rate limiter contract's state, computes
-// per-window quota utilization, Telegram-alerts on threshold escalations and
+// per-window quota utilization, alerts the configured channels (Telegram,
+// Slack) on threshold escalations and
 // recoveries, and stores an hourly-deduped snapshot whose history serves as
 // the flow baseline for the quarterly rate-limit review.
 //
@@ -32,19 +29,21 @@ export const maxDuration = 120;
 
 // A safety monitor's worst state is "dead and nobody knows": a broken run
 // (DB outage, dump failure) only produces 500s that nothing watches. Send a
-// best-effort degraded notice to the same Telegram channel, rate-limited per
-// warm instance so an extended outage doesn't page every 15 minutes.
+// best-effort degraded notice to ONE ops channel (the dispatcher picks the
+// first configured), rate-limited per warm instance so an extended outage
+// doesn't page every 15 minutes.
 const DEGRADED_NOTICE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let lastDegradedNoticeAt = 0;
 async function sendDegradedNotice(message: string): Promise<void> {
   if (Date.now() - lastDegradedNoticeAt < DEGRADED_NOTICE_INTERVAL_MS) return;
   try {
-    await sendTelegramMessage(
-      `🛑 <b>Rate-limit monitor degraded</b>\n${escapeHtml(message)}\nRuns are failing; utilization is NOT being watched.`
+    await sendOpsNotice(
+      "Rate-limit monitor degraded",
+      `${message}\nRuns are failing; utilization is NOT being watched.`
     );
     lastDegradedNoticeAt = Date.now();
   } catch {
-    // Telegram itself unreachable — nothing more to do beyond the logs.
+    // The ops channel itself is unreachable — nothing more to do beyond logs.
   }
 }
 
@@ -71,7 +70,9 @@ export async function GET(request: Request) {
 
     let delivered = false;
     if (transitions.length > 0) {
-      delivered = await sendTelegramAlerts(transitions);
+      // Throws if any configured channel failed, so states below are NOT
+      // advanced and the batch re-fires next run (at-least-once).
+      delivered = (await dispatchAlerts(transitions)).delivered;
     }
     await saveAlertStates(nextStates);
 
