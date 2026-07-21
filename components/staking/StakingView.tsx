@@ -1024,13 +1024,16 @@ export function StakingView() {
       sub: "of total supply",
     },
     {
-      // Placeholder for an eventual security-ratio / value-secured figure.
-      label: "Total Staked",
+      // Active-set bonded stake (from the validator set, matching the Nakamoto /
+      // voting-power figures on this page). Distinct from the Staking Ratio
+      // graph's totalStaked, which also counts stake delegated to jailed /
+      // unbonding validators (economically staked, no consensus weight).
+      label: "Bonded OSMO",
       value:
-        metrics?.totalStaked != null
-          ? formatNumberWithCommas(metrics.totalStaked, 0)
+        data?.bondedTotal != null
+          ? formatNumberWithCommas(data.bondedTotal, 0)
           : "—",
-      sub: "bonded OSMO",
+      tooltip: "Active validator set only.",
     },
     {
       label: "Active Validator Set",

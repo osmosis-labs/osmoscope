@@ -136,6 +136,7 @@ export function StakingRatioChart({
       <CardHeader>
         <ChartHeader
           title="Staking Ratio"
+          titleExplainer="Share of total OSMO supply delegated to validators, including stake to jailed or unbonding validators."
           timeRange={timeRange}
           onRangeChange={setTimeRange}
           cardRef={cardRef}
