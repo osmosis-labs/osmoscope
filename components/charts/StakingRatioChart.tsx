@@ -136,6 +136,7 @@ export function StakingRatioChart({
       <CardHeader>
         <ChartHeader
           title="Staking Ratio"
+          titleExplainer="Bonded OSMO as a share of total supply. Bonded stake includes jailed but still-bonded validators; it excludes a validator once it enters the unbonding state."
           timeRange={timeRange}
           onRangeChange={setTimeRange}
           cardRef={cardRef}

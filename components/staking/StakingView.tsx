@@ -879,14 +879,29 @@ export function StakingView() {
   // what's LEFT to complete today (low, since the day is nearly over), so
   // including it would draw a misleading dip and double the today column. A bar
   // per calendar day (even zero-completion days) keeps the axis continuous.
+  //
+  // The forecast is the fan-out over unbonding_delegations, and an entry
+  // completes exactly 14 days after it was initiated, so a run can only see up
+  // to 14 days from the MOMENT IT RAN (~17:15 UTC). Any calendar day past that
+  // last observed completion day has no data yet, not zero unbonding — showing
+  // a 0 bar there reads as "nothing completes that day", which is false. So
+  // trim TRAILING days that fall beyond the forecast's observed horizon. A
+  // zero-completion day WITHIN the horizon is a real gap and stays.
   const unbondingData = (() => {
     if (!undelegations) return [];
     const byDay = new Map(undelegations.days.map((d) => [d.date, d.amount]));
+    // Last day the fan-out actually observed (dates are ascending, sparse).
+    const lastObservedIso = undelegations.days.length
+      ? undelegations.days[undelegations.days.length - 1].date
+      : null;
     const out: { date: string; label: string; amount: number }[] = [];
     const start = new Date();
     for (let i = 1; i <= 14; i++) {
       const d = new Date(start.getTime() + i * 86_400_000);
       const iso = d.toISOString().slice(0, 10);
+      // Beyond the observed horizon: no data yet, so omit rather than draw a
+      // phantom zero bar.
+      if (lastObservedIso && iso > lastObservedIso) break;
       out.push({
         date: iso,
         // timeZone UTC so the label always names the same day as the `iso`
@@ -1024,13 +1039,18 @@ export function StakingView() {
       sub: "of total supply",
     },
     {
-      // Placeholder for an eventual security-ratio / value-secured figure.
-      label: "Total Staked",
+      // Bonded stake summed from the validator set — the same basis as the
+      // chain's staking pool bonded_tokens and the Staking Ratio graph.
+      // Includes stake to jailed validators that are still bonded; excludes a
+      // validator once it enters the unbonding state (its stake moves to the
+      // not-bonded pool). Matches the Nakamoto / voting-power figures here.
+      label: "Bonded OSMO",
       value:
-        metrics?.totalStaked != null
-          ? formatNumberWithCommas(metrics.totalStaked, 0)
+        data?.bondedTotal != null
+          ? formatNumberWithCommas(data.bondedTotal, 0)
           : "—",
-      sub: "bonded OSMO",
+      tooltip:
+        "OSMO bonded to the validator set. Excludes stake to validators that have entered the unbonding state (e.g. a validator shutting down).",
     },
     {
       label: "Active Validator Set",
