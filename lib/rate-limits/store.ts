@@ -48,28 +48,38 @@ export async function saveRateLimitSnapshot(
     }))
   );
 
-  await prisma.$transaction([
-    prisma.rateLimitSnapshot.deleteMany({
-      where: { timestamp: { gte: hourStart, lt: hourEnd } },
-    }),
-    prisma.rateLimitSnapshot.create({
-      data: {
-        timestamp: ts,
-        pathCount: data.pathCount,
-        maxUtilizationPct: data.maxUtilizationPct,
-        data: data as unknown as Prisma.InputJsonValue,
-      },
-    }),
-    prisma.rateLimitReading.deleteMany({
-      where: { timestamp: { gte: hourStart, lt: hourEnd } },
-    }),
-    // skipDuplicates as a belt-and-braces guard: even an unforeseen key
-    // collision must degrade to a dropped row, never a rolled-back snapshot.
-    prisma.rateLimitReading.createMany({
-      data: readings,
-      skipDuplicates: true,
-    }),
-  ]);
+  // Interactive (callback) form, NOT the array form: the array form has a
+  // FIXED 5s total timeout that also bounds transaction ACQUISITION, so under
+  // connection-pool contention (this 15-min cron overlapping the snapshot /
+  // treasury / revenue crons on the shared Prisma Postgres pool) it
+  // intermittently threw "Unable to start a transaction in the given time" and
+  // tripped the degraded alert. The callback form takes maxWait (acquisition
+  // budget) and timeout (run budget) explicitly.
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.rateLimitSnapshot.deleteMany({
+        where: { timestamp: { gte: hourStart, lt: hourEnd } },
+      });
+      await tx.rateLimitSnapshot.create({
+        data: {
+          timestamp: ts,
+          pathCount: data.pathCount,
+          maxUtilizationPct: data.maxUtilizationPct,
+          data: data as unknown as Prisma.InputJsonValue,
+        },
+      });
+      await tx.rateLimitReading.deleteMany({
+        where: { timestamp: { gte: hourStart, lt: hourEnd } },
+      });
+      // skipDuplicates as a belt-and-braces guard: even an unforeseen key
+      // collision must degrade to a dropped row, never a rolled-back snapshot.
+      await tx.rateLimitReading.createMany({
+        data: readings,
+        skipDuplicates: true,
+      });
+    },
+    { maxWait: 10_000, timeout: 30_000 }
+  );
   logger.info(
     `Saved rate-limit snapshot: ${data.timestamp} (${readings.length} readings)`
   );
@@ -100,16 +110,22 @@ export async function saveAlertStates(
     throw new Error("Database is not configured");
   }
   const keys = [...next.keys()];
-  await prisma.$transaction([
-    prisma.rateLimitAlertState.deleteMany({
-      where: keys.length > 0 ? { pathKey: { notIn: keys } } : {},
-    }),
-    ...[...next.entries()].map(([pathKey, state]) =>
-      prisma.rateLimitAlertState.upsert({
-        where: { pathKey },
-        update: { level: state.level, pct: state.pct },
-        create: { pathKey, level: state.level, pct: state.pct },
-      })
-    ),
-  ]);
+  // Callback form for the same reason as saveRateLimitSnapshot: the array
+  // form's fixed 5s timeout bounds acquisition and throws under pool
+  // contention. maxWait covers acquisition, timeout the run.
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.rateLimitAlertState.deleteMany({
+        where: keys.length > 0 ? { pathKey: { notIn: keys } } : {},
+      });
+      for (const [pathKey, state] of next.entries()) {
+        await tx.rateLimitAlertState.upsert({
+          where: { pathKey },
+          update: { level: state.level, pct: state.pct },
+          create: { pathKey, level: state.level, pct: state.pct },
+        });
+      }
+    },
+    { maxWait: 10_000, timeout: 30_000 }
+  );
 }

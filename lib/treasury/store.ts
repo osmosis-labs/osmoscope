@@ -33,20 +33,28 @@ export async function saveTreasurySnapshot(
   const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000);
 
   try {
-    await prisma.$transaction([
-      prisma.treasurySnapshot.deleteMany({
-        where: { timestamp: { gte: hourStart, lt: hourEnd } },
-      }),
-      prisma.treasurySnapshot.create({
-        data: {
-          timestamp: ts,
-          totalValue: data.totalValue,
-          // Structured payload is a plain JSON object; cast to Prisma's JSON
-          // input type (it round-trips as `unknown` on read).
-          data: data as unknown as Prisma.InputJsonValue,
-        },
-      }),
-    ]);
+    // Interactive (callback) form, not the array form: the array form's fixed
+    // 5s timeout also bounds transaction acquisition, so under connection-pool
+    // contention (this hourly cron overlapping the other cron writers on the
+    // shared Prisma Postgres pool) it can throw "Unable to start a transaction
+    // in the given time". maxWait is the acquisition budget, timeout the run.
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.treasurySnapshot.deleteMany({
+          where: { timestamp: { gte: hourStart, lt: hourEnd } },
+        });
+        await tx.treasurySnapshot.create({
+          data: {
+            timestamp: ts,
+            totalValue: data.totalValue,
+            // Structured payload is a plain JSON object; cast to Prisma's JSON
+            // input type (it round-trips as `unknown` on read).
+            data: data as unknown as Prisma.InputJsonValue,
+          },
+        });
+      },
+      { maxWait: 10_000, timeout: 30_000 }
+    );
     logger.info(`Saved treasury snapshot to database: ${data.timestamp}`);
   } catch (error) {
     logger.error("Failed to save treasury snapshot:", error);
