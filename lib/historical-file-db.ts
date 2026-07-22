@@ -133,12 +133,20 @@ export async function saveSnapshotToDatabase(data: JsonRecord): Promise<void> {
     );
     const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
-    await prisma.$transaction([
-      prisma.historicalRecord.deleteMany({
-        where: { timestamp: { gte: dayStart, lt: dayEnd } },
-      }),
-      prisma.historicalRecord.create({ data: prismaData }),
-    ]);
+    // Interactive (callback) form, not the array form: the array form's fixed
+    // 5s timeout also bounds transaction acquisition, which can throw "Unable
+    // to start a transaction in the given time" under connection-pool
+    // contention with the other cron writers. maxWait is the acquisition
+    // budget, timeout the run.
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.historicalRecord.deleteMany({
+          where: { timestamp: { gte: dayStart, lt: dayEnd } },
+        });
+        await tx.historicalRecord.create({ data: prismaData });
+      },
+      { maxWait: 10_000, timeout: 30_000 }
+    );
 
     logger.info(`Saved snapshot to database: ${data.timestamp}`);
   } catch (error) {
