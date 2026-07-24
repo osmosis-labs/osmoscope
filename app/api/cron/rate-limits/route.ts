@@ -34,13 +34,102 @@ export const maxDuration = 120;
 // doesn't page every 15 minutes.
 const DEGRADED_NOTICE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let lastDegradedNoticeAt = 0;
-async function sendDegradedNotice(message: string): Promise<void> {
+// Consecutive-failure counter (per warm instance) so the notice can say
+// whether this is a blip or a sustained outage.
+let consecutiveFailures = 0;
+
+// Which stage of the run failed — so ops knows WHERE it broke, not just that
+// it did. Carried on the thrown error via CronStageError below.
+type CronStage =
+  | "dump"
+  | "persist-snapshot"
+  | "load-state"
+  | "alerts"
+  | "persist-state";
+
+class CronStageError extends Error {
+  constructor(
+    readonly stage: CronStage,
+    readonly cause: unknown
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "CronStageError";
+  }
+}
+
+const STAGE_LABEL: Record<CronStage, string> = {
+  dump: "reading the rate-limiter contract state",
+  "persist-snapshot": "saving the snapshot to the database",
+  "load-state": "loading prior alert state from the database",
+  alerts: "delivering alerts to the notification channels",
+  "persist-state": "saving alert state to the database",
+};
+
+// Turn a raw error into a plain-English operator hint + likely next action.
+// Keyed off the recurring failure modes so the notice is actionable, not just
+// a stack-trace fragment. Falls back to the raw message for anything unmapped.
+function diagnose(message: string): { hint: string; action: string } | null {
+  const m = message.toLowerCase();
+  if (m.includes("unable to start a transaction")) {
+    return {
+      hint: "Database connection pool is saturated (too many concurrent connections across the cron fleet + API routes).",
+      action:
+        "Check the Prisma Postgres plan's connection limit (console.prisma.io); the per-instance pool cap (DB_POOL_MAX) bounds client usage.",
+    };
+  }
+  if (m.includes("521") || m.includes("522") || m.includes("523")) {
+    return {
+      hint: "The LCD endpoint's origin is down (Cloudflare 52x).",
+      action:
+        "Transient if a fallback endpoint exists; if it persists, the node behind the endpoint needs a restart.",
+    };
+  }
+  if (
+    m.includes("timeout") ||
+    m.includes("etimedout") ||
+    m.includes("econnrefused")
+  ) {
+    return {
+      hint: "An upstream (LCD / database) was unreachable or too slow.",
+      action:
+        "Usually transient; the next run retries. Watch for a sustained streak.",
+    };
+  }
+  if (m.includes("empty") || m.includes("truncated") || m.includes("decode")) {
+    return {
+      hint: "The contract state dump came back empty or malformed (possible key-layout drift after a migration).",
+      action:
+        "Verify the rate-limiter contract address and that its state layout hasn't changed.",
+    };
+  }
+  return null;
+}
+
+async function sendDegradedNotice(error: unknown): Promise<void> {
   if (Date.now() - lastDegradedNoticeAt < DEGRADED_NOTICE_INTERVAL_MS) return;
+  const message = error instanceof Error ? error.message : String(error);
+  const stage = error instanceof CronStageError ? error.stage : null;
+  const diag = diagnose(message);
+
+  const lines = [
+    stage
+      ? `Failed while ${STAGE_LABEL[stage]}.`
+      : "The run failed before completing.",
+    "",
+    `Error: ${message}`,
+  ];
+  if (diag) {
+    lines.push("", `Likely cause: ${diag.hint}`, `Next step: ${diag.action}`);
+  }
+  lines.push(
+    "",
+    `This is failure #${consecutiveFailures} in a row on this instance.`,
+    "Utilization is NOT being watched until a run succeeds.",
+    "(Further degraded notices are suppressed for 6h to avoid paging every 15 min.)"
+  );
+
   try {
-    await sendOpsNotice(
-      "Rate-limit monitor degraded",
-      `${message}\nRuns are failing; utilization is NOT being watched.`
-    );
+    await sendOpsNotice("Rate-limit monitor degraded", lines.join("\n"));
     lastDegradedNoticeAt = Date.now();
   } catch {
     // The ops channel itself is unreachable — nothing more to do beyond logs.
@@ -93,11 +182,24 @@ export async function GET(request: Request) {
     }
   }
 
-  try {
-    const snapshot = await buildRateLimitSnapshot();
-    await saveRateLimitSnapshot(snapshot);
+  // Run each stage tagged with its name, so a failure carries WHERE it broke
+  // into the degraded notice. `stage(name, fn)` rethrows as a CronStageError.
+  const stage = async <T>(
+    name: CronStage,
+    fn: () => Promise<T>
+  ): Promise<T> => {
+    try {
+      return await fn();
+    } catch (e) {
+      throw new CronStageError(name, e);
+    }
+  };
 
-    const stored = await loadAlertStates();
+  try {
+    const snapshot = await stage("dump", () => buildRateLimitSnapshot());
+    await stage("persist-snapshot", () => saveRateLimitSnapshot(snapshot));
+
+    const stored = await stage("load-state", () => loadAlertStates());
     const { transitions, nextStates } = computeAlertTransitions(
       snapshot,
       stored
@@ -107,10 +209,12 @@ export async function GET(request: Request) {
     if (transitions.length > 0) {
       // Throws if any configured channel failed, so states below are NOT
       // advanced and the batch re-fires next run (at-least-once).
-      delivered = (await dispatchAlerts(transitions)).delivered;
+      delivered = (await stage("alerts", () => dispatchAlerts(transitions)))
+        .delivered;
     }
-    await saveAlertStates(nextStates);
+    await stage("persist-state", () => saveAlertStates(nextStates));
 
+    consecutiveFailures = 0; // a clean run clears the streak
     return NextResponse.json({
       ok: true,
       timestamp: snapshot.timestamp,
@@ -121,9 +225,14 @@ export async function GET(request: Request) {
       delivered,
     });
   } catch (error) {
-    logger.error("Rate-limit cron failed:", error);
+    consecutiveFailures += 1;
+    const stageName = error instanceof CronStageError ? error.stage : "unknown";
+    logger.error(`Rate-limit cron failed [stage=${stageName}]:`, error);
+    await sendDegradedNotice(error);
     const message = error instanceof Error ? error.message : "Unknown error";
-    await sendDegradedNotice(message);
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, stage: stageName, error: message },
+      { status: 500 }
+    );
   }
 }
