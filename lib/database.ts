@@ -15,7 +15,32 @@ const globalForPrisma = global as unknown as { prisma: PrismaClient };
 const connectionString =
   process.env.POSTGRES_PRISMA_URL || process.env.DATABASE_URL;
 
-const adapter = new PrismaPg({ connectionString });
+// Bound the pg pool size PER INSTANCE. This DB is Prisma Postgres
+// (db.prisma.io), which pools connections SERVER-side, so the ceiling that
+// matters is the Prisma Postgres PLAN's concurrent-connection limit, not raw
+// Postgres max_connections. Without a client cap, pg defaults to 10
+// connections per pool, and on Vercel Fluid Compute every warm function
+// instance holds its own pool — so the cron fleet (rate-limits every 15 min,
+// treasury + revenue hourly, snapshot) plus page-load API routes collectively
+// blew past the plan limit. Once it's saturated a new transaction can't
+// acquire a connection even within maxWait, surfacing as "Unable to start a
+// transaction in the given time" (the recurring rate-limit degraded alert).
+// PR #27 raised maxWait, which reduced but didn't eliminate it because the
+// real limit was total concurrent connections, not wait time. Keep the
+// per-instance pool small (server-side pooling means the client needs very
+// few) so many warm instances stay under the plan ceiling. If this still trips
+// after deploy, the next lever is the Prisma Postgres plan's connection limit
+// (console.prisma.io → the Postgres instance), not more app-side tuning.
+// Override with DB_POOL_MAX if the deployment shape changes.
+const poolMax = Number(process.env.DB_POOL_MAX) || 2;
+
+// idleTimeoutMillis: release idle connections quickly so a warm-but-idle
+// instance stops squatting on a connection other instances (or crons) need.
+const adapter = new PrismaPg({
+  connectionString,
+  max: poolMax,
+  idleTimeoutMillis: 10_000,
+});
 
 export const prisma =
   globalForPrisma.prisma ||
