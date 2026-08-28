@@ -16,7 +16,7 @@ import {
   classifyPosition,
 } from "./snapshot";
 import { isOsmoExposure } from "@/config/community-pool";
-import type { PriceMap } from "./prices";
+import { verifySqsPrices, type PriceMap } from "./prices";
 
 // --- tickToBasePrice (Osmosis geometric tick math) -------------------------
 test("tickToBasePrice: reference points", () => {
@@ -168,4 +168,54 @@ test("isOsmoExposure: WOSMO and non-OSMO assets are NOT exposure", () => {
 test("isOsmoExposure: ION counts as protocol-native exposure", () => {
   assert.equal(isOsmoExposure("ION"), true);
   assert.equal(isOsmoExposure("ion"), true);
+});
+
+// --- verifySqsPrices (SQS /tokens/prices outlier guard) ---------------------
+// SQS's /tokens/prices has been seen quoting dTIA at $2.6e9 per token while
+// /router/quote returned the correct ~$0.37, which booked ~$1.8M of phantom
+// value onto 703 raw units of fee dust in the txfees staging accounts.
+const DTIA =
+  "ibc/C7A810C6ED1FC3FFC7C834A534D400EADC94FF7D3BE13DDD4C042AEF1816DFB4";
+
+test("verifySqsPrices: leaves ordinary prices untouched and unqueried", async () => {
+  let calls = 0;
+  const out = await verifySqsPrices(
+    { "ibc/TIA": 0.35, "ibc/ETH": 2500, "ibc/BTC": 79000 },
+    async () => {
+      calls++;
+      return 1;
+    }
+  );
+  // All below the threshold, so no cross-check requests at all.
+  assert.equal(calls, 0);
+  assert.deepEqual(out, { "ibc/TIA": 0.35, "ibc/ETH": 2500, "ibc/BTC": 79000 });
+});
+
+test("verifySqsPrices: replaces the dTIA-style outlier with the router price", async () => {
+  const out = await verifySqsPrices({ [DTIA]: 2.6e9 }, async () => 0.3658);
+  assert.equal(out[DTIA], 0.3658);
+  // The 703 raw units (exponent 6) must now land under the $1 dust filter.
+  assert.ok((703 / 1e6) * out[DTIA] < 1);
+});
+
+test("verifySqsPrices: keeps a high price the router corroborates", async () => {
+  // A genuinely expensive asset above the threshold, confirmed within tolerance.
+  const out = await verifySqsPrices(
+    { "ibc/BIGBTC": 200_000 },
+    async () => 199_000
+  );
+  assert.equal(out["ibc/BIGBTC"], 200_000);
+});
+
+test("verifySqsPrices: drops an unconfirmable high price rather than booking it", async () => {
+  const out = await verifySqsPrices({ [DTIA]: 2.6e9 }, async () => null);
+  // Dropped => denom stays unpriced (falls through to CoinGecko /
+  // priceUnavailable) instead of contributing phantom value.
+  assert.ok(!(DTIA in out));
+});
+
+test("verifySqsPrices: does not substitute zero for a dropped price", async () => {
+  const out = await verifySqsPrices({ [DTIA]: 2.6e9 }, async () => null);
+  assert.notEqual(out[DTIA], 0);
+  assert.equal(out[DTIA], undefined);
 });
