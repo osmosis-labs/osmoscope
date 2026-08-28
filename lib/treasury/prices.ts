@@ -134,8 +134,9 @@ export async function resolveMissingPrices(
   // DOT.pica=10, allSHIB=12) confirm they agree with SQS, else the price is
   // right but `amount` (scaled by exponent in makeHolding) is off.
   const sqsPrices = await fetchSqsPrices(missing);
+  const verified = await verifySqsPrices(sqsPrices);
   for (const denom of missing) {
-    const p = sqsPrices[denom];
+    const p = verified[denom];
     if (p != null && p > 0) map[denom].price = p;
   }
 
@@ -176,6 +177,138 @@ async function fetchSqsPrices(
   }
   return out;
 }
+
+// USDC (the quote denom SQS prices against), used by the router cross-check.
+const USDC_DENOM =
+  "ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4";
+
+// Above this USD-per-whole-token price an SQS /tokens/prices reading is treated
+// as unproven and must be confirmed by an actual swap quote. Deliberately well
+// clear of the genuinely expensive things the treasury holds (BTC ~$79k and its
+// allBTC/wBTC variants are the ceiling in practice), so the cross-check fires on
+// a handful of denoms at most and costs a handful of requests.
+export const PRICE_VERIFY_THRESHOLD = 150_000;
+
+// How far a high /tokens/prices reading may sit from the router's own quote
+// before we discard it. Generous (5x) because the two paths legitimately differ
+// on thin books — spread, price impact on the 1-token probe, and stale TWAP vs
+// spot. A real mispricing is orders of magnitude out, not a few multiples:
+// observed dTIA was 7.1e9x the router price, while allBTC/allETH agree to ~1%.
+const PRICE_VERIFY_MAX_RATIO = 5;
+
+// Guard against SQS /tokens/prices returning a wildly wrong figure for a thin or
+// broken denom. That endpoint has been seen quoting dTIA at $2.6e9 per token
+// (~7.1e9x its true value) while /router/quote for the same denom returns the
+// correct ~$0.37 — enough to add ~$1.8M of phantom value to the txfees staging
+// accounts from ~703 raw units of fee dust.
+//
+// Only prices above PRICE_VERIFY_THRESHOLD are checked, so the normal path is
+// untouched. A checked price is kept only if an actual 1-token swap quote agrees
+// within PRICE_VERIFY_MAX_RATIO; otherwise we prefer the router's number, and if
+// the router can't quote it either we drop the price entirely so the denom falls
+// through to CoinGecko and then shows as priceUnavailable. Never silently
+// substitutes zero — dropping means "unpriced", which the snapshot surfaces.
+// `quote` is injectable so the rule can be unit-tested without network access;
+// production callers use the default (fetchRouterPrice).
+export async function verifySqsPrices(
+  prices: Record<string, number>,
+  quote: (denom: string) => Promise<number | null> = fetchRouterPrice
+): Promise<Record<string, number>> {
+  const out = { ...prices };
+  const suspect = Object.keys(out).filter(
+    (d) => out[d] > PRICE_VERIFY_THRESHOLD
+  );
+  if (suspect.length === 0) return out;
+
+  await Promise.all(
+    suspect.map(async (denom) => {
+      const quoted = await quote(denom);
+      if (quoted == null) {
+        // No corroboration available for an already-implausible number: drop it
+        // rather than book millions of phantom value.
+        logger.warn(
+          `SQS price ${out[denom]} for ${denom} exceeds ${PRICE_VERIFY_THRESHOLD} and no router quote could confirm it; dropping`
+        );
+        delete out[denom];
+        return;
+      }
+      const ratio = out[denom] / quoted;
+      if (
+        ratio > PRICE_VERIFY_MAX_RATIO ||
+        ratio < 1 / PRICE_VERIFY_MAX_RATIO
+      ) {
+        logger.warn(
+          `SQS price ${out[denom]} for ${denom} disagrees with router quote ${quoted} (${ratio.toExponential(2)}x); using the router price`
+        );
+        out[denom] = quoted;
+      }
+    })
+  );
+  return out;
+}
+
+// USD price for ONE whole token of `denom`, from an actual router swap quote.
+// Independent of /tokens/prices, so it can corroborate (or refute) it. Needs the
+// denom's exponent to size the 1-token probe; read it from SQS's own metadata so
+// the probe matches SQS's display convention rather than a guess. Returns null if
+// the exponent or the quote is unavailable.
+async function fetchRouterPrice(denom: string): Promise<number | null> {
+  try {
+    const exponent = await fetchSqsExponent(denom);
+    if (exponent == null) return null;
+    const oneToken = 10n ** BigInt(exponent);
+    const url =
+      `${SQS_API_URL}/router/quote?tokenIn=${oneToken}${encodeURIComponent(denom)}` +
+      `&tokenOutDenom=${encodeURIComponent(USDC_DENOM)}`;
+    const resp = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as { amount_out?: string | number };
+    if (data?.amount_out == null) return null;
+    // USDC is 6-decimal; amount_out is in its minimal units.
+    const usd = Number(data.amount_out) / 1e6;
+    return Number.isFinite(usd) && usd > 0 ? usd : null;
+  } catch (e) {
+    logger.warn(
+      `Router price cross-check failed for ${denom}: ${(e as Error).message}`
+    );
+    return null;
+  }
+}
+
+// The denom's display exponent per SQS's asset list, cached for the process.
+async function fetchSqsExponent(denom: string): Promise<number | null> {
+  if (sqsExponents == null) {
+    sqsExponents = (async () => {
+      const map: Record<string, number> = {};
+      try {
+        const resp = await fetch(`${SQS_API_URL}/tokens/metadata`, {
+          headers: { Accept: "application/json" },
+        });
+        if (!resp.ok) {
+          logger.warn(`SQS /tokens/metadata HTTP ${resp.status}`);
+          return map;
+        }
+        const data = (await resp.json()) as Record<
+          string,
+          { decimals?: number } | undefined
+        >;
+        for (const [d, meta] of Object.entries(data)) {
+          if (meta && Number.isFinite(meta.decimals))
+            map[d] = meta.decimals as number;
+        }
+      } catch (e) {
+        logger.warn(`SQS /tokens/metadata error: ${(e as Error).message}`);
+      }
+      return map;
+    })();
+  }
+  const exps = await sqsExponents;
+  return exps[denom] ?? null;
+}
+
+// Process-lifetime cache of the SQS metadata fetch (a promise, so concurrent
+// callers share one request). Only touched on the rare cross-check path.
+let sqsExponents: Promise<Record<string, number>> | null = null;
 
 // Fetch one batch; on a 400 (an unrecognized denom poisoned the batch), recurse
 // on halves so the good denoms still resolve. A singleton 400 = that denom is
