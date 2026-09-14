@@ -98,9 +98,8 @@ async function persistUnbondingArtifacts(
 export async function refreshUnbondingForecastIfStale(): Promise<
   Record<string, unknown>
 > {
-  const { getUnbondingForecast, fillPendingUndelegationsToday } = await import(
-    "./historical-file-db"
-  );
+  const { getUnbondingForecast, fillPendingUndelegationsToday } =
+    await import("./historical-file-db");
   const existing = await getUnbondingForecast();
   const todayIso = new Date().toISOString().slice(0, 10);
   const guardedFill = (total: number) =>

@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: type-check, lint, format, test
+    runs-on: ubuntu-latest
+    env:
+      # prisma.config.ts refuses to load without DATABASE_URL. Nothing in this
+      # job connects to a database (prisma generate only emits the client), so
+      # a placeholder is enough.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v4
+
+      # Yarn 4 comes from the packageManager field via Corepack; enable it
+      # before setup-node so the yarn cache resolves against the right binary.
+      - run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+
+      - run: yarn install --immutable
+      - run: yarn db:generate
+      - run: yarn type-check
+      - run: yarn lint
+      - run: yarn format:check
+      - run: yarn test
