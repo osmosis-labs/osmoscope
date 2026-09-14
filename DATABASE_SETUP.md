@@ -16,7 +16,7 @@ Osmometer now uses **Vercel Postgres** (PostgreSQL) with **Prisma ORM** for stor
 
 - Vercel account with the project connected
 - Vercel CLI installed: `npm i -g vercel`
-- Node.js 18+ and npm/yarn
+- Node.js 22 (see `.nvmrc`) and Yarn 4 (enable it with `corepack enable`)
 
 ## Setup Steps
 
@@ -67,23 +67,46 @@ This creates `.env.local` with the following variables:
 ### 4. Generate Prisma Client
 
 ```bash
-npm run db:generate
+yarn db:generate
 ```
 
 This generates the Prisma Client based on your schema in `prisma/schema.prisma`.
 
-### 5. Run Database Migration
+### 5. Apply the Schema
+
+The schema is versioned as Prisma migrations under `prisma/migrations/`. The
+first entry, `0_init`, is a baseline generated from `prisma/schema.prisma` and
+creates every table and index the app uses today.
+
+**Fresh database:**
 
 ```bash
-npm run db:migrate
+yarn db:migrate:deploy
 ```
 
-This creates the database schema (tables, indexes, triggers).
+**Existing database that was created with `db:push` before migrations were
+introduced:** the tables already exist, so tell Prisma the baseline has been
+applied instead of running it (one time only):
+
+```bash
+yarn prisma migrate resolve --applied 0_init
+```
+
+After that, `yarn db:migrate:deploy` applies any later migrations and
+`prisma migrate status` reports whether the database is up to date.
+
+**Changing the schema:** edit `prisma/schema.prisma`, run `yarn db:migrate`
+against a local database to generate a new migration folder, commit it with the
+schema change, then run `yarn db:migrate:deploy` against production. The Vercel
+build only runs `prisma generate`; it never applies migrations.
+
+`yarn db:push` still works for throwaway local databases, but do not use it on
+a database that is tracked by migrations, because the two drift apart.
 
 ### 6. Migrate Existing JSON Data
 
 ```bash
-npm run migrate-json-to-db
+yarn migrate-json-to-db
 ```
 
 This script:
@@ -156,19 +179,22 @@ model HistoricalRecord {
 
 ```bash
 # Generate Prisma Client after schema changes
-npm run db:generate
+yarn db:generate
 
-# Push schema changes without creating migration
-npm run db:push
+# Push schema changes to a throwaway local database (no migration history)
+yarn db:push
 
-# Create and apply migration
-npm run db:migrate
+# Create a migration from schema changes (local dev database)
+yarn db:migrate
+
+# Apply committed migrations (production)
+yarn db:migrate:deploy
 
 # Open Prisma Studio (database GUI)
-npm run db:studio
+yarn db:studio
 
 # Migrate JSON data to database
-npm run migrate-json-to-db
+yarn migrate-json-to-db
 ```
 
 ## Development Workflow
@@ -176,8 +202,8 @@ npm run migrate-json-to-db
 ### Local Development
 
 1. Pull environment variables: `vercel env pull .env.local`
-2. Generate Prisma Client: `npm run db:generate`
-3. Run dev server: `npm run dev`
+2. Generate Prisma Client: `yarn db:generate`
+3. Run dev server: `yarn dev`
 
 The app will automatically use the database if `POSTGRES_PRISMA_URL` is set.
 
@@ -191,7 +217,7 @@ Vercel automatically:
 
 1. Connects to the Postgres database
 2. Sets the `POSTGRES_*` environment variables
-3. Generates the Prisma Client during build (via the `postinstall` script)
+3. Generates the Prisma Client during build (the `build` script runs `prisma generate` first)
 
 **One manual step (Prisma 7):** add `DATABASE_URL` to the Vercel project's
 environment variables (Settings → Environment Variables), set to the same
@@ -240,11 +266,13 @@ const count = await prisma.historicalRecord.count();
 
 ### "Prisma Client not generated"
 
-**Solution**: Run `npm run db:generate`.
+**Solution**: Run `yarn db:generate`.
 
 ### Migration fails with "column does not exist"
 
-**Solution**: Run `npm run db:migrate` to create the schema.
+**Solution**: Run `yarn db:migrate:deploy` to bring the schema up to date (or
+`yarn prisma migrate resolve --applied 0_init` first if the database predates
+the migrations directory, see step 5).
 
 ### Connection timeout errors
 
