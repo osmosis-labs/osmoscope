@@ -30,9 +30,11 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local env files
-.env*.local
+# local env files (the two example files stay tracked)
 .env
+.env.*
+!.env.example
+!.env.local.example
 
 # vercel
 .vercel
@@ -45,6 +47,15 @@ next-env.d.ts
 /data
 
 /lib/generated/prisma
-.env.local
 .claude/settings.local.json
-.env*
+
+# scratch dumps at the repo root (probe output, one-off scripts); the tracked
+# config files are listed explicitly so nothing else at the root is picked up
+/*.json
+!/package.json
+!/tsconfig.json
+!/vercel.json
+!/.eslintrc.json
+!/.prettierrc.json
+/*.mjs
+!/postcss.config.mjs
