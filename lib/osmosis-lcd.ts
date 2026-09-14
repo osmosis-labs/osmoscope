@@ -1,5 +1,6 @@
 import { LRUCache } from "lru-cache";
 import { logger } from "./logger";
+import { LCD_PRIMARY } from "@/config/lcd-endpoints";
 import type {
   SupplyResponse,
   CommunityPoolResponse,
@@ -12,8 +13,9 @@ import type {
   StakingPoolResponse,
 } from "@/types/osmosis";
 
-export const LCD_BASE_URL =
-  process.env.NEXT_PUBLIC_LCD_BASE_URL || "https://lcd.osmosis.zone";
+// Re-exported under the historical name so existing LCD consumers keep
+// working; config/lcd-endpoints.ts is the single place the URL is resolved.
+export const LCD_BASE_URL = LCD_PRIMARY;
 const NUMIA_API_URL =
   process.env.NUMIA_API_URL || "https://public-osmosis-api.numia.xyz";
 const NUMIA_API_KEY = process.env.NUMIA_API_KEY;

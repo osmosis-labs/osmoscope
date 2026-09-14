@@ -392,9 +392,8 @@ export async function indexGovParticipation(
       fetchVoterProposalIdsRecent,
       fetchVoterProposalIdsFullDepth,
     } = await import("./governance");
-    const { GOV_VOTER_OVERRIDES } = await import(
-      "../config/gov-voter-overrides"
-    );
+    const { GOV_VOTER_OVERRIDES } =
+      await import("../config/gov-voter-overrides");
 
     const windowIds = new Set(await fetchRecentlyEndedProposals(Date.now()));
     // Nothing decided in the window — leave prior values untouched (a >90-day
