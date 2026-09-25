@@ -10,7 +10,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
         defaultOptions: {
           queries: {
             staleTime: 60 * 1000, // 1 minute
-            refetchOnWindowFocus: false,
+            // Timers pause while a tab is hidden, so refetch stale queries
+            // when the viewer comes back rather than waiting for the next tick.
+            refetchOnWindowFocus: true,
           },
         },
       })
