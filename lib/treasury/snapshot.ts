@@ -279,6 +279,22 @@ function unpricedFrom(assets: AssetTotal[]): string[] {
 // partial fetch (some position dropped) rather than a genuine market move.
 const MAX_MAIN_POOL_MOVE = 0.15;
 
+// Thrown by the proportional-move gate. Carries the fully built snapshot so the
+// cron can hold it as a candidate: a genuine large move (e.g. a big community
+// pool spend) repeats run after run, while a partial fetch rarely lands on the
+// same wrong number twice (see lib/treasury/move-gate.ts).
+export class MainPoolMoveError extends Error {
+  constructor(
+    message: string,
+    readonly snapshot: TreasurySnapshotData,
+    readonly previousMainPoolValue: number,
+    readonly mainPoolValue: number
+  ) {
+    super(message);
+    this.name = "MainPoolMoveError";
+  }
+}
+
 export interface BuildSnapshotOptions {
   // Main-pool value of the last good stored snapshot, if any. When provided, the
   // sanity gate rejects a new snapshot whose main pool moved more than
@@ -529,24 +545,7 @@ export async function buildTreasurySnapshot(
   // snapshot. Now that every position-fetch failure aborts instead of silently
   // dropping, a big drop would most likely be a subtler partial; this is the
   // backstop. Skipped on the first run (no previous value to compare).
-  const prev = options.previousMainPoolValue;
-  if (prev != null && prev > 0) {
-    const move = Math.abs(mainTotal - prev) / prev;
-    if (move > MAX_MAIN_POOL_MOVE) {
-      throw new Error(
-        `Treasury snapshot main pool moved ${(move * 100).toFixed(1)}% ` +
-          `($${prev.toFixed(0)} -> $${mainTotal.toFixed(0)}), exceeding the ` +
-          `${(MAX_MAIN_POOL_MOVE * 100).toFixed(0)}% guard; refusing to persist ` +
-          `(likely a partial fetch). The previous snapshot is kept.`
-      );
-    }
-  }
-
-  logger.info(
-    `Treasury snapshot: total $${totalValue.toFixed(0)} across ${holders.length} holders, ${unpricedSymbols.length} unpriced`
-  );
-
-  return {
+  const snapshot: TreasurySnapshotData = {
     timestamp: new Date().toISOString(),
     totalValue,
     nonOsmoValue,
@@ -557,4 +556,26 @@ export async function buildTreasurySnapshot(
     vaultPositions,
     unpricedSymbols,
   };
+
+  const prev = options.previousMainPoolValue;
+  if (prev != null && prev > 0) {
+    const move = Math.abs(mainTotal - prev) / prev;
+    if (move > MAX_MAIN_POOL_MOVE) {
+      throw new MainPoolMoveError(
+        `Treasury snapshot main pool moved ${(move * 100).toFixed(1)}% ` +
+          `($${prev.toFixed(0)} -> $${mainTotal.toFixed(0)}), exceeding the ` +
+          `${(MAX_MAIN_POOL_MOVE * 100).toFixed(0)}% guard; refusing to persist ` +
+          `(likely a partial fetch). The previous snapshot is kept.`,
+        snapshot,
+        prev,
+        mainTotal
+      );
+    }
+  }
+
+  logger.info(
+    `Treasury snapshot: total $${totalValue.toFixed(0)} across ${holders.length} holders, ${unpricedSymbols.length} unpriced`
+  );
+
+  return snapshot;
 }
