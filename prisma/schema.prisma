@@ -109,6 +109,22 @@ model TreasurySnapshot {
   @@map("treasury_snapshots")
 }
 
+// Out-of-range treasury readings held for confirmation. When a built snapshot's
+// main pool moves more than 15% against the last stored snapshot, the cron
+// records its value here instead of saving it, and saves once the last 3
+// consecutive readings agree within 1% (see lib/treasury/move-gate.ts). Cleared
+// on every successful save, so the rows always relate to the current baseline.
+model TreasuryPendingMove {
+  id            BigInt   @id @default(autoincrement())
+  timestamp     DateTime @db.Timestamptz(6)
+  mainPoolValue Decimal  @db.Decimal(20, 2)
+  // The stored main-pool value this reading was compared against.
+  baselineValue Decimal  @db.Decimal(20, 2)
+
+  @@index([timestamp])
+  @@map("treasury_pending_moves")
+}
+
 // Per-validator snapshot of metrics that can't be read live from the LCD:
 // governance recency, slashing history, and long-run signing uptime. Sourced by
 // importing SmartStake's Validators.csv (scripts/import-validator-snapshot.ts),

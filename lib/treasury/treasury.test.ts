@@ -17,6 +17,7 @@ import {
 } from "./snapshot";
 import { isOsmoExposure } from "@/config/community-pool";
 import { verifySqsPrices, type PriceMap } from "./prices";
+import { isMoveConfirmed } from "./move-gate";
 
 // --- tickToBasePrice (Osmosis geometric tick math) -------------------------
 test("tickToBasePrice: reference points", () => {
@@ -218,4 +219,39 @@ test("verifySqsPrices: does not substitute zero for a dropped price", async () =
   const out = await verifySqsPrices({ [DTIA]: 2.6e9 }, async () => null);
   assert.notEqual(out[DTIA], 0);
   assert.equal(out[DTIA], undefined);
+});
+
+// --- isMoveConfirmed (confirm-on-repeat for the 15% main-pool gate) ----------
+// A genuine large move repeats run after run; a partial fetch doesn't.
+test("isMoveConfirmed: needs three readings", () => {
+  assert.equal(isMoveConfirmed([5_000_000]), false);
+  assert.equal(isMoveConfirmed([5_000_000, 5_000_100]), false);
+});
+
+test("isMoveConfirmed: accepts three consecutive readings within 1%", () => {
+  // e.g. a ~$1M community-pool spend off a ~$6.9M pool, with market drift.
+  assert.equal(isMoveConfirmed([5_870_000, 5_850_000, 5_860_000]), true);
+});
+
+test("isMoveConfirmed: rejects readings that disagree (partial fetches)", () => {
+  // Each run dropped a different position, so the values don't line up.
+  assert.equal(isMoveConfirmed([5_000_000, 5_900_000, 5_400_000]), false);
+});
+
+test("isMoveConfirmed: only the newest three count", () => {
+  // An early outlier doesn't block confirmation once three later runs agree...
+  assert.equal(
+    isMoveConfirmed([3_000_000, 5_860_000, 5_850_000, 5_855_000]),
+    true
+  );
+  // ...and older agreement doesn't carry a newer outlier through.
+  assert.equal(
+    isMoveConfirmed([5_860_000, 5_850_000, 5_855_000, 3_000_000]),
+    false
+  );
+});
+
+test("isMoveConfirmed: never confirms zero or non-finite readings", () => {
+  assert.equal(isMoveConfirmed([0, 0, 0]), false);
+  assert.equal(isMoveConfirmed([NaN, NaN, NaN]), false);
 });

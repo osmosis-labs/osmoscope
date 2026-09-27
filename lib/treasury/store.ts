@@ -80,3 +80,41 @@ export async function getLatestTreasurySnapshot(): Promise<TreasurySnapshotData 
   // hard-depends on, validate here (e.g. a zod parse) rather than asserting.
   return row.data as unknown as TreasurySnapshotData;
 }
+
+// Record an out-of-range main-pool reading held by the move gate, and return the
+// main-pool values of the held readings taken against the SAME baseline (oldest
+// first, including this one) for isMoveConfirmed. Every successful save clears
+// the table (clearPendingMoves); filtering on the baseline as well means a clear
+// that failed can never let readings against an older baseline count.
+export async function recordPendingMove(
+  timestamp: string,
+  mainPoolValue: number,
+  baselineValue: number
+): Promise<number[]> {
+  if (!isDatabaseEnabled()) {
+    throw new Error("Database is not configured");
+  }
+  // Round the baseline to the column's 2 dp up front so the stored value and
+  // the filter below compare exactly.
+  const baseline = new Prisma.Decimal(baselineValue.toFixed(2));
+  await prisma.treasuryPendingMove.create({
+    data: {
+      timestamp: new Date(timestamp),
+      mainPoolValue,
+      baselineValue: baseline,
+    },
+  });
+  const rows = await prisma.treasuryPendingMove.findMany({
+    where: { baselineValue: baseline },
+    orderBy: { timestamp: "asc" },
+    select: { mainPoolValue: true },
+  });
+  return rows.map((r) => Number(r.mainPoolValue));
+}
+
+// Drop all held readings. Called after every successful save: the saved row is
+// the new baseline, so readings compared against the old one no longer apply.
+export async function clearPendingMoves(): Promise<void> {
+  if (!isDatabaseEnabled()) return;
+  await prisma.treasuryPendingMove.deleteMany({});
+}

@@ -1,9 +1,9 @@
 // Holdings decomposition for the treasury engine. Given a price map and an
 // address (or the community pool itself), produces a flat list of Holdings by
 // unwinding every position type the pool/subDAOs hold: simple bank balances,
-// GAMM classic-pool shares, Margined vaults, Magma vaults, concentrated-liquidity
-// positions, and EVM (Ethereum) balances. Ported from the community-pool Apps
-// Script. Server-only.
+// GAMM classic-pool shares, Margined vaults, concentrated-liquidity positions,
+// and EVM (Ethereum) balances. Ported from the community-pool Apps Script.
+// Server-only.
 import { logger } from "../logger";
 import {
   fetchLcdJson,
@@ -16,9 +16,6 @@ import {
 import type { PriceMap, PriceInfo } from "./prices";
 import { fetchClPositions, clPositionToHoldings } from "./cl";
 import {
-  MAGMA_CONTRACTS,
-  MAGMA_BALANCES_ARE_REVERSED,
-  MAGMA_HOLDER_ADDRESS,
   EVM_NATIVE_ASSETS,
   EVM_TOKEN_ALLOWLIST,
   SOLANA_NATIVE_ASSET,
@@ -41,8 +38,8 @@ function lookup(priceMap: PriceMap, denom: string): PriceInfo {
   return priceMap[denom] ?? UNKNOWN_PRICE;
 }
 
-// Find the best denom for a bare symbol (used by Magma, where the contract only
-// gives us "USDC"/"BTC" strings, not denoms). Many bridged variants share a
+// Find the best denom for a bare symbol (used by the EVM and Solana paths, which
+// only give us "USDC"/"BTC" strings, not denoms). Many bridged variants share a
 // symbol and some are unpriced or MISpriced (e.g. one "USDC" variant reports
 // $0.66 while the canonical ones report ~$1). Among positively-priced matches we
 // pick the one whose price is the MEDIAN — robust to a single bad outlier, so a
@@ -54,7 +51,7 @@ export function bestDenomForSymbol(
   caseInsensitive = false
 ): string | null {
   const want = caseInsensitive ? symbol.toUpperCase() : symbol;
-  // Guard the entry lookup: this is the shared symbol-match path for Magma + EVM
+  // Guard the entry lookup: this is the shared symbol-match path for EVM + Solana
   // (real money), so never assume priceMap[d] is defined even though today every
   // key comes from Object.keys(priceMap).
   const symOf = (d: string) => {
@@ -220,76 +217,6 @@ async function marginedVaultHoldings(
   );
 }
 
-// --- Magma vaults ----------------------------------------------------------
-// The holder's share of each Magma vault's bal0/bal1 is their underlying
-// exposure. One contract stores balances reversed relative to the symbol order.
-export async function magmaHoldings(
-  address: string,
-  priceMap: PriceMap
-): Promise<Holding[]> {
-  const holdings: Holding[] = [];
-
-  for (const contract of MAGMA_CONTRACTS) {
-    // No swallowing catch: a null from fetchCosmwasmSmartData means the query
-    // failed after retries across every base, i.e. a sustained outage — not a
-    // zero balance. Throwing here propagates to buildTreasurySnapshot and aborts,
-    // so a transient CosmWasm outage can't silently drop a vault's value. A
-    // genuine zero balance is handled explicitly below (continue), not by error.
-    const balanceData = await fetchCosmwasmSmartData<{ balance?: string }>(
-      contract,
-      { balance: { address } }
-    );
-    if (balanceData === null) {
-      throw new Error(`Magma balance query failed for ${contract}`);
-    }
-    const addressBalance = parseFloat(balanceData.balance || "0");
-    // Genuine zero balance for this holder — nothing to add, move on.
-    if (addressBalance === 0) continue;
-
-    const tokenInfo = await fetchCosmwasmSmartData<{
-      symbol?: string;
-      total_supply?: string;
-    }>(contract, { token_info: {} });
-    if (tokenInfo === null) {
-      throw new Error(`Magma token_info query failed for ${contract}`);
-    }
-    const totalSupply = parseFloat(tokenInfo.total_supply || "0");
-    if (!totalSupply) continue;
-
-    const [sym0, sym1] = String(tokenInfo.symbol || "").split("/");
-    const label = `${tokenInfo.symbol} Magma`;
-
-    const vaultData = await fetchCosmwasmSmartData<{
-      bal0?: string;
-      bal1?: string;
-    }>(contract, { vault_balances: {} });
-    if (vaultData === null) {
-      throw new Error(`Magma vault_balances query failed for ${contract}`);
-    }
-
-    const userShare = addressBalance / totalSupply;
-    const bal0 = parseFloat(vaultData.bal0 || "0");
-    const bal1 = parseFloat(vaultData.bal1 || "0");
-    const reversed = !!MAGMA_BALANCES_ARE_REVERSED[contract];
-    const asset0Raw = (reversed ? bal1 : bal0) * userShare;
-    const asset1Raw = (reversed ? bal0 : bal1) * userShare;
-
-    for (const [sym, raw] of [
-      [sym0, asset0Raw],
-      [sym1, asset1Raw],
-    ] as const) {
-      const denom = bestDenomForSymbol(priceMap, sym);
-      if (!denom) {
-        logger.warn(`Magma ${label}: no denom for symbol "${sym}"`);
-        continue;
-      }
-      holdings.push(makeHolding(denom, raw, priceMap, label));
-    }
-  }
-
-  return holdings;
-}
-
 // --- Concentrated-liquidity positions for an address -----------------------
 // Flat holdings for value aggregation, derived from the SAME structured fetch
 // (fetchClPositions) the display cards use — one source of truth, so the summed
@@ -311,7 +238,7 @@ export async function evmHoldings(
 ): Promise<Holding[]> {
   const holdings: Holding[] = [];
   const native = EVM_NATIVE_ASSETS[chainId];
-  // Reuse the same median-price, outlier-resistant selection as Magma so a
+  // Reuse the same median-price, outlier-resistant selection so a
   // mispriced variant (e.g. a "USDC" at $0.66) can't win — the EVM path had the
   // same collision bug (ETH-address USDC was valued at $0.66).
   const priceBySymbol = (symbol: string): PriceInfo => {
@@ -467,12 +394,6 @@ export async function addressHoldings(
   }
 
   holdings.push(...(await clPositionHoldings(address, priceMap)));
-
-  // The BABY Liquidity address also holds Magma vault positions (BABY/USDC,
-  // BABY/BTC). Ported from the sheet's per-address special case.
-  if (address === MAGMA_HOLDER_ADDRESS) {
-    holdings.push(...(await magmaHoldings(address, priceMap)));
-  }
 
   return holdings;
 }

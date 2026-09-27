@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
-import { buildTreasurySnapshot } from "@/lib/treasury/snapshot";
+import {
+  buildTreasurySnapshot,
+  MainPoolMoveError,
+  type TreasurySnapshotData,
+} from "@/lib/treasury/snapshot";
 import {
   saveTreasurySnapshot,
   getLatestTreasurySnapshot,
+  recordPendingMove,
+  clearPendingMoves,
 } from "@/lib/treasury/store";
+import { isMoveConfirmed, MOVE_CONFIRMATIONS } from "@/lib/treasury/move-gate";
 import { logger } from "@/lib/logger";
 
 // Hourly community-pool / DAO-treasury snapshot. Triggered by Vercel Cron (see
@@ -15,6 +22,12 @@ import { logger } from "@/lib/logger";
 // broken result (main pool priced near zero), so a transient price-feed / LCD
 // outage surfaces as a 500 and leaves the previous good row in place rather than
 // overwriting it with garbage.
+//
+// A main-pool move over 15% (MainPoolMoveError) is held rather than dropped: the
+// reading is recorded, and the snapshot is saved once MOVE_CONFIRMATIONS
+// consecutive readings agree (lib/treasury/move-gate.ts). Otherwise a genuine
+// large move, such as a big community-pool spend, would be refused by every
+// later run too, because the baseline is the last saved snapshot.
 //
 // Security: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. Requests
 // without the matching bearer token are rejected.
@@ -36,13 +49,58 @@ export async function GET(request: Request) {
     // Pass the last good main-pool value so the builder's proportional-move gate
     // can reject a partial fetch instead of overwriting a good row.
     const previous = await getLatestTreasurySnapshot();
-    const snapshot = await buildTreasurySnapshot({
-      previousMainPoolValue: previous?.mainPool.totalValue ?? null,
-    });
+    let snapshot: TreasurySnapshotData;
+    let confirmedMove = false;
+    try {
+      snapshot = await buildTreasurySnapshot({
+        previousMainPoolValue: previous?.mainPool.totalValue ?? null,
+      });
+    } catch (error) {
+      if (!(error instanceof MainPoolMoveError)) throw error;
+      const readings = await recordPendingMove(
+        error.snapshot.timestamp,
+        error.mainPoolValue,
+        error.previousMainPoolValue
+      );
+      if (!isMoveConfirmed(readings)) {
+        logger.warn(
+          `${error.message} Held as a candidate (${readings.length} held; ` +
+            `saves once ${MOVE_CONFIRMATIONS} consecutive readings agree).`
+        );
+        return NextResponse.json(
+          {
+            ok: false,
+            saved: false,
+            pendingConfirmation: true,
+            heldReadings: readings.length,
+            mainPoolValue: error.mainPoolValue,
+            previousMainPoolValue: error.previousMainPoolValue,
+            error: error.message,
+          },
+          { status: 202 }
+        );
+      }
+      logger.info(
+        `Treasury main pool move confirmed by ${MOVE_CONFIRMATIONS} consecutive ` +
+          `readings ($${error.previousMainPoolValue.toFixed(0)} -> ` +
+          `$${error.mainPoolValue.toFixed(0)}); saving.`
+      );
+      snapshot = error.snapshot;
+      confirmedMove = true;
+    }
     await saveTreasurySnapshot(snapshot);
+    // The saved row is the new baseline, so held readings no longer apply. Not
+    // fatal: the snapshot is already saved, and readings are matched on their
+    // baseline, so any left behind can't count against the new one.
+    try {
+      await clearPendingMoves();
+    } catch (error) {
+      logger.warn("Failed to clear held treasury readings:", error);
+    }
     return NextResponse.json({
       ok: true,
       saved: true,
+      confirmedMove,
       timestamp: snapshot.timestamp,
       totalValue: snapshot.totalValue,
       holders: snapshot.holders.length,
