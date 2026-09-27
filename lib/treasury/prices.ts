@@ -178,9 +178,10 @@ async function fetchSqsPrices(
   return out;
 }
 
-// USDC (the quote denom SQS prices against), used by the router cross-check.
+// USDC (Alloyed USDC, the quote denom SQS prices against since Prop 1039), used
+// by the router cross-check. 6 decimals, like the variants it alloys.
 const USDC_DENOM =
-  "ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4";
+  "factory/osmo147h5x9pcj7lm0cttlaefx6sqq5vdfnmwfcqxkmjd7exqm9gc7grqhr75m0/alloyed/allUSDC";
 
 // Above this USD-per-whole-token price an SQS /tokens/prices reading is treated
 // as unproven and must be confirmed by an actual swap quote. Deliberately well

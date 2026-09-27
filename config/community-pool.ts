@@ -4,7 +4,6 @@
 //   - which addresses are community-pool-controlled (subDAOs, forwarders, the
 //     Grants Program's Ethereum treasury, etc.)
 //   - price / symbol / exponent overrides for denoms the price API gets wrong
-//   - the Magma and Margined vault contracts whose balances must be unwound
 //   - the Ethereum RPC + ERC20 allowlist for the EVM-held treasury
 //
 // Ported from the Osmosis community-pool Google Sheet's Apps Script so the
@@ -12,8 +11,8 @@
 
 // ---------------------------------------------------------------------------
 // Associated addresses (the "DAO treasury across all addresses" view).
-// osmo1... are queried for bank balances + CL positions (+ Magma for the BABY
-// Liquidity vault holder); the 0x... entry is queried on Ethereum mainnet.
+// osmo1... are queried for bank balances + CL positions; the 0x... entry is
+// queried on Ethereum mainnet.
 // ---------------------------------------------------------------------------
 export interface AssociatedAddress {
   address: string;
@@ -71,18 +70,11 @@ export const ASSOCIATED_ADDRESSES: AssociatedAddress[] = [
       "A multisig funded by community-pool Proposal 655 to hold and deploy the allocation tied to that proposal.",
   },
   {
-    address: "osmo1y9fy0l9e9f3j2hqc30wpr6u3u6s6wwdzw2pnrlswr696v4n805xqe7kndr",
-    label: "USDN Yield: USDN Forwarder",
-    chain: "osmosis",
-    description:
-      "Yield earned by the protocol for USDN usage on Osmosis, awaiting forward to the community pool.",
-  },
-  {
-    address: "osmo1jayxmrajq8nzw2knatgsjdkdhnkw8flkgqs84pvphs3ut2hts5xq9hacch",
+    address: "osmo10c79mm4taurpdmvxvw9nyqq4mskvk9h5jn38yjpye2azeun9rg2s8j5jhr",
     label: "Top of Block Auction: USDC Forwarder",
     chain: "osmosis",
     description:
-      "Collects the USDC proceeds of the top-of-block (block-space) auction and forwards them to the community pool. Balances here are auction revenue awaiting forwarding.",
+      "Collects the USDC proceeds of the top-of-block (block-space) auction and forwards them to the community pool. Forwarding is a manual call made every few months, so balances here are auction revenue awaiting forwarding.",
   },
   {
     address: "osmo1f3xhl0gqmyhnu49c8k3j7fkdv75ug0xjtaqu09",
@@ -161,30 +153,12 @@ export const ASSOCIATED_ADDRESSES: AssociatedAddress[] = [
 export const COMMUNITY_POOL_CL_ADDRESS =
   "osmo1jv65s3grqf6v6jl3dp4t6c9t9rk99cd80yhvld";
 
-// Address whose Magma vault holdings are added to the MAIN pool breakdown.
-export const COMMUNITY_POOL_MAGMA_ADDRESS =
+// The governance module account. Governance can own CL positions directly (e.g.
+// positions deployed by proposal with the governance module as owner), and
+// those are community-pool funds. Only its CL positions are counted, never its
+// bank balance: that holds proposal deposits, which are not treasury funds.
+export const GOVERNANCE_MODULE_ADDRESS =
   "osmo10d07y265gmmuvt4z0w9aw880jnsr700jjeq4qp";
-
-// Associated address that additionally holds Magma vault positions.
-export const MAGMA_HOLDER_ADDRESS =
-  "osmo1dqjqgxunr92wxhgq8twxjkyp0evrs9grst5q3dg59m4p3hmqr0gquguuzd";
-
-// ---------------------------------------------------------------------------
-// Magma (CosmWasm) vault contracts. Each is a share token; the holder's share
-// of the vault's bal0/bal1 is their underlying exposure.
-// ---------------------------------------------------------------------------
-export const MAGMA_CONTRACTS = [
-  "osmo1eh2735el04mkw724pefa0vmxhvm2z3vmhckz4hcngng876l3v4fsh3e8cl",
-  "osmo15zuvcyd33mma74qrhf5u7q2jzmzvpxqfmwuqzfc96v47jxw3z36sknlw6l",
-  "osmo13z2d90zp0k9p62ksl97ycddvn6leaqw7z2wgys57xnugw4xgxspsjdre8s",
-  "osmo17rkk7t9vgn4erw0wlshpsmn37sepwfus352dwmq9w2px05ewucaq4zfdl5",
-];
-
-// Contracts whose bal0/bal1 are stored reversed relative to the symbol order.
-export const MAGMA_BALANCES_ARE_REVERSED: Record<string, boolean> = {
-  // USDC/BTC
-  osmo1eh2735el04mkw724pefa0vmxhvm2z3vmhckz4hcngng876l3v4fsh3e8cl: true,
-};
 
 // ---------------------------------------------------------------------------
 // EVM (Ethereum mainnet) config for the 0x... associated address.

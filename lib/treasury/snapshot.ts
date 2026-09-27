@@ -8,7 +8,6 @@ import {
   addressHoldings,
   clPositionHoldings,
   decomposeBankDenom,
-  magmaHoldings,
   evmHoldings,
   solanaHoldings,
   sortHoldings,
@@ -20,7 +19,7 @@ import { fetchClPositions, fetchPoolPairSymbols, type ClPosition } from "./cl";
 import {
   ASSOCIATED_ADDRESSES,
   COMMUNITY_POOL_CL_ADDRESS,
-  COMMUNITY_POOL_MAGMA_ADDRESS,
+  GOVERNANCE_MODULE_ADDRESS,
   isOsmoExposure,
 } from "@/config/community-pool";
 
@@ -168,8 +167,9 @@ export function aggregateBySymbol(holdings: Holding[]): AssetTotal[] {
 
 // Classify a holding's `info` context into a vault/pool kind + a grouping key +
 // a pool/vault reference id, or null if it's a plain balance / CL line (CL is
-// surfaced separately). The decomposition tags Magma as "<sym0>/<sym1> Magma",
-// GAMM as "Classic Pool <id>", and Margined vaults as the title-cased vault name
+// surfaced separately). Magma vaults were tagged "<sym0>/<sym1> Magma" (no longer
+// fetched now that governance has exited them, but stored snapshots still carry
+// the tag), GAMM as "Classic Pool <id>", and Margined vaults as the title-cased vault name
 // (contains "Vault", ending in a number); CL as "CL Pool - <id>" and CL rewards
 // as "... rewards" (both excluded here). `key` groups a position's rows; `poolRef`
 // is the trailing id/number.
@@ -295,26 +295,29 @@ export async function buildTreasurySnapshot(
 ): Promise<TreasurySnapshotData> {
   const priceMap = await buildPriceMap();
 
-  // --- Main community pool: distribution-module holdings + CL + Magma --------
+  // --- Main community pool: distribution-module holdings + CL positions -------
   // The distribution-module denoms each need their own (possibly CosmWasm/GAMM)
-  // decomposition; run those, the CL positions, and the Magma vaults with bounded
-  // concurrency rather than one-at-a-time so the whole build fits the cron budget.
+  // decomposition; run those and the CL positions with bounded concurrency
+  // rather than one-at-a-time so the whole build fits the cron budget. CL
+  // positions are read from both the dedicated CL holder and the governance
+  // module account, which can own positions directly (positions only: its bank
+  // balance is proposal deposits, not treasury funds).
   const poolData = await fetchLcdJson<{
     pool: Array<{ denom: string; amount: string }>;
   }>("/cosmos/distribution/v1beta1/community_pool");
 
-  const [bankBatches, clHoldings, magmaMainHoldings] = await Promise.all([
+  const [bankBatches, clHoldings, govClHoldings] = await Promise.all([
     mapLimit(poolData.pool || [], CONCURRENCY, (item) =>
       decomposeBankDenom(item.denom, parseFloat(item.amount || "0"), priceMap)
     ),
     clPositionHoldings(COMMUNITY_POOL_CL_ADDRESS, priceMap),
-    magmaHoldings(COMMUNITY_POOL_MAGMA_ADDRESS, priceMap),
+    clPositionHoldings(GOVERNANCE_MODULE_ADDRESS, priceMap),
   ]);
 
   const mainHoldings: Holding[] = [
     ...bankBatches.flat(),
     ...clHoldings,
-    ...magmaMainHoldings,
+    ...govClHoldings,
   ];
 
   // --- Associated addresses (gather RAW holdings first) ----------------------
@@ -434,9 +437,11 @@ export async function buildTreasurySnapshot(
   // Structured positions (range + per-token + rewards) for the frontend-style
   // cards, tagged with the entity that holds them. Fetched here (prices already
   // resolved). The community pool's CL positions live at the dedicated CL holder
-  // address; associated Osmosis addresses may hold positions too.
+  // address and the governance module account; associated Osmosis addresses may
+  // hold positions too.
   const clSources: Array<{ label: string; address: string }> = [
     { label: "Community Pool", address: COMMUNITY_POOL_CL_ADDRESS },
+    { label: "Community Pool", address: GOVERNANCE_MODULE_ADDRESS },
     ...ASSOCIATED_ADDRESSES.filter((a) => a.chain === "osmosis").map((a) => ({
       label: a.groupLabel ?? a.label,
       address: a.address,
