@@ -216,9 +216,13 @@ export const EVM_TOKEN_ALLOWLIST: Record<
 // Solana (mainnet-beta) config for the Solana associated address. Solana uses
 // JSON-RPC but a different API from EVM: native SOL via getBalance, SPL tokens
 // via getTokenAccountsByOwner. Public RPCs are rate-limited; the fetcher rotates
-// on failure like the EVM path.
+// on failure like the EVM path. `SOLANA_RPC_URL` (a keyed provider URL, server
+// only: it carries the API key) is tried first when set.
 // ---------------------------------------------------------------------------
 export const SOLANA_RPC_ENDPOINTS: string[] = [
+  ...(process.env.SOLANA_RPC_URL?.trim()
+    ? [process.env.SOLANA_RPC_URL.trim()]
+    : []),
   "https://api.mainnet-beta.solana.com",
   "https://solana-rpc.publicnode.com",
   "https://rpc.ankr.com/solana",

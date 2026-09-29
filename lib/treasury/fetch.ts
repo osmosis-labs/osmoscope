@@ -226,6 +226,14 @@ export async function fetchErc20Balance(
 // lamports (native SOL), getTokenAccountsByOwner returns SPL token accounts.
 // Rotates endpoints on failure like the EVM path.
 // ---------------------------------------------------------------------------
+function endpointLabel(endpoint: string): string {
+  try {
+    return new URL(endpoint).origin;
+  } catch {
+    return "<invalid Solana RPC URL>";
+  }
+}
+
 async function fetchSolanaRpc<T>(
   method: string,
   params: unknown[]
@@ -236,6 +244,9 @@ async function fetchSolanaRpc<T>(
   let lastError: Error | null = null;
 
   for (const endpoint of endpoints) {
+    // Keyed provider URLs carry the API key in the query string, so messages
+    // name the endpoint by origin only.
+    const label = endpointLabel(endpoint);
     try {
       const resp = await fetch(endpoint, {
         method: "POST",
@@ -243,7 +254,7 @@ async function fetchSolanaRpc<T>(
         body: JSON.stringify(payload),
       });
       if (!resp.ok) {
-        lastError = new Error(`HTTP ${resp.status} from ${endpoint}`);
+        lastError = new Error(`HTTP ${resp.status} from ${label}`);
         continue;
       }
       const data = (await resp.json()) as { result?: T; error?: unknown };
@@ -252,13 +263,13 @@ async function fetchSolanaRpc<T>(
         continue;
       }
       if (data.result === undefined) {
-        lastError = new Error(`Empty result from ${endpoint}`);
+        lastError = new Error(`Empty result from ${label}`);
         continue;
       }
       return data.result;
     } catch (e) {
       lastError = e as Error;
-      logger.warn(`Solana RPC ${method} at ${endpoint}: ${lastError.message}`);
+      logger.warn(`Solana RPC ${method} at ${label}: ${lastError.message}`);
     }
   }
   throw new Error(
