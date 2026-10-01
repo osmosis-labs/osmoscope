@@ -31,11 +31,18 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || vars.CRON_RUNNER == 'github'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # One run per job at a time; a late run waits rather than overlapping.
+    # One run per cron at a time, whichever trigger started it: a late run
+    # waits rather than overlapping (overlapping rate-limit runs would read
+    # the same alert state and notify twice). The job name expression is
+    # repeated in env below, since concurrency cannot read env.
     concurrency:
-      group: cron-${{ github.event.inputs.job || github.event.schedule }}
+      group: cron-${{ github.event.inputs.job || ((github.event.schedule == '16 17 * * *' || github.event.schedule == '45 17 * * *') && 'snapshot') || (github.event.schedule == '0 * * * *' && 'treasury') || (github.event.schedule == '30 * * * *' && 'revenue') || (github.event.schedule == '*/15 * * * *' && 'rate-limits') || 'unknown' }}
       cancel-in-progress: false
     env:
+      JOB: ${{ github.event.inputs.job || ((github.event.schedule == '16 17 * * *' || github.event.schedule == '45 17 * * *') && 'snapshot') || (github.event.schedule == '0 * * * *' && 'treasury') || (github.event.schedule == '30 * * * *' && 'revenue') || (github.event.schedule == '*/15 * * * *' && 'rate-limits') || 'unknown' }}
+      # Values a cron keeps between runs (lib/cron-state.ts), carried in the
+      # actions cache below.
+      CRON_STATE_FILE: .cron-state/state.json
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       NUMIA_API_KEY: ${{ secrets.NUMIA_API_KEY }}
       NUMIA_API_URL: ${{ secrets.NUMIA_API_URL }}
@@ -45,21 +52,6 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
-      - name: Pick the job
-        id: job
-        env:
-          INPUT: ${{ github.event.inputs.job }}
-          SCHEDULE: ${{ github.event.schedule }}
-        run: |
-          case "${INPUT:-$SCHEDULE}" in
-            snapshot|"16 17 * * *"|"45 17 * * *") job=snapshot ;;
-            treasury|"0 * * * *") job=treasury ;;
-            revenue|"30 * * * *") job=revenue ;;
-            rate-limits|"*/15 * * * *") job=rate-limits ;;
-            *) echo "unknown schedule: ${INPUT:-$SCHEDULE}"; exit 1 ;;
-          esac
-          echo "name=$job" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@v4
 
       # Yarn 4 comes from the packageManager field via Corepack.
@@ -72,4 +64,21 @@ jobs:
 
       - run: yarn install --immutable
       - run: yarn db:generate
-      - run: yarn cron ${{ steps.job.outputs.name }}
+
+      # The newest state this cron saved (cache keys are immutable, so each
+      # run saves under its own key and restores by prefix).
+      - uses: actions/cache/restore@v4
+        with:
+          path: .cron-state
+          key: cron-state-${{ env.JOB }}-${{ github.run_id }}
+          restore-keys: cron-state-${{ env.JOB }}-
+
+      # An unknown JOB fails here with the runner's usage message. The state
+      # directory always exists, so the save below has something to store.
+      - run: mkdir -p .cron-state && yarn cron "$JOB"
+
+      - if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cron-state
+          key: cron-state-${{ env.JOB }}-${{ github.run_id }}

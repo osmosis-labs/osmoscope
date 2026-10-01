@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { buildRateLimitSnapshot } from "@/lib/rate-limits/snapshot";
 import { computeAlertTransitions } from "@/lib/rate-limits/alerts";
 import { dispatchAlerts, sendOpsNotice } from "@/lib/rate-limits/notify";
+import { readCronState, writeCronState } from "@/lib/cron-state";
 import {
   saveRateLimitSnapshot,
   loadAlertStates,
@@ -30,13 +31,13 @@ export const maxDuration = 120;
 // A safety monitor's worst state is "dead and nobody knows": a broken run
 // (DB outage, dump failure) only produces 500s that nothing watches. Send a
 // best-effort degraded notice to ONE ops channel (the dispatcher picks the
-// first configured), rate-limited per warm instance so an extended outage
-// doesn't page every 15 minutes.
+// first configured), rate-limited so an extended outage doesn't page every 15
+// minutes. The cooldown and the consecutive-failure count (so the notice can
+// say whether this is a blip or a sustained outage) persist between runs
+// through lib/cron-state.
 const DEGRADED_NOTICE_INTERVAL_MS = 6 * 60 * 60 * 1000;
-let lastDegradedNoticeAt = 0;
-// Consecutive-failure counter (per warm instance) so the notice can say
-// whether this is a blip or a sustained outage.
-let consecutiveFailures = 0;
+const LAST_NOTICE_KEY = "rateLimits.lastDegradedNoticeAt";
+const FAILURES_KEY = "rateLimits.consecutiveFailures";
 
 // Which stage of the run failed — so ops knows WHERE it broke, not just that
 // it did. Carried on the thrown error via CronStageError below.
@@ -105,8 +106,12 @@ function diagnose(message: string): { hint: string; action: string } | null {
   return null;
 }
 
-async function sendDegradedNotice(error: unknown): Promise<void> {
-  if (Date.now() - lastDegradedNoticeAt < DEGRADED_NOTICE_INTERVAL_MS) return;
+async function sendDegradedNotice(
+  error: unknown,
+  consecutiveFailures: number
+): Promise<void> {
+  const lastNoticeAt = readCronState(LAST_NOTICE_KEY, 0);
+  if (Date.now() - lastNoticeAt < DEGRADED_NOTICE_INTERVAL_MS) return;
   const message = error instanceof Error ? error.message : String(error);
   const stage = error instanceof CronStageError ? error.stage : null;
   const diag = diagnose(message);
@@ -123,14 +128,14 @@ async function sendDegradedNotice(error: unknown): Promise<void> {
   }
   lines.push(
     "",
-    `This is failure #${consecutiveFailures} in a row on this instance.`,
+    `This is failure #${consecutiveFailures} in a row.`,
     "Utilization is NOT being watched until a run succeeds.",
     "(Further degraded notices are suppressed for 6h to avoid paging every 15 min.)"
   );
 
   try {
     await sendOpsNotice("Rate-limit monitor degraded", lines.join("\n"));
-    lastDegradedNoticeAt = Date.now();
+    writeCronState(LAST_NOTICE_KEY, Date.now());
   } catch {
     // The ops channel itself is unreachable — nothing more to do beyond logs.
   }
@@ -214,7 +219,7 @@ export async function GET(request: Request) {
     }
     await stage("persist-state", () => saveAlertStates(nextStates));
 
-    consecutiveFailures = 0; // a clean run clears the streak
+    writeCronState(FAILURES_KEY, 0); // a clean run clears the streak
     return NextResponse.json({
       ok: true,
       timestamp: snapshot.timestamp,
@@ -225,10 +230,11 @@ export async function GET(request: Request) {
       delivered,
     });
   } catch (error) {
-    consecutiveFailures += 1;
+    const consecutiveFailures = readCronState(FAILURES_KEY, 0) + 1;
+    writeCronState(FAILURES_KEY, consecutiveFailures);
     const stageName = error instanceof CronStageError ? error.stage : "unknown";
     logger.error(`Rate-limit cron failed [stage=${stageName}]:`, error);
-    await sendDegradedNotice(error);
+    await sendDegradedNotice(error, consecutiveFailures);
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
       { ok: false, stage: stageName, error: message },
