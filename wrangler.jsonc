@@ -1,0 +1,22 @@
+// Cloudflare Worker for osmoscope.osmosis.zone: the Next.js app built with
+// OpenNext (`opennextjs-cloudflare build`). Fits Workers Free: no cron
+// triggers (the crons run from GitHub Actions) and the default CPU limit.
+{
+  "name": "osmoscope",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-30",
+  // nodejs_compat: Prisma, pg (TCP through Cloudflare sockets) and node:*
+  // modules. global_fetch_strictly_public: fetches to the site's own public
+  // hostname go over the internet rather than looping back into the Worker.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS",
+  },
+  "observability": { "enabled": true },
+  "vars": {
+    // robots.ts only allows indexing when this is "production". Preview
+    // builds override it (see the Workers Builds variables).
+    "SITE_ENV": "production",
+  },
+}

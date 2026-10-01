@@ -9,7 +9,11 @@ import { SITE_URL } from "@/lib/site";
 // throwaway deploy-hash URL. Set NEXT_PUBLIC_SITE_URL to the canonical domain
 // to flip indexing on.
 export default function robots(): MetadataRoute.Robots {
-  const isProduction = process.env.VERCEL_ENV === "production";
+  // VERCEL_ENV on Vercel; SITE_ENV on Cloudflare (set in wrangler.jsonc and
+  // overridden for preview builds).
+  const isProduction =
+    process.env.VERCEL_ENV === "production" ||
+    process.env.SITE_ENV === "production";
   const hasCanonicalDomain = !!process.env.NEXT_PUBLIC_SITE_URL;
 
   if (!isProduction || !hasCanonicalDomain) {

@@ -1,0 +1,75 @@
+name: Cron
+
+# The data crons, run here instead of on the web host (the same schedules as
+# vercel.json, UTC). Scheduled runs only happen when the repository variable
+# CRON_RUNNER is "github": set it at the moment the host's own crons are
+# switched off, or every job would run twice and double its database writes.
+# Manual runs (Actions tab -> Cron -> Run workflow) work either way.
+#
+# GitHub may start a scheduled run some minutes late. The snapshot tolerates
+# that: it is epoch-gated and the 17:45 run is its backstop.
+on:
+  schedule:
+    - cron: "16 17 * * *" # snapshot
+    - cron: "45 17 * * *" # snapshot (backstop)
+    - cron: "0 * * * *" # treasury
+    - cron: "30 * * * *" # revenue
+    - cron: "*/15 * * * *" # rate-limits
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Cron to run
+        required: true
+        type: choice
+        options: [snapshot, treasury, revenue, rate-limits]
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    if: github.event_name == 'workflow_dispatch' || vars.CRON_RUNNER == 'github'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # One run per job at a time; a late run waits rather than overlapping.
+    concurrency:
+      group: cron-${{ github.event.inputs.job || github.event.schedule }}
+      cancel-in-progress: false
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      NUMIA_API_KEY: ${{ secrets.NUMIA_API_KEY }}
+      NUMIA_API_URL: ${{ secrets.NUMIA_API_URL }}
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+      SQS_API_URL: ${{ secrets.SQS_API_URL }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Pick the job
+        id: job
+        env:
+          INPUT: ${{ github.event.inputs.job }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          case "${INPUT:-$SCHEDULE}" in
+            snapshot|"16 17 * * *"|"45 17 * * *") job=snapshot ;;
+            treasury|"0 * * * *") job=treasury ;;
+            revenue|"30 * * * *") job=revenue ;;
+            rate-limits|"*/15 * * * *") job=rate-limits ;;
+            *) echo "unknown schedule: ${INPUT:-$SCHEDULE}"; exit 1 ;;
+          esac
+          echo "name=$job" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+
+      # Yarn 4 comes from the packageManager field via Corepack.
+      - run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+
+      - run: yarn install --immutable
+      - run: yarn db:generate
+      - run: yarn cron ${{ steps.job.outputs.name }}

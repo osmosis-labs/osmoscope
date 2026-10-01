@@ -15,6 +15,7 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "type-check": "tsc --noEmit",
     "test": "tsx --test \"lib/**/*.test.ts\"",
+    "cron": "tsx scripts/run-cron.ts",
     "populate-from-archive": "tsx scripts/populate-from-archive.ts",
     "normalize-supply-offset": "tsx scripts/normalize-supply-offset.ts",
     "backfill-genesis-2021": "tsx scripts/backfill-genesis-2021.ts",
@@ -29,7 +30,10 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "prepare": "husky"
+    "prepare": "husky",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",
@@ -42,7 +46,7 @@
     "dotenv": "^17.2.3",
     "lru-cache": "^11.2.2",
     "modern-screenshot": "^4.7.0",
-    "next": "^15.0.0",
+    "next": "15.5.26",
     "pg": "^8.22.0",
     "prisma": "^7.0.1",
     "react": "^18.3.1",
@@ -51,13 +55,14 @@
     "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.7",
     "@types/node": "^22.8.7",
     "@types/pg": "^8.20.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "autoprefixer": "^10.4.22",
     "eslint": "^8.57.0",
-    "eslint-config-next": "^15.0.0",
+    "eslint-config-next": "15.5.26",
     "eslint-config-prettier": "^9.1.0",
     "husky": "^9.1.6",
     "lint-staged": "^15.2.10",
@@ -66,7 +71,8 @@
     "prettier-plugin-tailwindcss": "^0.6.8",
     "tailwindcss": "^3.4.14",
     "tsx": "^4.20.6",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "wrangler": "^4.145.0"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
