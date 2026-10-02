@@ -55,6 +55,16 @@ export async function GET(request: Request) {
     // Default: return all history from the first reliable data point onward.
     const history = fromDataStart(await getHistory());
 
+    // getHistory falls back to an empty list when the database read fails. With
+    // a database configured an empty history is never real, so answer with an
+    // uncached error rather than let the CDN hold an empty chart for an hour.
+    if (history.length === 0 && isDatabaseEnabled()) {
+      return NextResponse.json(
+        { error: "Historical data is temporarily unavailable" },
+        { status: 503, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
     // Support simple ordering via query param even without pagination
     if (orderBy?.toLowerCase() === "asc") {
       history.sort(

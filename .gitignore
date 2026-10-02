@@ -59,3 +59,7 @@ next-env.d.ts
 !/.prettierrc.json
 /*.mjs
 !/postcss.config.mjs
+
+# Cloudflare (OpenNext build output, wrangler local state)
+.open-next/
+.wrangler/

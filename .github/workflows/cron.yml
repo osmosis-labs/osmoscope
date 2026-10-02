@@ -1,0 +1,85 @@
+name: Cron
+
+# The data crons, run here instead of on the web host (the same schedules as
+# vercel.json, UTC). Scheduled runs only happen when the repository variable
+# CRON_RUNNER is "github": set it at the moment the host's own crons are
+# switched off, or every job would run twice and double its database writes.
+# Manual runs (Actions tab -> Cron -> Run workflow) work either way.
+#
+# GitHub may start a scheduled run some minutes late. The snapshot tolerates
+# that: it is epoch-gated and the 17:45 run is its backstop.
+on:
+  schedule:
+    - cron: "16 17 * * *" # snapshot
+    - cron: "45 17 * * *" # snapshot (backstop)
+    - cron: "0 * * * *" # treasury
+    - cron: "30 * * * *" # revenue
+    - cron: "*/15 * * * *" # rate-limits
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Cron to run
+        required: true
+        type: choice
+        options: [snapshot, treasury, revenue, rate-limits]
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    if: github.event_name == 'workflow_dispatch' || vars.CRON_RUNNER == 'github'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # One run per cron at a time, whichever trigger started it: a late run
+    # waits rather than overlapping (overlapping rate-limit runs would read
+    # the same alert state and notify twice). The job name expression is
+    # repeated in env below, since concurrency cannot read env.
+    concurrency:
+      group: cron-${{ github.event.inputs.job || ((github.event.schedule == '16 17 * * *' || github.event.schedule == '45 17 * * *') && 'snapshot') || (github.event.schedule == '0 * * * *' && 'treasury') || (github.event.schedule == '30 * * * *' && 'revenue') || (github.event.schedule == '*/15 * * * *' && 'rate-limits') || 'unknown' }}
+      cancel-in-progress: false
+    env:
+      JOB: ${{ github.event.inputs.job || ((github.event.schedule == '16 17 * * *' || github.event.schedule == '45 17 * * *') && 'snapshot') || (github.event.schedule == '0 * * * *' && 'treasury') || (github.event.schedule == '30 * * * *' && 'revenue') || (github.event.schedule == '*/15 * * * *' && 'rate-limits') || 'unknown' }}
+      # Values a cron keeps between runs (lib/cron-state.ts), carried in the
+      # actions cache below.
+      CRON_STATE_FILE: .cron-state/state.json
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      NUMIA_API_KEY: ${{ secrets.NUMIA_API_KEY }}
+      NUMIA_API_URL: ${{ secrets.NUMIA_API_URL }}
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+      SQS_API_URL: ${{ secrets.SQS_API_URL }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Yarn 4 comes from the packageManager field via Corepack.
+      - run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+
+      - run: yarn install --immutable
+      - run: yarn db:generate
+
+      # The newest state this cron saved. Cache keys are immutable, so each
+      # run attempt saves under its own key (run_id stays the same on a
+      # re-run, run_attempt does not) and restores the newest by prefix.
+      - uses: actions/cache/restore@v4
+        with:
+          path: .cron-state
+          key: cron-state-${{ env.JOB }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: cron-state-${{ env.JOB }}-
+
+      # An unknown JOB fails here with the runner's usage message. The state
+      # directory always exists, so the save below has something to store.
+      - run: mkdir -p .cron-state && yarn cron "$JOB"
+
+      - if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cron-state
+          key: cron-state-${{ env.JOB }}-${{ github.run_id }}-${{ github.run_attempt }}

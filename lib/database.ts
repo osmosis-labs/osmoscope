@@ -1,6 +1,22 @@
-import { PrismaClient } from "@prisma/client";
+import type { PrismaClient as PrismaClientType } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { logger } from "./logger";
+
+// Prisma's Node entry compiles its query-compiler Wasm at runtime, which
+// Cloudflare Workers forbid. Its Workers entry (`.prisma/client/edge`)
+// imports the Wasm as a module instead, but the Worker bundler resolves
+// `@prisma/client` with the `node` condition, which Prisma lists first, so the
+// Workers entry is required by name there. Both are server-external packages
+// (next.config.ts), so Vercel and Node never load the edge entry.
+type PrismaClient = PrismaClientType;
+const { PrismaClient } = (
+  typeof navigator !== "undefined" &&
+  navigator.userAgent === "Cloudflare-Workers"
+    ? // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require(".prisma/client/edge")
+    : // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require("@prisma/client")
+) as typeof import("@prisma/client");
 
 // PrismaClient is attached to the `global` object in development to prevent
 // exhausting your database connection limit.
@@ -36,23 +52,61 @@ const poolMax = Number(process.env.DB_POOL_MAX) || 2;
 
 // idleTimeoutMillis: release idle connections quickly so a warm-but-idle
 // instance stops squatting on a connection other instances (or crons) need.
-const adapter = new PrismaPg({
-  connectionString,
-  max: poolMax,
-  idleTimeoutMillis: 10_000,
-});
-
-export const prisma =
-  globalForPrisma.prisma ||
+const createClient = (url: string | undefined) =>
   new PrismaClient({
-    adapter,
+    adapter: new PrismaPg({
+      connectionString: url,
+      max: poolMax,
+      idleTimeoutMillis: 10_000,
+    }),
     log:
       process.env.NODE_ENV === "development"
         ? ["query", "error", "warn"]
         : ["error"],
   });
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+// On Cloudflare Workers a database connection belongs to the request that
+// opened it: a module-level pool reused by a later request fails ("Cannot
+// perform I/O on behalf of a different request"). There each request gets its
+// own client, keyed on that request's execution context, connecting through
+// Hyperdrive (which pools connections in front of Prisma Postgres) when the
+// HYPERDRIVE binding exists. Everywhere else (Vercel, local, scripts) there is
+// no Cloudflare context and one client is shared as before.
+type CloudflareContext = {
+  env: { HYPERDRIVE?: { connectionString: string } };
+  ctx: object;
+};
+const requestContext = (): CloudflareContext | undefined =>
+  (globalThis as unknown as Record<symbol, CloudflareContext | undefined>)[
+    Symbol.for("__cloudflare-context__")
+  ];
+const perRequest = new WeakMap<object, PrismaClient>();
+
+const currentClient = (): PrismaClient => {
+  const cf = requestContext();
+  if (cf?.ctx) {
+    let client = perRequest.get(cf.ctx);
+    if (!client) {
+      client = createClient(
+        cf.env.HYPERDRIVE?.connectionString ?? connectionString
+      );
+      perRequest.set(cf.ctx, client);
+    }
+    return client;
+  }
+  globalForPrisma.prisma ??= createClient(connectionString);
+  return globalForPrisma.prisma;
+};
+
+// The same `prisma` every module imports, resolving to the current request's
+// client on each use.
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_, prop) {
+    const client = currentClient();
+    const value = Reflect.get(client, prop, client);
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});
 
 // Check if database is configured
 export function isDatabaseEnabled(): boolean {
