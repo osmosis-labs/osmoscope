@@ -1,9 +1,9 @@
 name: Cron
 
-# The data crons, run here instead of on the web host (the same schedules as
-# vercel.json, UTC). Scheduled runs only happen when the repository variable
-# CRON_RUNNER is "github": set it at the moment the host's own crons are
-# switched off, or every job would run twice and double its database writes.
+# The data crons (UTC), run here rather than on the web host. Scheduled runs
+# only happen when the repository variable CRON_RUNNER is "github"; unset it
+# to pause them, and never run another host's crons alongside, or every job
+# would run twice and double its database writes.
 # Manual runs (Actions tab -> Cron -> Run workflow) work either way.
 #
 # GitHub may start a scheduled run some minutes late. The snapshot tolerates

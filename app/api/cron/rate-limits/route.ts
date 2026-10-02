@@ -11,7 +11,7 @@ import {
 } from "@/lib/rate-limits/store";
 import { logger } from "@/lib/logger";
 
-// IBC rate-limit trip monitor. Triggered by Vercel Cron (see vercel.json)
+// IBC rate-limit trip monitor. Run by .github/workflows/cron.yml
 // every 15 minutes: dumps the rate limiter contract's state, computes
 // per-window quota utilization, alerts the configured channels (Telegram,
 // Slack) on threshold escalations and
@@ -24,8 +24,9 @@ import { logger } from "@/lib/logger";
 // advanced, so the same transitions fire again on the next run instead of
 // being swallowed by the de-duplication.
 //
-// Security: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. Requests
-// without the matching bearer token are rejected.
+// Security: requests need `Authorization: Bearer <CRON_SECRET>`; others are
+// rejected. scripts/run-cron.ts sends it (with a per-run secret) when the
+// GitHub Actions workflow runs the route.
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 

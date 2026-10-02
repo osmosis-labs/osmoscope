@@ -8,7 +8,7 @@ import { getHistory } from "@/lib/historical-file";
 import { logger } from "@/lib/logger";
 import { pruneHistory } from "@/lib/retention";
 
-// Epoch-aware daily snapshot. Triggered by Vercel Cron (see vercel.json) shortly
+// Epoch-aware daily snapshot. Run by .github/workflows/cron.yml shortly
 // after the daily epoch window, NOT by page traffic.
 //
 // The chain's mint/inflation values only change when the "day" epoch advances.
@@ -21,8 +21,9 @@ import { pruneHistory } from "@/lib/retention";
 // still hasn't advanced by the deadline it exits without writing (the next cron
 // run will catch it).
 //
-// Security: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. Requests
-// without the matching bearer token are rejected.
+// Security: requests need `Authorization: Bearer <CRON_SECRET>`; others are
+// rejected. scripts/run-cron.ts sends it (with a per-run secret) when the
+// GitHub Actions workflow runs the route.
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // allow polling for a delayed epoch
 

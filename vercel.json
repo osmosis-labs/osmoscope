@@ -6,27 +6,5 @@
   },
   "github": {
     "silent": false
-  },
-  "crons": [
-    {
-      "path": "/api/cron/snapshot",
-      "schedule": "15 17 * * *"
-    },
-    {
-      "path": "/api/cron/snapshot",
-      "schedule": "45 17 * * *"
-    },
-    {
-      "path": "/api/cron/treasury",
-      "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/cron/revenue",
-      "schedule": "30 * * * *"
-    },
-    {
-      "path": "/api/cron/rate-limits",
-      "schedule": "*/15 * * * *"
-    }
-  ]
+  }
 }

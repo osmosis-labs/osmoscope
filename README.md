@@ -401,11 +401,14 @@ yarn migrate-json-to-db
 
 ### Automatic Daily Snapshots
 
-A Vercel Cron job calls `/api/cron/snapshot` once a day at 17:20 UTC (configured
-in `vercel.json`) and writes that day's historical record. Running on a schedule
-(rather than as a side effect of page traffic) keeps the historical series
-gap-free regardless of how many visitors the site gets. The cron route is
-secured by `CRON_SECRET`; Vercel sends it as a bearer token automatically.
+The GitHub Actions workflow `.github/workflows/cron.yml` runs `/api/cron/snapshot`
+daily at 17:16 and 17:45 UTC (the epoch starts around 17:16) and writes that day's
+historical record; it also runs the treasury, revenue and rate-limit crons. Running
+on a schedule (rather than as a side effect of page traffic) keeps the historical
+series gap-free regardless of how many visitors the site gets. The workflow calls
+each route in-process with `yarn cron <name>`, which supplies the route's
+`CRON_SECRET` bearer token itself. Scheduled runs only happen while the repository
+variable `CRON_RUNNER` is `github`.
 
 The public metrics endpoint (`/api/osmosis-metrics`) is read-only: it serves
 current live values on each request and no longer writes snapshots.

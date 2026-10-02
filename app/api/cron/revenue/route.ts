@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { refreshRecentRevenue } from "@/lib/snapshot";
 import { logger } from "@/lib/logger";
 
-// Hourly protocol-revenue refresh. Triggered by Vercel Cron (see vercel.json).
+// Hourly protocol-revenue refresh. Run by .github/workflows/cron.yml.
 //
 // Revenue comes from Data Lenses, which lags the chain by several days and
 // publishes a given day at an unpredictable hour. This is deliberately a
@@ -17,8 +17,9 @@ import { logger } from "@/lib/logger";
 // and is idempotent + internally guarded (never throws), so re-running hourly is
 // cheap and safe.
 //
-// Security: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. Requests
-// without the matching bearer token are rejected.
+// Security: requests need `Authorization: Bearer <CRON_SECRET>`; others are
+// rejected. scripts/run-cron.ts sends it (with a per-run secret) when the
+// GitHub Actions workflow runs the route.
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
