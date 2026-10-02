@@ -65,12 +65,13 @@ jobs:
       - run: yarn install --immutable
       - run: yarn db:generate
 
-      # The newest state this cron saved (cache keys are immutable, so each
-      # run saves under its own key and restores by prefix).
+      # The newest state this cron saved. Cache keys are immutable, so each
+      # run attempt saves under its own key (run_id stays the same on a
+      # re-run, run_attempt does not) and restores the newest by prefix.
       - uses: actions/cache/restore@v4
         with:
           path: .cron-state
-          key: cron-state-${{ env.JOB }}-${{ github.run_id }}
+          key: cron-state-${{ env.JOB }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: cron-state-${{ env.JOB }}-
 
       # An unknown JOB fails here with the runner's usage message. The state
@@ -81,4 +82,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .cron-state
-          key: cron-state-${{ env.JOB }}-${{ github.run_id }}
+          key: cron-state-${{ env.JOB }}-${{ github.run_id }}-${{ github.run_attempt }}
