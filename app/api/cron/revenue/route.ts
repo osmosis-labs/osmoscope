@@ -7,7 +7,7 @@ import { logger } from "@/lib/logger";
 // Revenue comes from Data Lenses, which lags the chain by several days and
 // publishes a given day at an unpredictable hour. This is deliberately a
 // SEPARATE, hourly cron rather than being tied to the daily snapshot cron
-// (15/45 17 * * *): that cron fires only twice a day within one 30-minute
+// (16/47 17 * * *): that cron fires only twice a day within one 30-minute
 // window, so if Data Lenses hadn't published "today" by 17:15 UTC the fill
 // waited a full day (the bug this route fixes). Running hourly, revenue lands
 // within ~1h of upstream publishing. It's also independent of the snapshot and

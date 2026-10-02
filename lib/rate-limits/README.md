@@ -61,7 +61,7 @@ Two situations are deliberately not alerted on:
    so it degrades to a log-only checker. Trip alerts go to EVERY configured
    channel; "monitor degraded" ops notices go to the FIRST configured channel
    only (Telegram, then Slack).
-7. The cron runs from `.github/workflows/cron.yml` (`*/15 * * * *`).
+7. The cron runs from `.github/workflows/cron.yml` every 15 minutes (`7,22,37,52 * * * *`).
 
 Manual trigger:
 

@@ -117,9 +117,9 @@ export async function GET(request: Request) {
 
     // Pending-undelegation retry: the epoch-gated build above only attempts
     // the unbonding fan-out on the ONE run where the epoch advances; if that
-    // fan-out failed, nothing used to retry it until the next day (the 17:45
+    // fan-out failed, nothing used to retry it until the next day (the 17:47
     // run exits as "already-captured-today"), so a single rate-limited
-    // validator left a permanent gap. Now every invocation — the 17:45 run and
+    // validator left a permanent gap. Now every invocation — the 17:47 run and
     // manual triggers included — re-runs the fan-out while the day's forecast
     // is stale. Skipped when the epoch poll + build already consumed most of
     // maxDuration (300s), and raced against the remaining budget while it
