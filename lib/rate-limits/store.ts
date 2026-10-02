@@ -12,14 +12,8 @@ import { logger } from "../logger";
 import type { RateLimitSnapshotData } from "./snapshot";
 import type { AlertLevel, StoredAlertState } from "./alerts";
 
-export async function saveRateLimitSnapshot(
-  data: RateLimitSnapshotData
-): Promise<void> {
-  if (!isDatabaseEnabled()) {
-    throw new Error("Database is not configured");
-  }
-
-  const ts = new Date(data.timestamp);
+// The UTC hour a snapshot timestamp falls in.
+function hourBounds(ts: Date): { hourStart: Date; hourEnd: Date } {
   const hourStart = new Date(
     Date.UTC(
       ts.getUTCFullYear(),
@@ -28,7 +22,27 @@ export async function saveRateLimitSnapshot(
       ts.getUTCHours()
     )
   );
-  const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000);
+  return { hourStart, hourEnd: new Date(hourStart.getTime() + 60 * 60 * 1000) };
+}
+
+const snapshotRow = (data: RateLimitSnapshotData) => ({
+  timestamp: new Date(data.timestamp),
+  pathCount: data.pathCount,
+  maxUtilizationPct: data.maxUtilizationPct,
+  data: data as unknown as Prisma.InputJsonValue,
+});
+
+// The hour's snapshot and its readings, replacing any already stored for that
+// hour.
+export async function saveRateLimitSnapshot(
+  data: RateLimitSnapshotData
+): Promise<void> {
+  if (!isDatabaseEnabled()) {
+    throw new Error("Database is not configured");
+  }
+
+  const ts = new Date(data.timestamp);
+  const { hourStart, hourEnd } = hourBounds(ts);
 
   // The per-denom raw flow readings (the queryable series), one row per
   // window: same hour-dedupe as the blob so the two stay in lockstep. Keyed by
@@ -45,6 +59,9 @@ export async function saveRateLimitSnapshot(
       channelValue: w.channelValue,
       inflow: w.inflow,
       outflow: w.outflow,
+      sendPct: w.sendPct,
+      recvPct: w.recvPct,
+      periodEnd: BigInt(w.periodEnd),
     }))
   );
 
@@ -60,14 +77,7 @@ export async function saveRateLimitSnapshot(
       await tx.rateLimitSnapshot.deleteMany({
         where: { timestamp: { gte: hourStart, lt: hourEnd } },
       });
-      await tx.rateLimitSnapshot.create({
-        data: {
-          timestamp: ts,
-          pathCount: data.pathCount,
-          maxUtilizationPct: data.maxUtilizationPct,
-          data: data as unknown as Prisma.InputJsonValue,
-        },
-      });
+      await tx.rateLimitSnapshot.create({ data: snapshotRow(data) });
       await tx.rateLimitReading.deleteMany({
         where: { timestamp: { gte: hourStart, lt: hourEnd } },
       });
@@ -83,6 +93,25 @@ export async function saveRateLimitSnapshot(
   logger.info(
     `Saved rate-limit snapshot: ${data.timestamp} (${readings.length} readings)`
   );
+}
+
+// Brings the hour's stored snapshot up to date in one statement, leaving its
+// readings as stored: /api/rate-limits shows the latest snapshot, so it must
+// follow every run, while the readings stay an hourly series. Falls back to a
+// full save when the hour has no snapshot yet.
+export async function refreshRateLimitSnapshot(
+  data: RateLimitSnapshotData
+): Promise<void> {
+  if (!isDatabaseEnabled()) {
+    throw new Error("Database is not configured");
+  }
+
+  const { hourStart, hourEnd } = hourBounds(new Date(data.timestamp));
+  const { count } = await prisma.rateLimitSnapshot.updateMany({
+    where: { timestamp: { gte: hourStart, lt: hourEnd } },
+    data: snapshotRow(data),
+  });
+  if (count === 0) await saveRateLimitSnapshot(data);
 }
 
 export async function loadAlertStates(): Promise<

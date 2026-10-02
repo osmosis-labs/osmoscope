@@ -6,6 +6,7 @@ import {
 import { fetchDayEpoch } from "@/lib/osmosis-lcd";
 import { getHistory } from "@/lib/historical-file";
 import { logger } from "@/lib/logger";
+import { pruneHistory } from "@/lib/retention";
 
 // Epoch-aware daily snapshot. Triggered by Vercel Cron (see vercel.json) shortly
 // after the daily epoch window, NOT by page traffic.
@@ -154,7 +155,20 @@ export async function GET(request: Request) {
       unbonding = { refreshed: false, reason: "time-budget-exhausted" };
     }
 
-    return NextResponse.json({ ok: true, ...result, unbonding });
+    // Daily retention for the append-only cron tables (lib/retention.ts).
+    // Idempotent, so the second daily run costs a few no-op statements.
+    // Non-fatal: a failed prune leaves the rows to the next run.
+    let retention: Record<string, unknown>;
+    try {
+      retention = { ...(await pruneHistory()) };
+    } catch (e) {
+      logger.warn(
+        `Retention prune failed (non-critical): ${e instanceof Error ? e.message : String(e)}`
+      );
+      retention = { error: e instanceof Error ? e.message : "Unknown error" };
+    }
+
+    return NextResponse.json({ ok: true, ...result, unbonding, retention });
   } catch (error) {
     logger.error("Snapshot cron failed:", error);
     return NextResponse.json(

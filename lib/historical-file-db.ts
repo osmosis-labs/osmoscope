@@ -288,7 +288,14 @@ export async function backfillRevenueInDatabase(
     const day = r.timestamp.toISOString().split("T")[0];
     const rev = byDate.get(day);
     if (!rev) continue;
-    if (r.totalRevenue != null && Number(r.totalRevenue) === rev.totalRevenue) {
+    // Compare in cents: the column is Decimal(20, 2) and the source is an
+    // unrounded float, so an exact comparison never matched and every row in
+    // the window was rewritten on every run.
+    if (
+      r.totalRevenue != null &&
+      Math.round(Number(r.totalRevenue) * 100) ===
+        Math.round(rev.totalRevenue * 100)
+    ) {
       continue; // already current
     }
     await prisma.historicalRecord.update({
