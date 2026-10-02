@@ -38,6 +38,10 @@ export const maxDuration = 120;
 const DEGRADED_NOTICE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const LAST_NOTICE_KEY = "rateLimits.lastDegradedNoticeAt";
 const FAILURES_KEY = "rateLimits.consecutiveFailures";
+// The UTC hour ("YYYY-MM-DDTHH") whose snapshot is stored. The cron runs every
+// 15 minutes for alert latency, but the stored series is hourly, so only the
+// first clean run of each hour writes it.
+const PERSISTED_HOUR_KEY = "rateLimits.persistedHour";
 
 // Which stage of the run failed — so ops knows WHERE it broke, not just that
 // it did. Carried on the thrown error via CronStageError below.
@@ -202,7 +206,12 @@ export async function GET(request: Request) {
 
   try {
     const snapshot = await stage("dump", () => buildRateLimitSnapshot());
-    await stage("persist-snapshot", () => saveRateLimitSnapshot(snapshot));
+    const hour = new Date(snapshot.timestamp).toISOString().slice(0, 13);
+    const persisted = readCronState(PERSISTED_HOUR_KEY, "") !== hour;
+    if (persisted) {
+      await stage("persist-snapshot", () => saveRateLimitSnapshot(snapshot));
+      writeCronState(PERSISTED_HOUR_KEY, hour);
+    }
 
     const stored = await stage("load-state", () => loadAlertStates());
     const { transitions, nextStates } = computeAlertTransitions(
@@ -217,7 +226,21 @@ export async function GET(request: Request) {
       delivered = (await stage("alerts", () => dispatchAlerts(transitions)))
         .delivered;
     }
-    await stage("persist-state", () => saveAlertStates(nextStates));
+    // Steady state (nothing at or above warn, or no level or pct change) needs
+    // no write.
+    const statesChanged =
+      nextStates.size !== stored.size ||
+      [...nextStates].some(([key, next]) => {
+        const prev = stored.get(key);
+        return (
+          !prev ||
+          prev.level !== next.level ||
+          Math.round(prev.pct * 100) !== Math.round(next.pct * 100)
+        );
+      });
+    if (statesChanged) {
+      await stage("persist-state", () => saveAlertStates(nextStates));
+    }
 
     writeCronState(FAILURES_KEY, 0); // a clean run clears the streak
     return NextResponse.json({
@@ -225,6 +248,7 @@ export async function GET(request: Request) {
       timestamp: snapshot.timestamp,
       endpoint: snapshot.endpoint,
       paths: snapshot.pathCount,
+      persisted,
       maxUtilizationPct: snapshot.maxUtilizationPct,
       transitions: transitions.length,
       delivered,
