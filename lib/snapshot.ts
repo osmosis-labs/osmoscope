@@ -85,7 +85,7 @@ async function persistUnbondingArtifacts(
 }
 
 // Retry path for the pending-undelegation figures, called on EVERY snapshot
-// cron invocation (including the 17:45 run and manual triggers, which exit the
+// cron invocation (including the 17:47 run and manual triggers, which exit the
 // epoch gate early as "already-captured-today"). The epoch-gated build only
 // attempts the unbonding fan-out once, at ~17:15; when a validator's query
 // failed there, the persist gate correctly skipped the day's figures — but
@@ -409,7 +409,7 @@ export async function buildAndSaveSnapshot(
     // are a plausible-looking UNDERCOUNT. Displaying that live is acceptable;
     // baking it into the permanent series (HistoricalRecord, the forecast blob,
     // tomorrow's UndelegationDay row) is not — same refuse-to-persist philosophy
-    // as assertSnapshotSane. Leave the fields unset and let the 17:45 retry (or
+    // as assertSnapshotSane. Leave the fields unset and let the 17:47 retry (or
     // tomorrow's run) fill them from a clean fan-out.
     if (unbonding.fetchFailures > 0) {
       logger.warn(

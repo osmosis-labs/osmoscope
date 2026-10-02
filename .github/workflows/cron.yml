@@ -6,15 +6,17 @@ name: Cron
 # would run twice and double its database writes.
 # Manual runs (Actions tab -> Cron -> Run workflow) work either way.
 #
-# GitHub may start a scheduled run some minutes late. The snapshot tolerates
-# that: it is epoch-gated and the 17:45 run is its backstop.
+# GitHub may start a scheduled run late, or drop it, under load, which is
+# heaviest on the hour and quarter hour. The schedules sit off those minutes
+# for that reason. The snapshot also tolerates delay: it is epoch-gated (the
+# epoch starts around 17:16) and the 17:47 run is its backstop.
 on:
   schedule:
     - cron: "16 17 * * *" # snapshot
-    - cron: "45 17 * * *" # snapshot (backstop)
-    - cron: "0 * * * *" # treasury
-    - cron: "30 * * * *" # revenue
-    - cron: "*/15 * * * *" # rate-limits
+    - cron: "47 17 * * *" # snapshot (backstop)
+    - cron: "4 * * * *" # treasury
+    - cron: "34 * * * *" # revenue
+    - cron: "7,22,37,52 * * * *" # rate-limits
   workflow_dispatch:
     inputs:
       job:
@@ -36,10 +38,10 @@ jobs:
     # the same alert state and notify twice). The job name expression is
     # repeated in env below, since concurrency cannot read env.
     concurrency:
-      group: cron-${{ github.event.inputs.job || ((github.event.schedule == '16 17 * * *' || github.event.schedule == '45 17 * * *') && 'snapshot') || (github.event.schedule == '0 * * * *' && 'treasury') || (github.event.schedule == '30 * * * *' && 'revenue') || (github.event.schedule == '*/15 * * * *' && 'rate-limits') || 'unknown' }}
+      group: cron-${{ github.event.inputs.job || ((github.event.schedule == '16 17 * * *' || github.event.schedule == '47 17 * * *') && 'snapshot') || (github.event.schedule == '4 * * * *' && 'treasury') || (github.event.schedule == '34 * * * *' && 'revenue') || (github.event.schedule == '7,22,37,52 * * * *' && 'rate-limits') || 'unknown' }}
       cancel-in-progress: false
     env:
-      JOB: ${{ github.event.inputs.job || ((github.event.schedule == '16 17 * * *' || github.event.schedule == '45 17 * * *') && 'snapshot') || (github.event.schedule == '0 * * * *' && 'treasury') || (github.event.schedule == '30 * * * *' && 'revenue') || (github.event.schedule == '*/15 * * * *' && 'rate-limits') || 'unknown' }}
+      JOB: ${{ github.event.inputs.job || ((github.event.schedule == '16 17 * * *' || github.event.schedule == '47 17 * * *') && 'snapshot') || (github.event.schedule == '4 * * * *' && 'treasury') || (github.event.schedule == '34 * * * *' && 'revenue') || (github.event.schedule == '7,22,37,52 * * * *' && 'rate-limits') || 'unknown' }}
       # Values a cron keeps between runs (lib/cron-state.ts), carried in the
       # actions cache below.
       CRON_STATE_FILE: .cron-state/state.json

@@ -402,7 +402,7 @@ yarn migrate-json-to-db
 ### Automatic Daily Snapshots
 
 The GitHub Actions workflow `.github/workflows/cron.yml` runs `/api/cron/snapshot`
-daily at 17:16 and 17:45 UTC (the epoch starts around 17:16) and writes that day's
+daily at 17:16 and 17:47 UTC (the epoch starts around 17:16) and writes that day's
 historical record; it also runs the treasury, revenue and rate-limit crons. Running
 on a schedule (rather than as a side effect of page traffic) keeps the historical
 series gap-free regardless of how many visitors the site gets. The workflow calls
