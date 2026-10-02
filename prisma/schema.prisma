@@ -318,6 +318,15 @@ model RateLimitReading {
   inflow       Decimal  @db.Decimal(78, 0)
   outflow      Decimal  @db.Decimal(78, 0)
 
+  // The quota's caps (whole percent of channelValue) and its period end
+  // (nanoseconds) at this reading, so a reading is self-contained for the
+  // limit review: the same-hour snapshot blob also has them, but retention
+  // keeps one snapshot per day once a day is old (lib/retention.ts). Null only
+  // on rows a backfill could not match.
+  sendPct   Int?
+  recvPct   Int?
+  periodEnd BigInt?
+
   @@id([timestamp, channel, denom, quotaName])
   @@index([denom, timestamp(sort: Asc)])
   @@map("rate_limit_readings")

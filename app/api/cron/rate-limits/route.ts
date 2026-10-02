@@ -4,9 +4,10 @@ import { computeAlertTransitions } from "@/lib/rate-limits/alerts";
 import { dispatchAlerts, sendOpsNotice } from "@/lib/rate-limits/notify";
 import { readCronState, writeCronState } from "@/lib/cron-state";
 import {
-  saveRateLimitSnapshot,
   loadAlertStates,
+  refreshRateLimitSnapshot,
   saveAlertStates,
+  saveRateLimitSnapshot,
 } from "@/lib/rate-limits/store";
 import { logger } from "@/lib/logger";
 
@@ -38,9 +39,10 @@ export const maxDuration = 120;
 const DEGRADED_NOTICE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const LAST_NOTICE_KEY = "rateLimits.lastDegradedNoticeAt";
 const FAILURES_KEY = "rateLimits.consecutiveFailures";
-// The UTC hour ("YYYY-MM-DDTHH") whose snapshot is stored. The cron runs every
-// 15 minutes for alert latency, but the stored series is hourly, so only the
-// first clean run of each hour writes it.
+// The UTC hour ("YYYY-MM-DDTHH") whose readings are stored. The cron runs
+// every 15 minutes for alert latency, but the readings are an hourly series,
+// so only the first clean run of each hour writes them; later runs only bring
+// the hour's snapshot (what /api/rate-limits shows) up to date.
 const PERSISTED_HOUR_KEY = "rateLimits.persistedHour";
 
 // Which stage of the run failed — so ops knows WHERE it broke, not just that
@@ -207,10 +209,12 @@ export async function GET(request: Request) {
   try {
     const snapshot = await stage("dump", () => buildRateLimitSnapshot());
     const hour = new Date(snapshot.timestamp).toISOString().slice(0, 13);
-    const persisted = readCronState(PERSISTED_HOUR_KEY, "") !== hour;
-    if (persisted) {
+    const readingsSaved = readCronState(PERSISTED_HOUR_KEY, "") !== hour;
+    if (readingsSaved) {
       await stage("persist-snapshot", () => saveRateLimitSnapshot(snapshot));
       writeCronState(PERSISTED_HOUR_KEY, hour);
+    } else {
+      await stage("persist-snapshot", () => refreshRateLimitSnapshot(snapshot));
     }
 
     const stored = await stage("load-state", () => loadAlertStates());
@@ -248,7 +252,7 @@ export async function GET(request: Request) {
       timestamp: snapshot.timestamp,
       endpoint: snapshot.endpoint,
       paths: snapshot.pathCount,
-      persisted,
+      readingsSaved,
       maxUtilizationPct: snapshot.maxUtilizationPct,
       transitions: transitions.length,
       delivered,

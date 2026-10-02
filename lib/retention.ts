@@ -6,14 +6,16 @@
 // - treasury_snapshots: hourly for 7 days, then the last snapshot of each
 //   day. The app reads only the latest row; older rows are a daily trend.
 // - rate_limit_readings: hourly for 180 days, then per (channel, denom,
-//   quota, day) the two hours that matter for the limit review: the highest
-//   and the lowest (inflow - outflow) / channelValue. Utilization is net flow
-//   over channelValue times a fixed per-quota percentage
-//   (lib/rate-limits/snapshot.ts), so these are the day's peak recv and peak
-//   send utilization. A day without a channel value keeps its last row.
-// - rate_limit_snapshots (the caps and per-window utilization those readings
-//   are measured against): hourly for 180 days, then the day's snapshot with
-//   the highest maxUtilizationPct.
+//   quota, day) the two hours that matter for the limit review: the day's
+//   peak recv and peak send utilization. Utilization is net flow over
+//   channelValue times the quota's percentage, counted only while the window
+//   is active (lib/rate-limits/snapshot.ts); each reading stores its own
+//   caps and period end. Readings without stored caps rank by
+//   (inflow - outflow) / channelValue instead. A day with nothing computable
+//   keeps its last row.
+// - rate_limit_snapshots: hourly for 180 days, then the day's snapshot with
+//   the highest maxUtilizationPct. Readings carry their own caps, so they
+//   don't depend on the snapshots that are removed.
 import { prisma, isDatabaseEnabled } from "./database";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -50,6 +52,9 @@ export async function pruneHistory(): Promise<RetentionResult> {
       )`;
 
   const rateLimitCutoff = dayCutoff(RATE_LIMIT_HOURLY_DAYS);
+  // Ordering keys for the day's peaks. The scale (percent) is dropped: it
+  // doesn't change the order. An expired window's counters are not live
+  // flow, so they rank last.
   const rateLimitReadings = await prisma.$executeRaw`
     DELETE FROM rate_limit_readings r
     USING (
@@ -57,17 +62,38 @@ export async function pruneHistory(): Promise<RetentionResult> {
         row_number() OVER (
           PARTITION BY channel, denom, "quotaName",
             date_trunc('day', timestamp AT TIME ZONE 'UTC')
-          ORDER BY (inflow - outflow) / NULLIF("channelValue", 0) DESC NULLS LAST,
-            timestamp DESC
+          ORDER BY recv_peak DESC NULLS LAST, timestamp DESC
         ) AS peak_recv,
         row_number() OVER (
           PARTITION BY channel, denom, "quotaName",
             date_trunc('day', timestamp AT TIME ZONE 'UTC')
-          ORDER BY (inflow - outflow) / NULLIF("channelValue", 0) ASC NULLS LAST,
-            timestamp DESC
+          ORDER BY send_peak DESC NULLS LAST, timestamp DESC
         ) AS peak_send
-      FROM rate_limit_readings
-      WHERE timestamp < ${rateLimitCutoff}
+      FROM (
+        SELECT timestamp, channel, denom, "quotaName",
+          CASE
+            WHEN "recvPct" IS NULL
+              THEN (inflow - outflow) / NULLIF("channelValue", 0)
+            WHEN active AND "recvPct" > 0
+              THEN GREATEST(inflow - outflow, 0)
+                / NULLIF("channelValue" * "recvPct", 0)
+          END AS recv_peak,
+          CASE
+            WHEN "sendPct" IS NULL
+              THEN (outflow - inflow) / NULLIF("channelValue", 0)
+            WHEN active AND "sendPct" > 0
+              THEN GREATEST(outflow - inflow, 0)
+                / NULLIF("channelValue" * "sendPct", 0)
+          END AS send_peak
+        FROM (
+          SELECT *,
+            "periodEnd" IS NULL
+              OR "periodEnd" > (extract(epoch FROM timestamp) * 1e9)::bigint
+              AS active
+          FROM rate_limit_readings
+          WHERE timestamp < ${rateLimitCutoff}
+        ) readings
+      ) keyed
     ) ranked
     WHERE r.timestamp = ranked.timestamp
       AND r.channel = ranked.channel
