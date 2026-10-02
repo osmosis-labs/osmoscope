@@ -13,8 +13,8 @@ import {
 import { isMoveConfirmed, MOVE_CONFIRMATIONS } from "@/lib/treasury/move-gate";
 import { logger } from "@/lib/logger";
 
-// Hourly community-pool / DAO-treasury snapshot. Triggered by Vercel Cron (see
-// vercel.json), NOT by page traffic — the build fans out to dozens of LCD,
+// Hourly community-pool / DAO-treasury snapshot. Run by
+// .github/workflows/cron.yml, NOT by page traffic — the build fans out to dozens of LCD,
 // CosmWasm, and EVM calls and is far too heavy to run per request. The /treasury
 // page reads the last stored snapshot instead.
 //
@@ -29,8 +29,9 @@ import { logger } from "@/lib/logger";
 // large move, such as a big community-pool spend, would be refused by every
 // later run too, because the baseline is the last saved snapshot.
 //
-// Security: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. Requests
-// without the matching bearer token are rejected.
+// Security: requests need `Authorization: Bearer <CRON_SECRET>`; others are
+// rejected. scripts/run-cron.ts sends it (with a per-run secret) when the
+// GitHub Actions workflow runs the route.
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
