@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { SITE_URL } from "@/lib/site";
 
 // Branded 1200x630 Open Graph / Twitter share card. Next serves this for both
 // OG and twitter:image via the file-based metadata convention. Applies to the
@@ -8,16 +9,28 @@ import { join } from "node:path";
 //
 // Node runtime (not edge) so we can read the logo PNG off disk and inline it as
 // a data URI. ImageResponse can't load a remote/relative asset without an
-// absolute host, and inlining keeps it CSP-safe and self-contained.
+// absolute host, and inlining keeps it CSP-safe and self-contained. On
+// Cloudflare Workers there is no filesystem holding public/ (it is served as
+// static assets), so the logo is fetched from the site's own URL instead.
 export const runtime = "nodejs";
 export const alt = "OSMOscope: Osmosis tokenomics and treasury";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
+async function loadIcon(): Promise<Buffer> {
+  try {
+    return await readFile(join(process.cwd(), "public", "Osmosis_Icon.png"));
+  } catch {
+    const response = await fetch(new URL("/Osmosis_Icon.png", SITE_URL));
+    if (!response.ok) {
+      throw new Error(`Osmosis_Icon.png: ${response.status} from ${SITE_URL}`);
+    }
+    return Buffer.from(await response.arrayBuffer());
+  }
+}
+
 export default async function OpengraphImage() {
-  const iconData = await readFile(
-    join(process.cwd(), "public", "Osmosis_Icon.png")
-  );
+  const iconData = await loadIcon();
   const iconSrc = `data:image/png;base64,${iconData.toString("base64")}`;
 
   return new ImageResponse(
