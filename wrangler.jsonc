@@ -1,6 +1,7 @@
 // Cloudflare Worker for osmoscope.osmosis.zone: the Next.js app built with
-// OpenNext (`opennextjs-cloudflare build`). Fits Workers Free: no cron
-// triggers (the crons run from GitHub Actions) and the default CPU limit.
+// OpenNext (`opennextjs-cloudflare build`), deployed by Workers Builds. No
+// cron triggers: the crons run from GitHub Actions. Uncached pages and APIs
+// use more CPU than Workers Free allows, so this needs Workers Paid.
 {
   "name": "osmoscope",
   "main": "worker.ts",
@@ -13,10 +14,23 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS",
   },
+  // Wrangler runs this before bundling, so every deploy (Workers Builds
+  // production and previews, or by hand) builds .open-next first, which
+  // worker.ts imports. The dashboard's build command isn't needed on top.
+  "build": {
+    "command": "yarn cf:build",
+  },
   "observability": { "enabled": true },
   "vars": {
-    // robots.ts only allows indexing when this is "production". Preview
-    // builds override it (see the Workers Builds variables).
+    // robots.ts only allows indexing when this is "production".
     "SITE_ENV": "production",
+  },
+  // Pull-request previews (Workers Builds runs `wrangler preview` for
+  // non-production branches), which require an explicit preview value for
+  // every var. Anything but "production" keeps previews out of search.
+  "previews": {
+    "vars": {
+      "SITE_ENV": "preview",
+    },
   },
 }
