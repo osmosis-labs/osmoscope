@@ -113,12 +113,17 @@ function computeWindow(
   };
 }
 
-export async function buildRateLimitSnapshot(): Promise<RateLimitSnapshotData> {
+// The live state, or with `at` the state at a past block (`timeMs` is that
+// block's time, so windows are judged active as of then).
+export async function buildRateLimitSnapshot(at?: {
+  height: number;
+  timeMs: number;
+}): Promise<RateLimitSnapshotData> {
   const [{ paths, endpoint }, symbols] = await Promise.all([
-    fetchRateLimitPaths(),
+    fetchRateLimitPaths(at?.height),
     fetchSymbolMap(),
   ]);
-  const nowMs = Date.now();
+  const nowMs = at?.timeMs ?? Date.now();
 
   const pathUtilizations: PathUtilization[] = paths.map((path) => {
     const windows = path.limits.map((limit) => computeWindow(limit, nowMs));
