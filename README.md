@@ -46,7 +46,7 @@ The following features are planned for future development:
 ### Data Management
 
 - **[TanStack Query v5](https://tanstack.com/query)** - Server state management with caching
-- **[Vercel Postgres](https://vercel.com/storage/postgres)** - Primary database storage with Prisma ORM
+- **[Prisma Postgres](https://www.prisma.io/postgres)** - Primary database storage with Prisma ORM
 - **[Osmosis Archive Node](https://lcd.archive.osmosis.zone)** - Historical blockchain data
 - **[Osmosis LCD API](https://lcd.osmosis.zone/swagger/)** - Real-time blockchain data
 - **[Numia Data API](https://www.numia.xyz/)** - Historical staking APR and revenue data
@@ -61,7 +61,8 @@ The following features are planned for future development:
 
 ### Deployment
 
-- **[Vercel](https://vercel.com)** - Optimized for Next.js deployment
+- **[Cloudflare Workers](https://developers.cloudflare.com/workers/)** - The site, built with [OpenNext](https://opennext.js.org/cloudflare) and deployed by Workers Builds
+- **GitHub Actions** - The data crons (`.github/workflows/cron.yml`)
 
 ## 🚀 Getting Started
 
@@ -503,40 +504,28 @@ This validates:
 
 ## 🌐 Deployment
 
-### Deploy to Vercel (Recommended)
+The site runs on Cloudflare Workers at [osmoscope.osmosis.zone](https://osmoscope.osmosis.zone), built with OpenNext (`yarn cf:build`). Workers Builds is connected to this repository:
 
-1. **Push to GitHub:**
+- **Every push to `main`** builds and deploys the `osmoscope` Worker (`npx wrangler deploy`).
+- **Every pull request** gets a preview URL (`npx wrangler preview`). Previews have no database secrets, so database-backed APIs fail there, and `robots.txt` blocks indexing.
 
-```bash
-git add .
-git commit -m "Initial commit"
-git push origin main
-```
+`wrangler.jsonc` runs `yarn cf:build` before bundling (`build.command`), so a deploy builds `.open-next/` itself, wherever it runs.
 
-2. **Import on Vercel:**
-   - Go to [vercel.com/new](https://vercel.com/new)
-   - Import your repository
-   - **Add environment variables:**
-     - Go to Settings → Environment Variables
-     - Add `NUMIA_API_KEY` with your API key
-   - Click "Deploy"
+**Build variables** (Workers Builds settings, Production and Previews):
 
-3. **Automatic Deployments:**
-   - Every push to `main` triggers a new deployment
-   - Preview deployments for pull requests
+| Variable               | Production                       | Previews        |
+| ---------------------- | -------------------------------- | --------------- |
+| `SITE_ENV`             | `production`                     | `preview`       |
+| `NEXT_PUBLIC_SITE_URL` | `https://osmoscope.osmosis.zone` | the preview URL |
+| `DATABASE_URL`         | any placeholder                  | any placeholder |
 
-### Using Vercel CLI
+`SITE_ENV` and `NEXT_PUBLIC_SITE_URL` are baked in at build time (`robots.txt`, the sitemap, share-image URLs), so changing them needs a new build. `DATABASE_URL` is only read by `prisma generate`, which doesn't connect.
 
-```bash
-# Install Vercel CLI
-npm i -g vercel
+**Worker secrets:** `POSTGRES_PRISMA_URL` (the direct `postgres://…@db.prisma.io:5432` URL) and `NUMIA_API_KEY`.
 
-# Deploy
-vercel
+**Crons:** `.github/workflows/cron.yml` runs the snapshot, treasury, revenue and rate-limit jobs in-process (`yarn cf:build` isn't involved), using the repository secrets `DATABASE_URL`, `NUMIA_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` and `SLACK_WEBHOOK_URL`. Scheduled runs only happen while the repository variable `CRON_RUNNER` is `github`.
 
-# Deploy to production
-vercel --prod
-```
+**Deploying by hand:** `yarn cf:deploy` (or `yarn cf:preview` to run the built Worker locally).
 
 ### Environment Variables
 
@@ -554,11 +543,7 @@ The dashboard uses the following environment variables:
 2. Add your `NUMIA_API_KEY`
 3. Restart the dev server
 
-**For Vercel/Production:**
-
-1. Go to Project Settings → Environment Variables
-2. Add `NUMIA_API_KEY` with your API key
-3. Redeploy if already deployed
+**For production:** set `NUMIA_API_KEY` as a Worker secret (`npx wrangler secret put NUMIA_API_KEY`) and as a GitHub Actions secret for the crons.
 
 > **Note**: The dashboard works without a Numia API key, but authenticated requests provide higher rate limits and better reliability for historical staking APR data.
 
