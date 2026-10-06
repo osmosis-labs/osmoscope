@@ -14,6 +14,12 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS",
   },
+  // Wrangler runs this before bundling, so every deploy (Workers Builds
+  // production and previews, or by hand) builds .open-next first, which
+  // worker.ts imports. The dashboard's build command isn't needed on top.
+  "build": {
+    "command": "yarn cf:build",
+  },
   "observability": { "enabled": true },
   "vars": {
     // robots.ts only allows indexing when this is "production".
