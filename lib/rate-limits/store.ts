@@ -114,6 +114,18 @@ export async function refreshRateLimitSnapshot(
   if (count === 0) await saveRateLimitSnapshot(data);
 }
 
+// Hour starts (ms) that already have readings, since `since`, in one query.
+export async function readingHoursSince(since: Date): Promise<Set<number>> {
+  if (!isDatabaseEnabled()) {
+    throw new Error("Database is not configured");
+  }
+  const rows = await prisma.$queryRaw<{ hour: Date }[]>`
+    SELECT DISTINCT date_trunc('hour', timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS hour
+    FROM rate_limit_readings
+    WHERE timestamp >= ${since}`;
+  return new Set(rows.map((r) => new Date(r.hour).getTime()));
+}
+
 export async function loadAlertStates(): Promise<
   Map<string, StoredAlertState>
 > {

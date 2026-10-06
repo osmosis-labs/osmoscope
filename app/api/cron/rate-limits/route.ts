@@ -3,6 +3,7 @@ import { buildRateLimitSnapshot } from "@/lib/rate-limits/snapshot";
 import { computeAlertTransitions } from "@/lib/rate-limits/alerts";
 import { dispatchAlerts, sendOpsNotice } from "@/lib/rate-limits/notify";
 import { readCronState, writeCronState } from "@/lib/cron-state";
+import { catchUpReadings } from "@/lib/rate-limits/catch-up";
 import {
   loadAlertStates,
   refreshRateLimitSnapshot,
@@ -248,12 +249,25 @@ export async function GET(request: Request) {
     }
 
     writeCronState(FAILURES_KEY, 0); // a clean run clears the streak
+
+    // Once an hour (the run that wrote this hour's readings), fill earlier
+    // hours that had no run. After the alerts, so it never delays them, and
+    // non-fatal: a failed hour is left to a later run.
+    let catchUp: Awaited<ReturnType<typeof catchUpReadings>> | undefined;
+    if (readingsSaved) {
+      try {
+        catchUp = await catchUpReadings();
+      } catch (error) {
+        logger.warn("Rate-limit catch-up skipped:", error);
+      }
+    }
     return NextResponse.json({
       ok: true,
       timestamp: snapshot.timestamp,
       endpoint: snapshot.endpoint,
       paths: snapshot.pathCount,
       readingsSaved,
+      ...(catchUp ? { catchUp } : {}),
       maxUtilizationPct: snapshot.maxUtilizationPct,
       transitions: transitions.length,
       delivered,

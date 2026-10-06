@@ -19,6 +19,14 @@ export { RATE_LIMITER_CONTRACT };
 // Primary first, then the config-listed public fallbacks.
 const LCD_ENDPOINTS = [LCD_BASE_URL, ...RATE_LIMIT_LCD_FALLBACKS];
 
+// For a past height (catching up hours the cron missed). These keep weeks of
+// recent state, honour x-cosmos-block-height and echo the height they served;
+// lcd.osmosis.zone refuses past heights.
+export const HISTORICAL_LCD_ENDPOINTS = [
+  "https://osmosis-api.polkachu.com",
+  "https://rest.lavenderfive.com:443/osmosis",
+];
+
 // Generated frontend assetlist, used only to label denoms with human-readable
 // symbols in alerts. A fetch failure degrades to truncated denoms, never to a
 // hard error.
@@ -82,9 +90,12 @@ export function decodeFlowKey(
   };
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
+async function fetchJson<T>(url: string, height?: number): Promise<T> {
   const response = await fetch(url, {
-    headers: { accept: "application/json" },
+    headers: {
+      accept: "application/json",
+      ...(height ? { "x-cosmos-block-height": String(height) } : {}),
+    },
     // Short enough that a slow-but-alive endpoint can't burn the cron's whole
     // time budget across ~8 pages before the failover chain gets its turn.
     signal: AbortSignal.timeout(12_000),
@@ -92,10 +103,19 @@ async function fetchJson<T>(url: string): Promise<T> {
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText} for ${url}`);
   }
+  // Every page of a past-height dump must come from that height: a node that
+  // pruned it can answer from another one.
+  const served = response.headers.get("grpc-metadata-x-cosmos-block-height");
+  if (height && served !== String(height)) {
+    throw new Error(`served height ${served ?? "unknown"}, not ${height}`);
+  }
   return (await response.json()) as T;
 }
 
-async function dumpStateFrom(endpoint: string): Promise<RateLimitPath[]> {
+async function dumpStateFrom(
+  endpoint: string,
+  height?: number
+): Promise<RateLimitPath[]> {
   const paths: RateLimitPath[] = [];
   let nextKey: string | null = null;
   // The LCD caps state pages at 100 entries regardless of the requested limit;
@@ -104,7 +124,8 @@ async function dumpStateFrom(endpoint: string): Promise<RateLimitPath[]> {
     const params = new URLSearchParams({ "pagination.limit": "1000" });
     if (nextKey) params.set("pagination.key", nextKey);
     const data: StatePage = await fetchJson(
-      `${endpoint}/cosmwasm/wasm/v1/contract/${RATE_LIMITER_CONTRACT}/state?${params.toString()}`
+      `${endpoint}/cosmwasm/wasm/v1/contract/${RATE_LIMITER_CONTRACT}/state?${params.toString()}`,
+      height
     );
     for (const model of data.models ?? []) {
       const key = decodeFlowKey(model.key);
@@ -137,14 +158,16 @@ async function dumpStateFrom(endpoint: string): Promise<RateLimitPath[]> {
 
 // Dump every configured rate-limit path, failing over across LCD endpoints.
 // A partial dump is never returned: any page failure discards the endpoint.
-export async function fetchRateLimitPaths(): Promise<{
+// With `height`, the dump is of that past block, from the historical
+// endpoints only.
+export async function fetchRateLimitPaths(height?: number): Promise<{
   paths: RateLimitPath[];
   endpoint: string;
 }> {
   let lastError: unknown = null;
-  for (const endpoint of LCD_ENDPOINTS) {
+  for (const endpoint of height ? HISTORICAL_LCD_ENDPOINTS : LCD_ENDPOINTS) {
     try {
-      const paths = await dumpStateFrom(endpoint);
+      const paths = await dumpStateFrom(endpoint, height);
       return { paths, endpoint };
     } catch (error) {
       lastError = error;
