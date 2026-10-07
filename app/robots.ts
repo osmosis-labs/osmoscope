@@ -3,17 +3,13 @@ import { SITE_URL } from "@/lib/site";
 
 // Allow indexing only on the production deployment AND only once a canonical
 // domain is configured (NEXT_PUBLIC_SITE_URL). Requiring the explicit domain
-// (not just VERCEL_ENV) means: preview/dev deploys stay disallowed, and a
-// production soft-launch on the auto-assigned *.vercel.app URL also stays
-// un-indexed until the real domain is set — so search engines never index a
-// throwaway deploy-hash URL. Set NEXT_PUBLIC_SITE_URL to the canonical domain
-// to flip indexing on.
+// (not just SITE_ENV) means: preview/dev deploys stay disallowed, and a
+// production build served only from the auto-assigned *.workers.dev URL also
+// stays un-indexed until the real domain is set. Set NEXT_PUBLIC_SITE_URL to
+// the canonical domain to flip indexing on.
 export default function robots(): MetadataRoute.Robots {
-  // VERCEL_ENV on Vercel; SITE_ENV on Cloudflare (set in wrangler.jsonc and
-  // overridden for preview builds).
-  const isProduction =
-    process.env.VERCEL_ENV === "production" ||
-    process.env.SITE_ENV === "production";
+  // SITE_ENV is set in wrangler.jsonc and overridden for preview builds.
+  const isProduction = process.env.SITE_ENV === "production";
   const hasCanonicalDomain = !!process.env.NEXT_PUBLIC_SITE_URL;
 
   if (!isProduction || !hasCanonicalDomain) {

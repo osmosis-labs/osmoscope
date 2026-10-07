@@ -1,10 +1,10 @@
 # Database Setup Guide
 
-This guide explains how to set up and migrate to Vercel Postgres for Osmometer's historical data storage.
+This guide explains how OSMOscope's historical data is stored and how to set up a database for it.
 
 ## Overview
 
-Osmometer now uses **Vercel Postgres** (PostgreSQL) with **Prisma ORM** for storing historical OSMO tokenomics data. This provides:
+OSMOscope stores its historical OSMO tokenomics data in **Postgres** (Prisma Postgres in production) through **Prisma ORM** (Prisma 7 with the `@prisma/adapter-pg` driver adapter). This provides:
 
 - ✅ Efficient querying with indexes
 - ✅ Pagination and filtering support
@@ -14,57 +14,35 @@ Osmometer now uses **Vercel Postgres** (PostgreSQL) with **Prisma ORM** for stor
 
 ## Prerequisites
 
-- Vercel account with the project connected
-- Vercel CLI installed: `npm i -g vercel`
 - Node.js 22 (see `.nvmrc`) and Yarn 4 (enable it with `corepack enable`)
+- Either Docker (for a local database, `docker-compose.yml`) or the production
+  connection string from the Prisma console
 
 ## Setup Steps
 
-### 1. Create Vercel Postgres Database
+### 1. Choose a Database
 
-1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
-2. Navigate to your Osmometer project
-3. Go to **Storage** tab
-4. Click **Create Database**
-5. Select **Postgres**
-6. Choose database name: `osmometer-db`
-7. Select region (same as your deployment region for best performance)
-8. Click **Create**
+- **Local:** `docker compose up -d` starts Postgres with the credentials in
+  `.env.local.example`.
+- **Production:** the Prisma Postgres database. Use its direct connection
+  string (`postgres://…@db.prisma.io:5432/…`). Scripts run against it write to
+  production data, and the Prisma account's operation limit is shared with the
+  alloy dashboard, so keep one-off scripts small.
 
-### 2. Connect Database to Project
+### 2. Configure the Connection
 
-Vercel will automatically:
+Copy `.env.local.example` to `.env.local` and set:
 
-- Create the database
-- Set up connection pooling
-- Add environment variables to your project
+- `DATABASE_URL`: read by the Prisma CLI (`prisma.config.ts`), the crons and the scripts
+- `POSTGRES_PRISMA_URL`: read first by the app runtime (`lib/database.ts`); set it to the same value
 
-### 3. Pull Environment Variables Locally
+In production the same URL is stored in three places:
 
-```bash
-# Make sure you're in the project directory
-cd osmometer
+- the Worker secret `POSTGRES_PRISMA_URL` (`npx wrangler secret put POSTGRES_PRISMA_URL`)
+- the GitHub Actions secret `DATABASE_URL` for the crons
+- your local `.env.local`, when running migrations or scripts
 
-# Pull Vercel environment variables
-vercel env pull .env.local
-```
-
-This creates `.env.local` with the following variables:
-
-- `POSTGRES_URL` - Direct connection string
-- `POSTGRES_PRISMA_URL` - Pooled connection string (read at runtime by `lib/database.ts`)
-- `POSTGRES_URL_NON_POOLING` - Non-pooled connection string
-- `POSTGRES_USER`, `POSTGRES_HOST`, `POSTGRES_PASSWORD`, `POSTGRES_DATABASE`
-
-> **Prisma 7 note:** `prisma.config.ts` reads `DATABASE_URL` for CLI operations
-> (`db:generate`, `db:migrate`), while the app runtime (`lib/database.ts`) reads
-> `POSTGRES_PRISMA_URL` (falling back to `DATABASE_URL`) and connects via the
-> `@prisma/adapter-pg` driver adapter. Vercel sets `POSTGRES_*` automatically;
-> you must ALSO set `DATABASE_URL` (to the pooled or non-pooled connection
-> string) in the Vercel project env and locally, or `db:generate`/`db:migrate`
-> will fail with a datasource validation error.
-
-### 4. Generate Prisma Client
+### 3. Generate Prisma Client
 
 ```bash
 yarn db:generate
@@ -72,7 +50,7 @@ yarn db:generate
 
 This generates the Prisma Client based on your schema in `prisma/schema.prisma`.
 
-### 5. Apply the Schema
+### 4. Apply the Schema
 
 The schema is versioned as Prisma migrations under `prisma/migrations/`. The
 first entry, `0_init`, is a baseline generated from `prisma/schema.prisma` and
@@ -97,13 +75,13 @@ After that, `yarn db:migrate:deploy` applies any later migrations and
 
 **Changing the schema:** edit `prisma/schema.prisma`, run `yarn db:migrate`
 against a local database to generate a new migration folder, commit it with the
-schema change, then run `yarn db:migrate:deploy` against production. The Vercel
+schema change, then run `yarn db:migrate:deploy` against production. The Workers
 build only runs `prisma generate`; it never applies migrations.
 
 `yarn db:push` still works for throwaway local databases, but do not use it on
 a database that is tracked by migrations, because the two drift apart.
 
-### 6. Migrate Existing JSON Data
+### 5. Migrate Existing JSON Data
 
 ```bash
 yarn migrate-json-to-db
@@ -201,11 +179,11 @@ yarn migrate-json-to-db
 
 ### Local Development
 
-1. Pull environment variables: `vercel env pull .env.local`
+1. Set `DATABASE_URL` and `POSTGRES_PRISMA_URL` in `.env.local` (see step 2)
 2. Generate Prisma Client: `yarn db:generate`
 3. Run dev server: `yarn dev`
 
-The app will automatically use the database if `POSTGRES_PRISMA_URL` is set.
+The app will automatically use the database if `POSTGRES_PRISMA_URL` or `DATABASE_URL` is set.
 
 ### Fallback to JSON Files
 
@@ -213,16 +191,11 @@ If database is not configured, the app falls back to JSON file storage in `data/
 
 ## Production Deployment
 
-Vercel automatically:
+The site runs on Cloudflare Workers (see the README's Deployment section):
 
-1. Connects to the Postgres database
-2. Sets the `POSTGRES_*` environment variables
-3. Generates the Prisma Client during build (the `build` script runs `prisma generate` first)
-
-**One manual step (Prisma 7):** add `DATABASE_URL` to the Vercel project's
-environment variables (Settings → Environment Variables), set to the same
-connection string as `POSTGRES_PRISMA_URL`. The build's `prisma generate` reads
-it from `prisma.config.ts`; without it the build fails at client generation.
+1. The Worker reads the database URL from its `POSTGRES_PRISMA_URL` secret
+2. The build's `prisma generate` runs without a database URL (`prisma.config.ts` tolerates it unset)
+3. Schema changes are applied by hand with `yarn db:migrate:deploy`
 
 ## Querying Examples
 
@@ -262,7 +235,7 @@ const count = await prisma.historicalRecord.count();
 
 ### "Database not configured"
 
-**Solution**: Run `vercel env pull .env.local` to get database credentials.
+**Solution**: Set `DATABASE_URL` (and `POSTGRES_PRISMA_URL`) in `.env.local`.
 
 ### "Prisma Client not generated"
 
@@ -272,60 +245,24 @@ const count = await prisma.historicalRecord.count();
 
 **Solution**: Run `yarn db:migrate:deploy` to bring the schema up to date (or
 `yarn prisma migrate resolve --applied 0_init` first if the database predates
-the migrations directory, see step 5).
+the migrations directory, see step 4).
 
 ### Connection timeout errors
 
 **Solution**:
 
-- Check Vercel dashboard for database status
-- Verify `POSTGRES_PRISMA_URL` is using connection pooling
+- Check the database status in the Prisma console
+- Verify the connection string is the direct `db.prisma.io:5432` URL
 - Consider increasing connection timeout in `prisma/schema.prisma`
 
 ## Cost & Limits
 
-### Vercel Postgres Free Tier
-
-- **Storage**: 256 MB
-- **Compute**: 60 hours/month
-- **Databases**: 1 database
-
-For Osmometer's use case (daily snapshots, ~1000 records/year), the free tier should last 10+ years.
-
-### Upgrade Options
-
-If you need more:
-
-- **Pro Plan**: $20/month
-  - 512 MB storage
-  - 100 hours compute
-  - 10 databases
-
-## Migration from JSON Files
-
-The database approach offers:
-
-| Feature           | JSON Files           | Vercel Postgres               |
-| ----------------- | -------------------- | ----------------------------- |
-| Query speed       | O(n) scan            | O(log n) with indexes         |
-| Pagination        | Load all + filter    | Native LIMIT/OFFSET           |
-| Concurrent writes | Race conditions      | ACID transactions             |
-| Memory usage      | Load all into memory | Stream results                |
-| Backup            | Manual GitHub push   | Automatic Vercel backups      |
-| Scale limit       | ~10 MB practical     | 256 MB (free), more with paid |
-
-## Next Steps
-
-After successful migration:
-
-1. Test API endpoints: `/api/history`, `/api/osmosis-metrics`
-2. Verify chart data loads correctly
-3. Monitor performance in Vercel dashboard
-4. (Optional) Keep JSON files as backup for 1 week
-5. (Optional) Update cron jobs to write directly to database
+The Prisma Postgres account is shared with the alloy dashboard, and its limits
+(operations per month, storage) are account-wide. OSMOscope keeps its writes
+small: rate-limit readings are capped and pruned daily (`lib/retention.ts`).
 
 ## Support
 
 - **Prisma Docs**: https://www.prisma.io/docs
-- **Vercel Postgres Docs**: https://vercel.com/docs/storage/vercel-postgres
-- **Osmometer Issues**: https://github.com/your-org/osmometer/issues
+- **Prisma Postgres Docs**: https://www.prisma.io/docs/postgres
+- **OSMOscope Issues**: https://github.com/osmosis-labs/osmoscope/issues

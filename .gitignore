@@ -54,7 +54,6 @@ next-env.d.ts
 /*.json
 !/package.json
 !/tsconfig.json
-!/vercel.json
 !/.eslintrc.json
 !/.prettierrc.json
 /*.mjs

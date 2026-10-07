@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   /* config options here */
   reactStrictMode: true,
   poweredByHeader: false,
-  // Left unbundled so each host resolves Prisma's own entry: Node's on Vercel,
+  // Left unbundled so each host resolves Prisma's own entry: Node's for scripts and local dev,
   // and on Cloudflare (OpenNext bundles with Workers conditions) the one that
   // imports the query compiler's Wasm as a module. Workers forbid compiling
   // Wasm at runtime, which the Node entry does.
