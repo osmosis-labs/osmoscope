@@ -7,7 +7,8 @@ import { logger } from "./logger";
 // imports the Wasm as a module instead, but the Worker bundler resolves
 // `@prisma/client` with the `node` condition, which Prisma lists first, so the
 // Workers entry is required by name there. Both are server-external packages
-// (next.config.ts), so Vercel and Node never load the edge entry.
+// (next.config.ts), so Node (scripts, local dev, the crons) never loads the
+// edge entry.
 type PrismaClient = PrismaClientType;
 const { PrismaClient } = (
   typeof navigator !== "undefined" &&
@@ -26,8 +27,8 @@ const globalForPrisma = global as unknown as { prisma: PrismaClient };
 
 // Prisma 7 requires a driver adapter for the database connection; the
 // connection URL is no longer read from the schema. Prefer the pooled
-// POSTGRES_PRISMA_URL (Vercel Postgres), falling back to DATABASE_URL for local
-// Docker development.
+// POSTGRES_PRISMA_URL (the Worker secret), falling back to DATABASE_URL for
+// the crons, scripts and local Docker development.
 const connectionString =
   process.env.POSTGRES_PRISMA_URL || process.env.DATABASE_URL;
 
@@ -70,7 +71,7 @@ const createClient = (url: string | undefined) =>
 // perform I/O on behalf of a different request"). There each request gets its
 // own client, keyed on that request's execution context, connecting through
 // Hyperdrive (which pools connections in front of Prisma Postgres) when the
-// HYPERDRIVE binding exists. Everywhere else (Vercel, local, scripts) there is
+// HYPERDRIVE binding exists. Everywhere else (local, scripts, crons) there is
 // no Cloudflare context and one client is shared as before.
 type CloudflareContext = {
   env: { HYPERDRIVE?: { connectionString: string } };

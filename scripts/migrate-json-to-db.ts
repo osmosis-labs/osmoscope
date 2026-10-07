@@ -6,17 +6,15 @@ import { jsonToPrisma } from "../lib/historical-file-db";
 import type { HistoricalRecord as JsonRecord } from "../lib/historical-file";
 
 console.log("════════════════════════════════════════");
-console.log("Migrate JSON Data to Vercel Postgres");
+console.log("Migrate JSON Data to Postgres");
 console.log("════════════════════════════════════════\n");
 
 // Check if database is configured
 if (!isDatabaseEnabled()) {
   console.error("❌ Database not configured!");
   console.log("\nTo set up database:");
-  console.log("1. Create Vercel Postgres database in Vercel dashboard");
-  console.log("2. Connect it to your project");
-  console.log("3. Run: vercel env pull .env.local");
-  console.log("4. Run: npx prisma migrate dev");
+  console.log("1. Set DATABASE_URL in .env.local (see DATABASE_SETUP.md)");
+  console.log("2. Run: yarn db:migrate:deploy");
   process.exit(1);
 }
 

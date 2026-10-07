@@ -139,7 +139,7 @@ yarn populate-revenue            # Populate protocol revenue data from DataLense
 yarn validate-history            # Validate historical data integrity
 
 # Database Migration
-yarn migrate-json-to-db          # Migrate JSON data to Vercel Postgres database
+yarn migrate-json-to-db          # Migrate JSON data to the Postgres database
 yarn db:generate                 # Generate Prisma client
 yarn db:push                     # Push schema to database
 yarn db:studio                   # Open Prisma Studio
@@ -183,7 +183,7 @@ osmometer/
 │   ├── populate-staking-apr-history.ts          # Populate staking APR history from Numia
 │   ├── populate-revenue-history.ts              # Populate protocol revenue from DataLenses/Numia
 │   ├── validate-history.ts                      # Validate historical data integrity
-│   ├── migrate-json-to-db.ts                    # Migrate JSON data to Vercel Postgres
+│   ├── migrate-json-to-db.ts                    # Migrate JSON data to Postgres
 │   └── lib/
 │       └── archive-node.ts                      # Archive node client with rate limiting
 │
@@ -387,7 +387,7 @@ yarn validate-history
 
 ### Database Migration
 
-Once historical data is populated in JSON files, migrate to Vercel Postgres:
+Once historical data is populated in JSON files, migrate it to Postgres:
 
 ```bash
 # Generate Prisma client
@@ -448,7 +448,7 @@ to refresh the committed data with current values before launch.
 
 The application uses a **two-tier fallback system**:
 
-1. **Vercel Postgres** (Priority 1) - Primary production database with Prisma ORM
+1. **Postgres** (Priority 1) - Primary production database (Prisma Postgres) with Prisma ORM
    (Prisma 7 with the `@prisma/adapter-pg` driver adapter)
 2. **Local JSON Files** (Priority 2) - Development fallback
 
