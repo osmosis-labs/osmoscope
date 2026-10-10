@@ -28,6 +28,7 @@ import type { ValidatorInfo, UnbondingSchedule } from "./validators";
 import { saveSnapshot, getHistory, backfillRevenue } from "./historical-file";
 import { fetchDailyRevenue } from "./revenue";
 import { logger } from "./logger";
+import { oneOffBurnsBetween } from "./one-off-burns";
 
 // Persist the artifacts of a CLEAN unbonding fan-out (fetchFailures === 0):
 // the forecast blob (so /api/undelegations serves it from the DB instead of
@@ -173,6 +174,11 @@ export class SnapshotSanityError extends Error {}
 // beyond a wide tolerance signals a bad read, not a real event.
 const MAX_DAILY_SUPPLY_DELTA = 5_000_000; // OSMO; ~10x a generous daily mint
 const MAX_DAILY_RESTRICTED_DELTA = 40_000_000; // OSMO; allows real unlock events
+// Day-over-day burn increase, beyond listed one-off burns, that is logged as a
+// probable unlisted one-off burn. Ordinary days burn tens of thousands of OSMO;
+// the largest past days (~1.2M) were monthly taker-fee burns, which are recurring
+// burn paid in a lump and stay counted as such, so they may warn harmlessly.
+const UNLISTED_BURN_WARN = 1_000_000; // OSMO
 // Exported for unit tests (pure function; the live path calls it internally).
 export function assertSnapshotSane(metrics: {
   mintedSupply: number;
@@ -185,6 +191,10 @@ export function assertSnapshotSane(metrics: {
   // to normalize a legacy prev row to the same raw-minted basis before the
   // day-over-day delta check (see below).
   devVestingSupply?: number;
+  // OSMO burned by listed one-off burns (config/one-off-burns.ts) since the
+  // previous snapshot. A real supply drop of this size is expected, so it is
+  // added back before the day-over-day supply check.
+  oneOffBurnedSincePrev?: number;
   prev?: {
     totalSupply: number;
     restrictedSupply?: number;
@@ -251,11 +261,15 @@ export function assertSnapshotSane(metrics: {
       prev.devVestingSupply == null && currentDevVesting > 0
         ? prev.totalSupply + currentDevVesting
         : prev.totalSupply;
-    if (
-      Math.abs(metrics.totalSupply - prevTotalSupply) > MAX_DAILY_SUPPLY_DELTA
-    )
+    // A listed one-off burn lowers total supply for real; add it back so only an
+    // UNEXPLAINED move is judged. An unlisted large burn still trips the gate.
+    const supplyMove =
+      metrics.totalSupply -
+      prevTotalSupply +
+      (metrics.oneOffBurnedSincePrev ?? 0);
+    if (Math.abs(supplyMove) > MAX_DAILY_SUPPLY_DELTA)
       throw new SnapshotSanityError(
-        `total supply moved ${(metrics.totalSupply - prevTotalSupply).toFixed(0)} OSMO vs prior — implausible, refusing to persist`
+        `total supply moved ${(metrics.totalSupply - prevTotalSupply).toFixed(0)} OSMO vs prior (${supplyMove.toFixed(0)} after listed one-off burns) — implausible, refusing to persist. If this is a governance burn, add it to config/one-off-burns.ts`
       );
     if (
       prev.restrictedSupply != null &&
@@ -349,9 +363,30 @@ export async function buildAndSaveSnapshot(
     },
     undefined
   );
+  const oneOffSincePrev = prevSnapshot
+    ? oneOffBurnsBetween(prevSnapshot.timestamp, new Date())
+    : [];
+  const oneOffBurnedSincePrev = oneOffSincePrev.reduce(
+    (sum, b) => sum + b.amount,
+    0
+  );
+  // Flag a burn jump the list doesn't explain. Below the gate's tolerance it
+  // would persist silently and read as recurring burn in every rate, so warn so
+  // it can be listed.
+  if (prevSnapshot) {
+    const unexplainedBurn =
+      metrics.burned -
+      (prevSnapshot.burnedSupply || prevSnapshot.burned || 0) -
+      oneOffBurnedSincePrev;
+    if (unexplainedBurn > UNLISTED_BURN_WARN)
+      logger.warn(
+        `Burn rose ${unexplainedBurn.toFixed(0)} OSMO since the prior snapshot beyond listed one-off burns. If this was a governance burn, add it to config/one-off-burns.ts`
+      );
+  }
   assertSnapshotSane({
     ...metrics,
     devVestingSupply: devVestingBalance,
+    oneOffBurnedSincePrev,
     prev: prevSnapshot
       ? {
           totalSupply: prevSnapshot.totalSupply,

@@ -69,6 +69,18 @@ test("assertSnapshotSane: implausible move vs a corrected prev trips", () => {
   );
 });
 
+test("assertSnapshotSane: a listed one-off burn explains a large supply drop", () => {
+  // 16M burned since the prior row: trips unlisted, passes once listed.
+  const prev = { totalSupply: 827_000_000, devVestingSupply: DEV_VESTING };
+  assert.throws(
+    () => assertSnapshotSane(baseMetrics({ prev })),
+    SnapshotSanityError
+  );
+  assert.doesNotThrow(() =>
+    assertSnapshotSane(baseMetrics({ prev, oneOffBurnedSincePrev: 16_000_000 }))
+  );
+});
+
 test("assertSnapshotSane: rejects non-positive core figures", () => {
   assert.throws(
     () => assertSnapshotSane(baseMetrics({ circulating: 0 })),
