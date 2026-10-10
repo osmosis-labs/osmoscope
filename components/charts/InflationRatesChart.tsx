@@ -19,6 +19,7 @@ import {
   makeMonthlyTicks,
 } from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
+import { recurringBurned } from "@/lib/one-off-burns";
 import { useState, useMemo, useRef } from "react";
 import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
 import { ChartHeader } from "./ChartHeader";
@@ -106,9 +107,9 @@ export function InflationRatesChart({
       let calculatedBurnRate = 0;
       if (index > 0 && record.totalSupply > 0) {
         const prevRecord = filteredData[index - 1];
+        // Recurring burn only: one-off governance burns are excluded from rates.
         const burnChange =
-          (record.burnedSupply || record.burned || 0) -
-          (prevRecord.burnedSupply || prevRecord.burned || 0);
+          recurringBurned(record) - recurringBurned(prevRecord);
         const timeSpanMs =
           new Date(record.timestamp).getTime() -
           new Date(prevRecord.timestamp).getTime();
@@ -149,9 +150,7 @@ export function InflationRatesChart({
     while (trimmedLength > 1) {
       const last = filteredData[trimmedLength - 1];
       const prev = filteredData[trimmedLength - 2];
-      const burnDelta =
-        (last.burnedSupply || last.burned || 0) -
-        (prev.burnedSupply || prev.burned || 0);
+      const burnDelta = recurringBurned(last) - recurringBurned(prev);
       if (burnDelta === 0) {
         trimmedLength--;
       } else {

@@ -19,6 +19,7 @@ import {
   makeMonthlyTicks,
 } from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
+import { oneOffBurnsBetween, recurringBurned } from "@/lib/one-off-burns";
 import { useState, useRef } from "react";
 import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
 import { ChartHeader } from "./ChartHeader";
@@ -47,18 +48,24 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
   // still has a correct delta vs the prior day), then filtered to the range.
   // Rows missing a cumulative value are skipped; a negative delta (a supply
   // re-mint or data blip) is floored to 0 so it doesn't render a downward bar.
-  const dailyAll: { timestamp: string; daily: number }[] = [];
-  let prevBurned: number | null = null;
+  // Bars show RECURRING burn: a listed one-off governance burn would be a single
+  // bar hundreds of times taller than the rest, so it is reported separately
+  // (`oneOff`, listed under the chart) and stays in the cumulative line.
+  const dailyAll: { timestamp: string; daily: number; oneOff: number }[] = [];
+  let prevRow: HistoricalRecord | null = null;
   for (const r of historicalData) {
-    const b = burnedOf(r);
-    if (b == null) continue;
-    if (prevBurned != null) {
+    if (burnedOf(r) == null) continue;
+    if (prevRow != null) {
       dailyAll.push({
         timestamp: r.timestamp,
-        daily: Math.max(0, b - prevBurned),
+        daily: Math.max(0, recurringBurned(r) - recurringBurned(prevRow)),
+        oneOff: oneOffBurnsBetween(prevRow.timestamp, r.timestamp).reduce(
+          (sum, b) => sum + b.amount,
+          0
+        ),
       });
     }
-    prevBurned = b;
+    prevRow = r;
   }
 
   // Filter data based on selected time range
@@ -73,6 +80,7 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
     timestamp: d.timestamp,
     "Daily Burn": d.daily,
   }));
+  const oneOffInRange = dailyFiltered.filter((d) => d.oneOff > 0);
   const avgDaily = dailyFiltered.length
     ? dailyFiltered.reduce((s, d) => s + d.daily, 0) / dailyFiltered.length
     : 0;
@@ -92,16 +100,17 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
           // Full history, both measures in every export regardless of the view or
           // selected range: cumulative burned to date + that day's burn.
           csvRows={() => {
-            const dailyByDay = new Map(
-              dailyAll.map((d) => [d.timestamp, d.daily])
-            );
+            const dailyByDay = new Map(dailyAll.map((d) => [d.timestamp, d]));
             return historicalData
               .filter((r) => burnedOf(r) != null)
               .map((r) => ({
                 date: r.timestamp,
                 cumulative_osmo_burned: Math.round(burnedOf(r) as number),
                 daily_osmo_burned: dailyByDay.has(r.timestamp)
-                  ? Math.round(dailyByDay.get(r.timestamp) as number)
+                  ? Math.round(dailyByDay.get(r.timestamp)!.daily)
+                  : "",
+                one_off_osmo_burned: dailyByDay.has(r.timestamp)
+                  ? Math.round(dailyByDay.get(r.timestamp)!.oneOff)
                   : "",
               }));
           }}
@@ -234,6 +243,20 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
             </LineChart>
           )}
         </ResponsiveContainer>
+        {isDaily && oneOffInRange.length > 0 && (
+          <p className="mt-2 text-sm text-osmo-200">
+            Bars and the daily average exclude one-off governance burns of
+            previously uncirculating OSMO, which are included in the cumulative
+            total:{" "}
+            {oneOffInRange
+              .map(
+                (d) =>
+                  `${new Date(d.timestamp).toISOString().slice(0, 10)}, ${formatNumberWithCommas(d.oneOff, 0)} OSMO`
+              )
+              .join("; ")}
+            .
+          </p>
+        )}
       </CardContent>
     </Card>
   );

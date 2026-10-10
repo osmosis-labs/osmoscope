@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getHistory } from "@/lib/historical-file";
 import { fetchOsmoPrice } from "@/lib/osmosis-lcd";
 import { logger } from "@/lib/logger";
+import { recurringBurned } from "@/lib/one-off-burns";
 import type { OsmosisMetrics } from "@/types/osmosis";
 
 // This endpoint serves the MOST RECENT daily snapshot — it makes NO live LCD
@@ -61,9 +62,8 @@ export async function GET() {
       if (win.length < 2) return 0;
       const oldest = win[0];
       const newest = win[win.length - 1];
-      const burnChange =
-        (newest.burnedSupply ?? newest.burned ?? 0) -
-        (oldest.burnedSupply ?? oldest.burned ?? 0);
+      // Recurring burn only: one-off governance burns are excluded from rates.
+      const burnChange = recurringBurned(newest) - recurringBurned(oldest);
       const spanDays =
         (new Date(newest.timestamp).getTime() -
           new Date(oldest.timestamp).getTime()) /
@@ -102,10 +102,10 @@ export async function GET() {
     // burn rate), matching how the inflation chart computes its "Net Inflation"
     // average. Computing it as avg(gross) + a single endpoint burn rate would not
     // equal the chart's per-day average, so we compute per-day net here too. Each
-    // day's burn rate is the annualized burn delta vs the previous record.
+    // day's burn rate is the annualized burn delta vs the previous record, using
+    // recurring burn only (one-off governance burns are excluded from rates).
     const burnDeltaAt = (i: number): number =>
-      (history[i].burnedSupply ?? history[i].burned ?? 0) -
-      (history[i - 1].burnedSupply ?? history[i - 1].burned ?? 0);
+      recurringBurned(history[i]) - recurringBurned(history[i - 1]);
 
     // Drop trailing days whose burn hasn't been measured yet (cumulative burn
     // unchanged vs the prior day => delta 0). The inflation chart trims these
