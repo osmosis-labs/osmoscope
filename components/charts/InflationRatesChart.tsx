@@ -23,6 +23,7 @@ import { recurringBurned } from "@/lib/one-off-burns";
 import { useState, useMemo, useRef } from "react";
 import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
 import { ChartHeader } from "./ChartHeader";
+import { InfoTooltip } from "../ui/InfoTooltip";
 
 // Custom tooltip to show only one "Net Inflation" value
 function CustomTooltip({
@@ -78,6 +79,17 @@ interface InflationRatesChartProps {
   netInflation: number;
   historicalData: HistoricalRecord[];
 }
+
+// Explainers for the headline stats. Each headline is the AVERAGE of the daily
+// values over the selected time range, not today's figure, so say so.
+const NET_INFLATION_EXPLAINER =
+  "Inflation Rate minus Burn Rate: how fast OSMO supply is actually growing after burns, annualised. Negative means more OSMO was burned than minted. Shown as the average of the daily values over the selected time range.";
+const INFLATION_RATE_EXPLAINER =
+  "The annualised rate at which new OSMO is minted, as reported by the chain's mint module. Shown as the average of the daily values over the selected time range.";
+// Burn Rate sits in the right-hand column, so its popover anchors right
+// (align="end") to open inward instead of past the card edge on narrow screens.
+const BURN_RATE_EXPLAINER =
+  "OSMO burned each day, annualised, as a percentage of total supply. One-off governance burns of previously uncirculating OSMO are excluded. Shown as the average of the daily values over the selected time range.";
 
 export function InflationRatesChart({
   inflationRate,
@@ -269,19 +281,38 @@ export function InflationRatesChart({
             >
               {formatPercentage(averageNetInflation)}
             </div>
-            <div className="text-sm text-osmo-100">Net Inflation</div>
+            <div className="flex items-center justify-center gap-1.5 text-sm text-osmo-100">
+              <span>Net Inflation</span>
+              <InfoTooltip
+                text={NET_INFLATION_EXPLAINER}
+                ariaLabel="About Net Inflation"
+              />
+            </div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-[#7C4DFF]">
               {formatPercentage(averageInflationRate)}
             </div>
-            <div className="text-sm text-osmo-100">Inflation Rate</div>
+            <div className="flex items-center justify-center gap-1.5 text-sm text-osmo-100">
+              <span>Inflation Rate</span>
+              <InfoTooltip
+                text={INFLATION_RATE_EXPLAINER}
+                ariaLabel="About Inflation Rate"
+              />
+            </div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-[#FF7043]">
               {formatPercentage(-averageBurnRate)}
             </div>
-            <div className="text-sm text-osmo-100">Burn Rate</div>
+            <div className="flex items-center justify-center gap-1.5 text-sm text-osmo-100">
+              <span>Burn Rate</span>
+              <InfoTooltip
+                text={BURN_RATE_EXPLAINER}
+                ariaLabel="About Burn Rate"
+                align="end"
+              />
+            </div>
           </div>
         </div>
 
