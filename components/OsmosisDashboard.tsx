@@ -127,9 +127,13 @@ export function OsmosisDashboard() {
                 not circulating — burned OSMO was minted then destroyed, so minted
                 is the correct base; circulating already excludes it and would
                 overstate the ratio. The doughnut pairs burned vs the unburned
-                remainder (minted − burned = current total supply). */}
+                remainder (minted − burned = current total supply).
+                relative z-10 lifts the chart (and its hover tooltip) above the
+                absolutely positioned centre icon below, which would otherwise
+                paint over the tooltip. The doughnut hole is transparent, so the
+                icon still shows through. */}
             <div
-              className="w-full"
+              className="relative z-10 w-full"
               role="img"
               aria-label={`OSMO burned as a share of total minted supply: ${formatNumberWithCommas(
                 data.burned
