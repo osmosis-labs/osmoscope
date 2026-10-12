@@ -81,13 +81,14 @@ interface InflationRatesChartProps {
 }
 
 // Explainers for the headline stats. Each headline is the AVERAGE of the daily
-// values over the selected time range, not today's figure, so say so.
+// values over the selected time range, not today's figure, so say so. The outer
+// columns' popovers anchor to their inner side (Net Inflation align="start",
+// Burn Rate align="end") so on narrow screens they open into the card instead of
+// past its edge.
 const NET_INFLATION_EXPLAINER =
   "Inflation Rate minus Burn Rate: how fast OSMO supply is actually growing after burns, annualised. Negative means more OSMO was burned than minted. Shown as the average of the daily values over the selected time range.";
 const INFLATION_RATE_EXPLAINER =
   "The annualised rate at which new OSMO is minted, as reported by the chain's mint module. Shown as the average of the daily values over the selected time range.";
-// Burn Rate sits in the right-hand column, so its popover anchors right
-// (align="end") to open inward instead of past the card edge on narrow screens.
 const BURN_RATE_EXPLAINER =
   "OSMO burned each day, annualised, as a percentage of total supply. One-off governance burns of previously uncirculating OSMO are excluded. Shown as the average of the daily values over the selected time range.";
 
@@ -286,6 +287,7 @@ export function InflationRatesChart({
               <InfoTooltip
                 text={NET_INFLATION_EXPLAINER}
                 ariaLabel="About Net Inflation"
+                align="start"
               />
             </div>
           </div>
