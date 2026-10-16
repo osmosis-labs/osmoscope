@@ -5,6 +5,8 @@ import { isDatabaseEnabled } from "./database";
 import {
   saveSnapshotToDatabase,
   backfillRevenueInDatabase,
+  backfillStakingAprInDatabase,
+  type StakingAprUpdate,
   getHistoryFromDatabase,
   getHistoryRangeFromDatabase,
   getHistoryStatsFromDatabase,
@@ -240,6 +242,18 @@ export async function backfillRevenue(rows: DailyRevenue[]): Promise<number> {
   logger.info(
     "backfillRevenue: file backend (dev) — skipping; use scripts/populate-revenue-history.ts"
   );
+  return 0;
+}
+
+// Fill stakingApr / stakingRate on existing rows from Numia's date-keyed
+// series (see refreshRecentStakingApr). DB-backed only, like backfillRevenue:
+// a logged no-op on the dev file backend.
+export async function backfillStakingApr(
+  byDate: Map<string, StakingAprUpdate>
+): Promise<number> {
+  if (byDate.size === 0) return 0;
+  if (isDatabaseEnabled()) return backfillStakingAprInDatabase(byDate);
+  logger.info("backfillStakingApr: file backend (dev) — skipping");
   return 0;
 }
 

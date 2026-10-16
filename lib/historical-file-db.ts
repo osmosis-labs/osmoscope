@@ -314,6 +314,66 @@ export async function backfillRevenueInDatabase(
   return updated;
 }
 
+export interface StakingAprUpdate {
+  stakingApr?: number;
+  stakingRate?: number;
+}
+
+// Set stakingApr / stakingRate on existing rows from a date-keyed map (UTC
+// YYYY-MM-DD). A field is written only when the source has it and the stored
+// value differs at the column's 6-decimal precision, so re-running is cheap.
+// fillMissingRates=false limits stakingRate to rows that already carry one,
+// which the full-history resync uses so it doesn't invent a 30-day-average
+// series for archive rows that never had it.
+export async function backfillStakingAprInDatabase(
+  byDate: Map<string, StakingAprUpdate>,
+  { fillMissingRates = true }: { fillMissingRates?: boolean } = {}
+): Promise<number> {
+  if (!isDatabaseEnabled()) {
+    throw new Error("Database is not configured");
+  }
+  if (byDate.size === 0) return 0;
+
+  const earliest = [...byDate.keys()].sort()[0];
+  const rows = await prisma.historicalRecord.findMany({
+    where: { timestamp: { gte: new Date(`${earliest}T00:00:00Z`) } },
+    select: { timestamp: true, stakingApr: true, stakingRate: true },
+  });
+
+  // Within one unit of the column's 6th decimal counts as equal: Postgres
+  // rounds exact halves up while the float source can sit a hair below the
+  // half (4.0209565 * 1e6 = 4020956.4999...), so rounding both sides in JS
+  // would see a change on every run.
+  const differs = (stored: Prisma.Decimal | null, next: number) =>
+    stored == null || Math.abs(Number(stored) - next) >= 1e-6;
+
+  let updated = 0;
+  for (const r of rows) {
+    const u = byDate.get(r.timestamp.toISOString().split("T")[0]);
+    if (!u) continue;
+    const data: StakingAprUpdate = {};
+    if (u.stakingApr != null && differs(r.stakingApr, u.stakingApr)) {
+      data.stakingApr = u.stakingApr;
+    }
+    if (
+      u.stakingRate != null &&
+      (fillMissingRates || r.stakingRate != null) &&
+      differs(r.stakingRate, u.stakingRate)
+    ) {
+      data.stakingRate = u.stakingRate;
+    }
+    if (Object.keys(data).length === 0) continue;
+    await prisma.historicalRecord.update({
+      where: { timestamp: r.timestamp },
+      data,
+    });
+    updated++;
+  }
+  if (updated > 0)
+    logger.info(`Backfilled staking APR on ${updated} DB row(s)`);
+  return updated;
+}
+
 // Get all historical records from database
 export async function getHistoryFromDatabase(): Promise<JsonRecord[]> {
   if (!isDatabaseEnabled()) {

@@ -148,11 +148,18 @@ export async function GET() {
     const netInflation90dAvg =
       netCount > 0 ? netSum / netCount : avgInflation90d + burnRate;
 
+    // 30-day average APR from the newest row that has one. Today's row can be
+    // missing it when Numia returned no figures at snapshot time (the hourly
+    // refresh fills it in once Numia recovers).
+    const latestStakingRate = history.findLast(
+      (r) => r.stakingRate != null
+    )?.stakingRate;
+
     // 90-day average staking APR (uses the raw daily APR; falls back to the
-    // 30-day average stored on the latest snapshot if no window data).
+    // latest 30-day average if no window data).
     const stakingApr90dAvg = recent.some((r) => r.stakingApr != null)
       ? avg((r) => r.stakingApr)
-      : (latest.stakingRate ?? latest.stakingApr ?? 0);
+      : (latestStakingRate ?? latest.stakingApr ?? 0);
 
     // Live OSMO spot price + 24h change (the volatile values not in the daily
     // snapshot). Cheap single request; the response is CDN-cached 5 min below so
@@ -194,7 +201,7 @@ export async function GET() {
       // 90-day average net inflation, used as the headline KPI.
       netInflation90dAvg,
       // stakingRate holds the 30-day average APR captured in the snapshot.
-      stakingApr: latest.stakingRate ?? latest.stakingApr ?? 0,
+      stakingApr: latestStakingRate ?? latest.stakingApr ?? 0,
       // 90-day average staking APR, used as the headline KPI.
       stakingApr90dAvg,
       price,

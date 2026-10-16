@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { refreshRecentRevenue } from "@/lib/snapshot";
+import { refreshRecentRevenue, refreshRecentStakingApr } from "@/lib/snapshot";
 import { logger } from "@/lib/logger";
 
 // Hourly protocol-revenue refresh. Run by .github/workflows/cron.yml.
@@ -16,6 +16,11 @@ import { logger } from "@/lib/logger";
 // refreshRecentRevenue() backfills existing rows over a rolling ~14-day window
 // and is idempotent + internally guarded (never throws), so re-running hourly is
 // cheap and safe.
+//
+// The same hourly run re-syncs staking APR (refreshRecentStakingApr, rolling
+// ~30-day window, same guarantees). Numia publishes a day's APR the next day,
+// so the daily snapshot can't carry it, and an outage on snapshot day would
+// otherwise leave a row without APR.
 //
 // Security: requests need `Authorization: Bearer <CRON_SECRET>`; others are
 // rejected. scripts/run-cron.ts sends it (with a per-run secret) when the
@@ -35,5 +40,6 @@ export async function GET(request: Request) {
   }
 
   const revenueFilled = await refreshRecentRevenue();
-  return NextResponse.json({ ok: true, revenueFilled });
+  const stakingAprFilled = await refreshRecentStakingApr();
+  return NextResponse.json({ ok: true, revenueFilled, stakingAprFilled });
 }

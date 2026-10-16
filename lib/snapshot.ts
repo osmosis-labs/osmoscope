@@ -9,6 +9,7 @@ import {
   fetchRestrictedSupply,
   fetchInflation,
   fetchStakingApr,
+  fetchStakingAprByDate,
   fetchFullMintParams,
   fetchPoolManagerParams,
   fetchTotalStaked,
@@ -25,8 +26,14 @@ import {
   indexGovParticipation,
 } from "./validators";
 import type { ValidatorInfo, UnbondingSchedule } from "./validators";
-import { saveSnapshot, getHistory, backfillRevenue } from "./historical-file";
+import {
+  saveSnapshot,
+  getHistory,
+  backfillRevenue,
+  backfillStakingApr,
+} from "./historical-file";
 import { fetchDailyRevenue } from "./revenue";
+import { APR_WINDOW_DAYS, shiftDate, trailingAprAverage } from "./staking-apr";
 import { logger } from "./logger";
 import { oneOffBurnsBetween } from "./one-off-burns";
 
@@ -291,6 +298,9 @@ export function assertSnapshotSane(metrics: {
 export async function buildAndSaveSnapshot(
   dayEpoch?: number
 ): Promise<SnapshotResult> {
+  // The UTC date this row is stored under, which is what Numia's APR is keyed
+  // by. Taken before the fetches; the build finishes well inside the same day.
+  const snapshotDay = new Date().toISOString().split("T")[0];
   const [
     mintedSupply,
     burnedAmount,
@@ -309,7 +319,7 @@ export async function buildAndSaveSnapshot(
     fetchRestrictedSupply(),
     fetchBalance(DEVELOPER_VESTING_MODULE_ADDRESS),
     fetchInflation(),
-    fetchStakingApr(),
+    fetchStakingApr(snapshotDay),
     fetchFullMintParams(),
     fetchPoolManagerParams(),
     fetchTotalStaked(),
@@ -399,11 +409,6 @@ export async function buildAndSaveSnapshot(
 
   const timestamp = new Date().toISOString();
 
-  const todayApr =
-    aprData.entries.length > 0
-      ? aprData.entries[aprData.entries.length - 1].apr
-      : undefined;
-
   // Decentralization / network metrics (Nakamoto, Gini, pending undelegations,
   // block rate + height). These are analytics extras, NOT financial core, so the
   // whole block is best-effort: any failure leaves the fields undefined and the
@@ -482,7 +487,10 @@ export async function buildAndSaveSnapshot(
     devVestingSupply: devVestingBalance,
     inflationRate,
     totalStaked,
-    stakingApr: todayApr,
+    // Numia publishes a day's APR the next day, so stakingApr is normally unset
+    // here and refreshRecentStakingApr fills it (and corrects the average) once
+    // the figure appears.
+    stakingApr: aprData.apr,
     stakingRate: aprData.average,
     // Decentralization / network metrics (best-effort; see above).
     nakamotoCoefficient: nakamoto,
@@ -574,6 +582,44 @@ export async function refreshRecentRevenue(): Promise<number> {
   } catch (e) {
     logger.warn(
       `Revenue refresh skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
+    );
+    return 0;
+  }
+}
+
+// Re-sync stakingApr and stakingRate on the last ~month of rows from Numia's
+// date-keyed series. Runs from the hourly cron for the same reason revenue
+// does: the snapshot can't have the day's APR yet (Numia publishes it the next
+// day), and a Numia outage on snapshot day would otherwise leave the row with
+// no APR for good. Each run rewrites only rows whose stored value differs, so
+// figures fill in within ~1h of Numia publishing or recovering. The fetch
+// reaches back a further 30 days so every refreshed row has a full trailing
+// window. Non-critical and fully guarded: a failure logs and returns 0.
+export async function refreshRecentStakingApr(): Promise<number> {
+  try {
+    const today = new Date().toISOString().split("T")[0];
+    const from = shiftDate(today, -APR_WINDOW_DAYS);
+    const byDate = await fetchStakingAprByDate(
+      shiftDate(from, -APR_WINDOW_DAYS),
+      today
+    );
+    const updates = new Map<
+      string,
+      { stakingApr?: number; stakingRate?: number }
+    >();
+    for (let day = from; day <= today; day = shiftDate(day, 1)) {
+      const stakingApr = byDate.get(day);
+      const stakingRate = trailingAprAverage(byDate, day);
+      if (stakingApr != null || stakingRate != null) {
+        updates.set(day, { stakingApr, stakingRate });
+      }
+    }
+    const n = await backfillStakingApr(updates);
+    if (n > 0) logger.info(`Staking APR: re-synced ${n} recent row(s)`);
+    return n;
+  } catch (e) {
+    logger.warn(
+      `Staking APR refresh skipped (non-critical): ${e instanceof Error ? e.message : String(e)}`
     );
     return 0;
   }

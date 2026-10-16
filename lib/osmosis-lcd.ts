@@ -1,6 +1,12 @@
 import { LRUCache } from "lru-cache";
 import { logger } from "./logger";
 import { LCD_PRIMARY } from "@/config/lcd-endpoints";
+import {
+  APR_WINDOW_DAYS,
+  aprByDate,
+  shiftDate,
+  trailingAprAverage,
+} from "./staking-apr";
 import type {
   SupplyResponse,
   CommunityPoolResponse,
@@ -8,7 +14,6 @@ import type {
   InflationResponse,
   DelegationResponse,
   NumiaAprResponse,
-  NumiaAprEntry,
   PoolManagerParamsResponse,
   StakingPoolResponse,
 } from "@/types/osmosis";
@@ -337,76 +342,64 @@ export async function fetchTotalStaked(): Promise<number> {
   }
 }
 
-// Fetch staking APR from Numia API (30-day average)
-export async function fetchStakingApr(): Promise<{
-  average: number;
-  entries: NumiaAprEntry[];
+// Fetch Numia's daily staking APR for an inclusive UTC date range, keyed by
+// date (see lib/staking-apr.ts for why it is keyed rather than ordered).
+// Throws on a failed request; an empty map means Numia returned no figures.
+export async function fetchStakingAprByDate(
+  startDate: string,
+  endDate: string
+): Promise<Map<string, number>> {
+  const url = `${NUMIA_API_URL}/apr?start_date=${startDate}&end_date=${endDate}`;
+
+  const headers: HeadersInit = {
+    Accept: "application/json",
+  };
+
+  // Add Authorization header if API key is configured
+  if (NUMIA_API_KEY) {
+    headers.Authorization = `Bearer ${NUMIA_API_KEY}`;
+  }
+
+  const response = await fetch(url, {
+    headers,
+  });
+
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+
+  const data: NumiaAprResponse = await response.json();
+  return aprByDate(data);
+}
+
+// Staking APR for the daily snapshot of `day`: Numia's figure for that date
+// (normally not yet published at snapshot time; the hourly refresh fills it
+// later) and the trailing 30-day average. Both are undefined rather than 0 when
+// Numia has no figures, so an outage never writes a 0% APR into the series.
+export async function fetchStakingApr(day: string): Promise<{
+  apr: number | undefined;
+  average: number | undefined;
 }> {
   try {
-    // Calculate date range for last 30 days
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 30);
-
-    const formatDate = (date: Date) => {
-      return date.toISOString().split("T")[0]; // Format: YYYY-MM-DD
-    };
-
-    const url = `${NUMIA_API_URL}/apr?start_date=${formatDate(startDate)}&end_date=${formatDate(endDate)}`;
-
-    const headers: HeadersInit = {
-      Accept: "application/json",
-    };
-
-    // Add Authorization header if API key is configured
-    if (NUMIA_API_KEY) {
-      headers.Authorization = `Bearer ${NUMIA_API_KEY}`;
-    }
-
-    const response = await fetch(url, {
-      headers,
-    });
-
-    if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`);
-    }
-
-    const data: NumiaAprResponse = await response.json();
-
-    // Filter for OSMO entries only (or use "total" if OSMO not available)
-    const osmoEntries = data.filter(
-      (entry) => entry.symbol === "OSMO" || entry.symbol === "total"
+    const byDate = await fetchStakingAprByDate(
+      shiftDate(day, -APR_WINDOW_DAYS),
+      day
     );
-
-    // Remove duplicates by date (keep one entry per day)
-    const uniqueEntries = new Map<string, NumiaAprEntry>();
-    osmoEntries.forEach((entry) => {
-      const date = entry.labels.split(" ")[0]; // Extract date part
-      if (!uniqueEntries.has(date)) {
-        uniqueEntries.set(date, entry);
-      }
-    });
-
-    const entries = Array.from(uniqueEntries.values());
-
-    // Calculate 30-day average
-    if (entries.length === 0) {
-      logger.warn("No APR data available");
-      return { average: 0, entries: [] };
+    const average = trailingAprAverage(byDate, day);
+    if (average == null) {
+      logger.warn(
+        `Staking APR: only ${byDate.size} day(s) from Numia; leaving the 30-day average unset`
+      );
+    } else {
+      logger.info(
+        `Calculated ${byDate.size}-day average APR: ${average.toFixed(2)}%`
+      );
     }
-
-    const sum = entries.reduce((total, entry) => total + entry.apr, 0);
-    const average = sum / entries.length;
-
-    logger.info(
-      `Calculated ${entries.length}-day average APR: ${average.toFixed(2)}%`
-    );
-
-    return { average, entries };
+    return { apr: byDate.get(day), average };
   } catch (error) {
     logger.error("Error fetching staking APR:", error);
-    // Return 0 instead of throwing to allow other metrics to be fetched
-    return { average: 0, entries: [] };
+    // Don't throw, so the other metrics can still be fetched
+    return { apr: undefined, average: undefined };
   }
 }
 

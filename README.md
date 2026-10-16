@@ -336,7 +336,7 @@ revenueApr = totalApr - inflationApr
 ```
 
 **Population:**
-Run `yarn populate-staking-apr` to fetch historical data from Numia API.
+Run `yarn populate-staking-apr` to fetch historical data from Numia API into the local `data/history.json`. The hourly revenue cron keeps the last ~30 days of database rows in sync with Numia (Numia publishes each day's APR the following day). To re-sync the whole database history, run `yarn resync-staking-apr` (dry run; add `APPLY=1` to write).
 
 ### Time Range Filtering
 

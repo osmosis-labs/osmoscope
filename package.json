@@ -21,6 +21,7 @@
     "backfill-genesis-2021": "tsx scripts/backfill-genesis-2021.ts",
     "recompute-inflation": "tsx scripts/recompute-inflation.ts",
     "populate-staking-apr": "tsx scripts/populate-staking-apr-history.ts",
+    "resync-staking-apr": "tsx scripts/resync-staking-apr.ts",
     "populate-revenue": "tsx scripts/populate-revenue-history.ts",
     "validate-history": "tsx scripts/validate-history.ts",
     "migrate-json-to-db": "tsx scripts/migrate-json-to-db.ts",
