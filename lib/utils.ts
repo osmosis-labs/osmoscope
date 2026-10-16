@@ -93,6 +93,20 @@ export function formatChartDate(
   );
 }
 
+// Right padding for the x-axis on the short timeframes ("90d"/"30d"/"7d"),
+// where Recharts picks the ticks itself (interval "preserveEnd"). It treats
+// each label as centred on its point, so it slides the LAST label left to keep
+// that imagined right half inside the chart, then hides the second-to-last
+// label as colliding with the moved one. Our labels are rotated -45° and end
+// AT their point, so they never overflow; padding wider than half a label stops
+// the slide. Wide timeframes use explicit monthly ticks and need none.
+export function shortRangeAxisPadding(
+  timeRange: ChartRange
+): { right: number } | undefined {
+  const wide = timeRange === "all" || timeRange === "1y";
+  return wide ? undefined : { right: 14 };
+}
+
 // One x-axis tick per MONTH on the wide timeframes ("all"/"1y"). Returns the
 // `ticks` array of labels at the FIRST data point of each calendar month, so
 // Recharts shows exactly one "MMM yyyy" tick per month instead of one per day

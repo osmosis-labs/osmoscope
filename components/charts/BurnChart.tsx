@@ -17,6 +17,7 @@ import {
   formatNumberWithCommas,
   formatChartDate,
   makeMonthlyTicks,
+  shortRangeAxisPadding,
 } from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
 import { oneOffBurnsBetween, recurringBurned } from "@/lib/one-off-burns";
@@ -170,6 +171,7 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
                   dailyFiltered.map((d) => d.timestamp),
                   timeRange
                 )}
+                padding={shortRangeAxisPadding(timeRange)}
                 angle={-45}
                 textAnchor="end"
                 height={80}
@@ -211,6 +213,7 @@ export function BurnChart({ burned, historicalData }: BurnChartProps) {
                   filteredData.map((r) => r.timestamp),
                   timeRange
                 )}
+                padding={shortRangeAxisPadding(timeRange)}
                 angle={-45}
                 textAnchor="end"
                 height={80}

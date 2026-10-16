@@ -17,6 +17,7 @@ import {
   formatPercentage,
   formatChartDate,
   makeMonthlyTicks,
+  shortRangeAxisPadding,
 } from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
 import { recurringBurned } from "@/lib/one-off-burns";
@@ -333,6 +334,7 @@ export function InflationRatesChart({
                 timestamps,
                 timeRange
               )}
+              padding={shortRangeAxisPadding(timeRange)}
               angle={-45}
               textAnchor="end"
               height={80}

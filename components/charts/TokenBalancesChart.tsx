@@ -15,6 +15,7 @@ import {
   formatNumberWithCommas,
   formatChartDate,
   makeMonthlyTicks,
+  shortRangeAxisPadding,
 } from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
 import { useState, useRef, useCallback } from "react";
@@ -184,6 +185,7 @@ export function TokenBalancesChart({
                 chartData.map((d) => d.timestamp),
                 timeRange
               )}
+              padding={shortRangeAxisPadding(timeRange)}
               angle={-45}
               textAnchor="end"
               height={80}

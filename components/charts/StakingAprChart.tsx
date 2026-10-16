@@ -18,6 +18,7 @@ import {
   formatPercentage,
   formatChartDate,
   makeMonthlyTicks,
+  shortRangeAxisPadding,
 } from "@/lib/utils";
 import {
   TimeRange,
@@ -247,6 +248,7 @@ export function StakingAprChart({
                 chartData.map((d) => d.timestamp),
                 timeRange
               )}
+              padding={shortRangeAxisPadding(timeRange)}
               angle={-45}
               textAnchor="end"
               height={80}

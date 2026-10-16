@@ -17,6 +17,7 @@ import {
   formatNumberWithCommas,
   formatChartDate,
   makeMonthlyTicks,
+  shortRangeAxisPadding,
 } from "@/lib/utils";
 import type { HistoricalRecord } from "@/lib/historical-file";
 import { useState, useRef } from "react";
@@ -171,6 +172,7 @@ export function ProtocolRevenueChart({
                   plotted.map((r) => r.timestamp),
                   timeRange
                 )}
+                padding={shortRangeAxisPadding(timeRange)}
                 angle={-45}
                 textAnchor="end"
                 height={80}

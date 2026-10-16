@@ -28,6 +28,7 @@ import {
   formatPercentage,
   formatChartDate,
   makeMonthlyTicks,
+  shortRangeAxisPadding,
 } from "@/lib/utils";
 import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
 import { ChartHeader } from "../charts/ChartHeader";
@@ -261,6 +262,7 @@ function MetricLineChart({
                   chartData.map((d) => d.timestamp),
                   timeRange
                 )}
+                padding={shortRangeAxisPadding(timeRange)}
                 angle={-45}
                 textAnchor="end"
                 height={70}
@@ -1629,6 +1631,7 @@ export function StakingView() {
                       showHistory ? undelegHistory.map((d) => d.timestamp) : [],
                       undelegRange
                     )}
+                    padding={shortRangeAxisPadding(undelegRange)}
                     angle={-45}
                     textAnchor="end"
                     height={60}
