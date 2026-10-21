@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Tailwind v4 only applies hover: on devices that can hover, so on touch
+   screens a tap would no longer reveal hover-only content (the rate-limit
+   capacity popups, chart explainers). Keep v3's behaviour of hover: on any
+   :hover, which a tap triggers. */
+@custom-variant hover (&:hover);
+
 @theme {
   --color-osmo-50: #f5eafa;
   --color-osmo-100: #ebd6f5;
