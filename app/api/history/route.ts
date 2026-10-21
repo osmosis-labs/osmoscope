@@ -37,8 +37,7 @@ export async function GET(request: Request) {
       const pageNum = parseInt(page, 10) || 1;
       const pageSizeNum = parseInt(pageSize || "100", 10);
       const order = (orderBy?.toLowerCase() === "asc" ? "asc" : "desc") as
-        | "asc"
-        | "desc";
+        "asc" | "desc";
 
       const result = await getHistoryPaginated(
         pageNum,

@@ -38,14 +38,11 @@ function prismaToJson(record: PrismaRecord): JsonRecord {
     blockHeight:
       record.blockHeight == null ? undefined : Number(record.blockHeight),
     distributionProportions: record.distributionProportions as
-      | JsonRecord["distributionProportions"]
-      | undefined,
+      JsonRecord["distributionProportions"] | undefined,
     osmoTakerFeeDistribution: record.osmoTakerFeeDistribution as
-      | JsonRecord["osmoTakerFeeDistribution"]
-      | undefined,
+      JsonRecord["osmoTakerFeeDistribution"] | undefined,
     nonOsmoTakerFeeDistribution: record.nonOsmoTakerFeeDistribution as
-      | JsonRecord["nonOsmoTakerFeeDistribution"]
-      | undefined,
+      JsonRecord["nonOsmoTakerFeeDistribution"] | undefined,
     communityPoolDenomWhitelist: record.communityPoolDenomWhitelist,
     communityPoolDenomToSwapNonWhitelistedAssetsTo:
       record.communityPoolDenomToSwapNonWhitelistedAssetsTo || undefined,
