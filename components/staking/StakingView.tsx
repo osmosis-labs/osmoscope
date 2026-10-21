@@ -14,6 +14,8 @@ import {
   Cell,
   Treemap,
   usePlotArea,
+  ZIndexLayer,
+  DefaultZIndexes,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
 import { useValidatorData } from "@/lib/hooks/useValidatorData";
@@ -308,6 +310,11 @@ function MetricLineChart({
   );
 }
 
+// The geometric overlays below draw above the series (bars and lines) but under
+// the axes: recharts 3 puts plain SVG children on its lowest layer, where an
+// opaque bar would cover them.
+const OVERLAY_Z = DefaultZIndexes.line + 1;
+
 // The chart's plot area (inside the axes), for the geometric overlays below.
 // Rendered as a direct chart child, an overlay reads it from the chart context.
 function usePlotOffset() {
@@ -333,42 +340,44 @@ function EventLines({
   const off = usePlotOffset();
   if (!off || count <= 1) return null;
   return (
-    <g pointerEvents="none">
-      {markers.map((m, i) => {
-        const frac = count > 1 ? m.index / (count - 1) : 0;
-        const x = off.left + frac * off.width;
-        const color = EVENT_COLOR[m.kind];
-        // Stagger labels across 3 rows so tight clusters (e.g. the v21-v25 run in
-        // early 2024, close together on the wide ranges) don't overprint.
-        const yLabel = off.top + 12 + (i % 3) * 14;
-        // Anchor the label so it stays inside the plot at either edge.
-        const nearRight = frac > 0.85;
-        const anchor = nearRight ? "end" : "start";
-        const tx = nearRight ? x - 4 : x + 4;
-        return (
-          <g key={`${m.label}-${m.index}`}>
-            <line
-              x1={x}
-              x2={x}
-              y1={off.top}
-              y2={off.top + off.height}
-              stroke={color}
-              strokeWidth={1.5}
-              strokeDasharray="4 4"
-            />
-            <text
-              x={tx}
-              y={yLabel}
-              textAnchor={anchor}
-              fill={color}
-              fontSize={11}
-            >
-              {m.label}
-            </text>
-          </g>
-        );
-      })}
-    </g>
+    <ZIndexLayer zIndex={OVERLAY_Z}>
+      <g pointerEvents="none">
+        {markers.map((m, i) => {
+          const frac = count > 1 ? m.index / (count - 1) : 0;
+          const x = off.left + frac * off.width;
+          const color = EVENT_COLOR[m.kind];
+          // Stagger labels across 3 rows so tight clusters (e.g. the v21-v25 run in
+          // early 2024, close together on the wide ranges) don't overprint.
+          const yLabel = off.top + 12 + (i % 3) * 14;
+          // Anchor the label so it stays inside the plot at either edge.
+          const nearRight = frac > 0.85;
+          const anchor = nearRight ? "end" : "start";
+          const tx = nearRight ? x - 4 : x + 4;
+          return (
+            <g key={`${m.label}-${m.index}`}>
+              <line
+                x1={x}
+                x2={x}
+                y1={off.top}
+                y2={off.top + off.height}
+                stroke={color}
+                strokeWidth={1.5}
+                strokeDasharray="4 4"
+              />
+              <text
+                x={tx}
+                y={yLabel}
+                textAnchor={anchor}
+                fill={color}
+                fontSize={11}
+              >
+                {m.label}
+              </text>
+            </g>
+          );
+        })}
+      </g>
+    </ZIndexLayer>
   );
 }
 
@@ -388,26 +397,28 @@ function UndelegBoundaryLine({
   if (!off || count <= 0 || index < 0) return null;
   const x = off.left + ((index + 0.5) / count) * off.width;
   return (
-    <g pointerEvents="none">
-      <line
-        x1={x}
-        x2={x}
-        y1={off.top}
-        y2={off.top + off.height}
-        stroke="#FFB74D"
-        strokeWidth={1.5}
-        strokeDasharray="4 4"
-      />
-      <text
-        x={x - 4}
-        y={off.top + 12}
-        textAnchor="end"
-        fill="#FFB74D"
-        fontSize={11}
-      >
-        Today
-      </text>
-    </g>
+    <ZIndexLayer zIndex={OVERLAY_Z}>
+      <g pointerEvents="none">
+        <line
+          x1={x}
+          x2={x}
+          y1={off.top}
+          y2={off.top + off.height}
+          stroke="#FFB74D"
+          strokeWidth={1.5}
+          strokeDasharray="4 4"
+        />
+        <text
+          x={x - 4}
+          y={off.top + 12}
+          textAnchor="end"
+          fill="#FFB74D"
+          fontSize={11}
+        >
+          Today
+        </text>
+      </g>
+    </ZIndexLayer>
   );
 }
 

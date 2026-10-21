@@ -179,7 +179,10 @@ export function StakingRatioChart({
                   <stop offset="95%" stopColor="#7C4DFF" stopOpacity={0.05} />
                 </linearGradient>
               </defs>
+              {/* recharts 3 ties the grid to a named axis; the OSMO axis
+                  carries the horizontal lines, as on recharts 2. */}
               <CartesianGrid
+                yAxisId="osmo"
                 strokeDasharray="3 3"
                 stroke="rgba(255,255,255,0.1)"
               />
