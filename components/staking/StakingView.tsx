@@ -594,16 +594,22 @@ export function StakingView() {
   // Full validator set (stake-desc) with running cumulative share. Feeds the
   // consensus-boundary indices, the treemap tiles, and the treemap CSV export.
   const validators = data?.validators ?? [];
+  const chartData: {
+    moniker: string;
+    operatorAddress: string;
+    share: number;
+    cumulative: number;
+  }[] = [];
   let cumulative = 0;
-  const chartData = validators.map((v) => {
+  for (const v of validators) {
     cumulative += v.votingPowerShare * 100;
-    return {
+    chartData.push({
       moniker: v.moniker,
       operatorAddress: v.operatorAddress, // for the Mintscan link on tile-click
       share: v.votingPowerShare * 100,
       cumulative,
-    };
-  });
+    });
+  }
   // Consensus boundaries: the FIRST validator at which running cumulative stake
   // exceeds 1/3 (can veto/halt — this count IS the Nakamoto coefficient) and 2/3
   // (controls consensus). We draw a dotted line UNDER that validator's bar (at

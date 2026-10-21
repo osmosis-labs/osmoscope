@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useAssetLogos } from "@/lib/hooks/useAssetLogos";
 import { cn } from "@/lib/utils";
 
@@ -16,13 +16,10 @@ export function AssetLogo({
 }) {
   const { data } = useAssetLogos();
   const uri = data?.logos[symbol];
-  const [hasFailed, setHasFailed] = useState(false);
+  // The URI that failed to load, so a new URI for the symbol gets its own try.
+  const [failedUri, setFailedUri] = useState<string | null>(null);
 
-  useEffect(() => {
-    setHasFailed(false);
-  }, [uri]);
-
-  if (!uri || hasFailed) return null;
+  if (!uri || failedUri === uri) return null;
   return (
     // eslint-disable-next-line @next/next/no-img-element -- remote assetlist logos; next/image would need per-host config
     <img
@@ -33,7 +30,7 @@ export function AssetLogo({
       // that window, hide rather than render a broken-image glyph (Safari shows
       // one despite the empty alt).
       onError={() => {
-        setHasFailed(true);
+        setFailedUri(uri);
       }}
       className={cn("h-4 w-4 shrink-0 rounded-full", className)}
     />

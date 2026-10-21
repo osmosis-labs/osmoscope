@@ -50,11 +50,7 @@ const PERSISTED_HOUR_KEY = "rateLimits.persistedHour";
 // Which stage of the run failed — so ops knows WHERE it broke, not just that
 // it did. Carried on the thrown error via CronStageError below.
 type CronStage =
-  | "dump"
-  | "persist-snapshot"
-  | "load-state"
-  | "alerts"
-  | "persist-state";
+  "dump" | "persist-snapshot" | "load-state" | "alerts" | "persist-state";
 
 class CronStageError extends Error {
   constructor(
