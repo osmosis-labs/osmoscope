@@ -37,6 +37,9 @@ export interface AlertTransition {
   symbol: string;
   quotaName: string;
   direction: "in" | "out" | null;
+  // Which kind of cap the pct is measured against; null on recovery
+  // transitions for windows that vanished.
+  bound: "percentage" | "absolute" | null;
   pct: number;
   from: AlertLevel | null;
   // null means recovered (dropped below the warn threshold, or the window
@@ -76,6 +79,7 @@ export function computeAlertTransitions(
             symbol: path.symbol,
             quotaName: window.quotaName,
             direction: window.direction,
+            bound: window.bound ?? "percentage",
             pct: window.utilizationPct,
             from: previous?.level ?? null,
             to: level,
@@ -87,6 +91,7 @@ export function computeAlertTransitions(
           symbol: path.symbol,
           quotaName: window.quotaName,
           direction: window.direction,
+          bound: window.bound ?? "percentage",
           pct: window.utilizationPct,
           from: previous.level,
           to: null,
@@ -108,6 +113,7 @@ export function computeAlertTransitions(
       symbol: shortDenom(denom ?? pathKey),
       quotaName: quotaName ?? "",
       direction: null,
+      bound: null,
       pct: 0,
       from: previous.level,
       to: null,

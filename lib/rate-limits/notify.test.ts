@@ -19,6 +19,7 @@ const transition = (over: Partial<AlertTransition> = {}): AlertTransition => ({
   symbol: "OSMO",
   quotaName: "DAY",
   direction: "out",
+  bound: "percentage",
   pct: 96.2,
   from: "warn",
   to: "urgent",

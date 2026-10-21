@@ -61,6 +61,8 @@ export async function saveRateLimitSnapshot(
       outflow: w.outflow,
       sendPct: w.sendPct,
       recvPct: w.recvPct,
+      maxAbsoluteSend: w.maxAbsoluteSend ?? null,
+      maxAbsoluteRecv: w.maxAbsoluteRecv ?? null,
       periodEnd: BigInt(w.periodEnd),
     }))
   );

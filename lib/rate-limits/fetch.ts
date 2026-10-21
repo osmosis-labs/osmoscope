@@ -35,12 +35,19 @@ const ASSETLIST_URL =
 
 // Shapes as stored by the contract (Vec<RateLimit> per path). Amounts are
 // Uint256 decimal strings; period_end is a nanosecond timestamp string.
+//
+// Contract 0.2.0 made the percentages optional (null = no percentage bound in
+// that direction) and added absolute bounds in base units. Entries written
+// before 0.2.0 hold integer percentages and no absolute fields at all; entries
+// written after hold null for an unset absolute bound.
 export interface ContractQuota {
   name: string;
-  max_percentage_send: number;
-  max_percentage_recv: number;
+  max_percentage_send: number | null;
+  max_percentage_recv: number | null;
   duration: number;
   channel_value: string | null;
+  max_absolute_send?: string | null;
+  max_absolute_recv?: string | null;
 }
 
 export interface ContractFlow {

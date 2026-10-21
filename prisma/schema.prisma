@@ -321,11 +321,21 @@ model RateLimitReading {
   // The quota's caps (whole percent of channelValue) and its period end
   // (nanoseconds) at this reading, so a reading is self-contained for the
   // limit review: the same-hour snapshot blob also has them, but retention
-  // keeps one snapshot per day once a day is old (lib/retention.ts). Null only
-  // on rows a backfill could not match.
-  sendPct   Int?
-  recvPct   Int?
+  // keeps one snapshot per day once a day is old (lib/retention.ts). A null
+  // percentage means the quota has no percentage bound in that direction
+  // (allowed from contract 0.2.0); a null periodEnd marks a row the backfill
+  // could not match.
+  // BigInt: from 0.2.0 a percentage is an unclamped u32, past INTEGER's range.
+  sendPct   BigInt?
+  recvPct   BigInt?
   periodEnd BigInt?
+
+  // Absolute caps in base units (contract 0.2.0+), compared against the GROSS
+  // inflow/outflow rather than the net. Null when the quota has no absolute
+  // bound in that direction, which includes every reading taken before the
+  // contract migration: null is "no bound", never zero.
+  maxAbsoluteSend Decimal? @db.Decimal(78, 0)
+  maxAbsoluteRecv Decimal? @db.Decimal(78, 0)
 
   @@id([timestamp, channel, denom, quotaName])
   @@index([denom, timestamp(sort: Asc)])

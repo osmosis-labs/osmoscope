@@ -65,11 +65,49 @@ function formatReset(periodEndNs: string): string {
   }
 }
 
+// A direction is closed by design when either of its bounds is zero.
+function directionClosed(pct: number | null, abs?: string | null): boolean {
+  return pct === 0 || abs === "0";
+}
+
 // Why a window has no utilization figure: its counters no longer bind.
 function windowStatus(w: WindowUtilization): string {
   if (!w.windowActive) return "expired";
-  if (w.sendPct === 0 && w.recvPct === 0) return "closed";
+  if (
+    directionClosed(w.sendPct, w.maxAbsoluteSend) &&
+    directionClosed(w.recvPct, w.maxAbsoluteRecv)
+  )
+    return "closed";
   return "—";
+}
+
+// One direction's caps for the popup: the percentage bound (with its dollar
+// value when priced) and the absolute bound in display units beside the
+// base-unit figure the contract stores. Without a known exponent only the
+// base-unit figure shows.
+function capsText(
+  pct: number | null,
+  abs: string | null | undefined,
+  chanUsd: number | null,
+  exponent: number | null,
+  symbol: string
+): string {
+  const parts: string[] = [];
+  if (pct != null) {
+    parts.push(
+      chanUsd != null
+        ? `${pct}% (${formatCurrency((chanUsd * pct) / 100)})`
+        : `${pct}%`
+    );
+  }
+  if (abs != null) {
+    parts.push(
+      exponent != null
+        ? `${formatNumber(Number(abs) / Math.pow(10, exponent))} ${symbol} (${abs} base)`
+        : `${abs} base units`
+    );
+  }
+  return parts.length > 0 ? parts.join(" + ") : "none";
 }
 
 // Window label from the quota NAME (the limiter names quotas "…DAY…"/"…WEEK…"),
@@ -194,12 +232,12 @@ function UtilBar({
             Channel value: {chanUsd == null ? "—" : formatCurrency(chanUsd)}
           </span>
           <span className="block">
-            Caps: in {w.recvPct}%
-            {chanUsd != null &&
-              ` (${formatCurrency((chanUsd * w.recvPct) / 100)})`}{" "}
-            / out {w.sendPct}%
-            {chanUsd != null &&
-              ` (${formatCurrency((chanUsd * w.sendPct) / 100)})`}
+            Cap in:{" "}
+            {capsText(w.recvPct, w.maxAbsoluteRecv, chanUsd, exponent, symbol)}
+          </span>
+          <span className="block">
+            Cap out:{" "}
+            {capsText(w.sendPct, w.maxAbsoluteSend, chanUsd, exponent, symbol)}
           </span>
           <span className="block">
             Remaining{w.direction ? ` (${w.direction})` : ""}:{" "}
@@ -253,7 +291,7 @@ export function RateLimitsCard() {
             <span className="inline-flex items-center gap-1.5">
               IBC Rate Limits
               <InfoTooltip
-                text="Osmosis caps how much of an asset can flow in or out over IBC within a time window (a percentage of the channel's value, enforced onchain by the rate-limiter contract)."
+                text="Osmosis caps how much of an asset can flow in or out over IBC within a time window (a percentage of the channel's value, a fixed amount, or both, enforced onchain by the rate-limiter contract)."
                 ariaLabel="About IBC rate limits"
               />
               {current && (
@@ -285,8 +323,11 @@ export function RateLimitsCard() {
                   durationSeconds: w.durationSeconds,
                   sendCapPct: w.sendPct,
                   recvCapPct: w.recvPct,
+                  sendCapAbsolute: w.maxAbsoluteSend ?? null,
+                  recvCapAbsolute: w.maxAbsoluteRecv ?? null,
                   utilizationPct: w.utilizationPct,
                   bindingDirection: w.direction,
+                  bindingBound: w.bound ?? null,
                   windowActive: w.windowActive,
                 }))
               )

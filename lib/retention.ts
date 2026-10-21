@@ -58,24 +58,28 @@ export async function pruneHistory(): Promise<RetentionResult> {
   // Fill caps and period end on readings written without them, from the
   // snapshot stored with each reading. Runs before the snapshot prune below,
   // which may remove those snapshots. A no-op once every reading has them.
+  // periodEnd alone marks a row as unfilled: the contract always stores it,
+  // while a null percentage is a real "no percentage bound" from 0.2.0 on.
   const rateLimitReadingsBackfilled = await prisma.$executeRaw`
     UPDATE rate_limit_readings r
-    SET "sendPct" = (w->>'sendPct')::integer,
-      "recvPct" = (w->>'recvPct')::integer,
+    SET "sendPct" = (w->>'sendPct')::bigint,
+      "recvPct" = (w->>'recvPct')::bigint,
       "periodEnd" = (w->>'periodEnd')::bigint
     FROM rate_limit_snapshots s,
       jsonb_array_elements(s.data->'paths') p,
       jsonb_array_elements(p->'windows') w
-    WHERE (r."sendPct" IS NULL OR r."recvPct" IS NULL OR r."periodEnd" IS NULL)
+    WHERE r."periodEnd" IS NULL
       AND s.timestamp = r.timestamp
       AND p->>'channel' = r.channel
       AND p->>'denom' = r.denom
       AND w->>'quotaName' = r."quotaName"`;
 
-  // Ordering keys for the day's peaks. The scale (percent) is dropped: it
-  // doesn't change the order. An expired window's counters are not live
-  // flow, so they rank last. Groups with any reading still missing caps are
-  // left whole.
+  // Ordering keys for the day's peaks: per direction, the bound closest to
+  // tripping, as a fraction of its cap (net flow against the percentage cap,
+  // gross flow against the absolute cap). GREATEST skips a bound that isn't
+  // set. A zero bound closes the direction, so it has no peak. An expired
+  // window's counters are not live flow, so they rank last. Groups with any
+  // reading still missing caps are left whole.
   const rateLimitReadings = await prisma.$executeRaw`
     DELETE FROM rate_limit_readings r
     USING (
@@ -96,15 +100,20 @@ export async function pruneHistory(): Promise<RetentionResult> {
         ) AS peak_send
       FROM (
         SELECT timestamp, channel, denom, "quotaName",
-          ("sendPct" IS NULL OR "recvPct" IS NULL OR "periodEnd" IS NULL)
-            AS incomplete,
-          CASE WHEN active AND "recvPct" > 0
-            THEN GREATEST(inflow - outflow, 0)
-              / NULLIF("channelValue" * "recvPct", 0)
+          ("periodEnd" IS NULL) AS incomplete,
+          CASE WHEN active AND "recvPct" IS DISTINCT FROM 0
+              AND "maxAbsoluteRecv" IS DISTINCT FROM 0
+            THEN GREATEST(
+              GREATEST(inflow - outflow, 0) * 100
+                / NULLIF("channelValue" * "recvPct", 0),
+              inflow / "maxAbsoluteRecv")
           END AS recv_peak,
-          CASE WHEN active AND "sendPct" > 0
-            THEN GREATEST(outflow - inflow, 0)
-              / NULLIF("channelValue" * "sendPct", 0)
+          CASE WHEN active AND "sendPct" IS DISTINCT FROM 0
+              AND "maxAbsoluteSend" IS DISTINCT FROM 0
+            THEN GREATEST(
+              GREATEST(outflow - inflow, 0) * 100
+                / NULLIF("channelValue" * "sendPct", 0),
+              outflow / "maxAbsoluteSend")
           END AS send_peak
         FROM (
           SELECT *,
