@@ -58,10 +58,11 @@
   "devDependencies": {
     "@opennextjs/cloudflare": "^1.20.13",
     "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^22.20.5",
+    "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "eslint": "^10.13.0",
     "eslint-config-next": "16.4.2",
     "eslint-config-prettier": "^10.1.8",
@@ -72,7 +73,7 @@
     "prettier-plugin-tailwindcss": "^0.8.1",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
-    "typescript": "^6.0.3",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
     "wrangler": "^4.151.3"
   },
   "resolutions": {
@@ -87,5 +88,5 @@
       "prettier --write"
     ]
   },
-  "packageManager": "yarn@4.5.1"
+  "packageManager": "yarn@4.18.1+sha512.b2e1e7524f654f2749d32b4ebcb4622473cb5bcbc485df2007e12a154e50162a4d795526768bc5f5b8f81717bfd79deb2472813d86fb5ae2eb551fa9c872b08f"
 }
