@@ -32,7 +32,7 @@ export function TimeRangeSelector({
           key={range.value}
           onClick={() => onRangeChange(range.value)}
           className={cn(
-            "rounded px-3 py-1 text-xs font-medium transition-colors",
+            "rounded-sm px-3 py-1 text-xs font-medium transition-colors",
             selectedRange === range.value
               ? "bg-osmo-purple text-white"
               : "text-osmo-200 hover:text-white"

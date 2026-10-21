@@ -391,14 +391,14 @@ export function ScreenshotButtons({
     >
       {/* Copied feedback */}
       {showCopiedFeedback && (
-        <div className="absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-osmo-purple px-3 py-1 text-xs font-medium text-white shadow-lg">
+        <div className="absolute -top-10 left-1/2 -translate-x-1/2 rounded-sm bg-osmo-purple px-3 py-1 text-xs font-medium whitespace-nowrap text-white shadow-lg">
           Copied to clipboard!
         </div>
       )}
 
       {/* CSV empty-series feedback */}
       {showNoDataFeedback && (
-        <div className="absolute -top-10 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-red-500/90 px-3 py-1 text-xs font-medium text-white shadow-lg">
+        <div className="absolute -top-10 left-1/2 z-10 -translate-x-1/2 rounded-sm bg-red-500/90 px-3 py-1 text-xs font-medium whitespace-nowrap text-white shadow-lg">
           No data to export
         </div>
       )}
@@ -408,7 +408,7 @@ export function ScreenshotButtons({
           chart actually reached the clipboard — we don't promise a paste that
           isn't there. Dismisses on click or via the close button. */}
       {shareToast && (
-        <div className="absolute -top-12 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded bg-osmo-purple px-3 py-1.5 text-xs font-medium text-white shadow-lg">
+        <div className="absolute -top-12 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-sm bg-osmo-purple px-3 py-1.5 text-xs font-medium whitespace-nowrap text-white shadow-lg">
           <span>
             {shareToast.copied ? "Chart copied." : "Couldn’t copy chart."}
           </span>
@@ -417,7 +417,7 @@ export function ScreenshotButtons({
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => setShareToast(null)}
-            className="inline-flex items-center gap-1 rounded bg-white/20 px-2 py-0.5 font-semibold underline-offset-2 hover:bg-white/30 hover:underline"
+            className="inline-flex items-center gap-1 rounded-sm bg-white/20 px-2 py-0.5 font-semibold underline-offset-2 hover:bg-white/30 hover:underline"
           >
             Open X composer
             <svg
@@ -451,7 +451,7 @@ export function ScreenshotButtons({
       <button
         onClick={handleShare}
         disabled={isCapturing}
-        className="rounded px-2 py-1 transition-colors hover:bg-white/10 disabled:opacity-50"
+        className="rounded-sm px-2 py-1 transition-colors hover:bg-white/10 disabled:opacity-50"
         title="Share to X (copies chart to clipboard to paste)"
         aria-label="Share to X"
       >
@@ -473,7 +473,7 @@ export function ScreenshotButtons({
       <button
         onClick={handleCopyToClipboard}
         disabled={isCapturing}
-        className="rounded px-2 py-1 transition-colors hover:bg-white/10 disabled:opacity-50"
+        className="rounded-sm px-2 py-1 transition-colors hover:bg-white/10 disabled:opacity-50"
         title="Copy to clipboard"
         aria-label="Copy to clipboard"
       >
@@ -501,7 +501,7 @@ export function ScreenshotButtons({
         <button
           type="button"
           onClick={handleCsvExport}
-          className="rounded px-2 py-1 transition-colors hover:bg-white/10"
+          className="rounded-sm px-2 py-1 transition-colors hover:bg-white/10"
           title="Export this chart's full data as CSV"
           aria-label="Export data as CSV"
         >

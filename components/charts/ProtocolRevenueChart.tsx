@@ -127,7 +127,7 @@ export function ProtocolRevenueChart({
           }
           headlineValue={`$${formatNumberWithCommas(rangeTotal)}`}
           headlineLabel={timeRangeLabel(timeRange)}
-          headlineColor="text-[#7C4DFF]"
+          headlineColor="text-osmo-accent"
           extraControls={
             <div
               className="flex gap-1 rounded-lg bg-white/5 p-1"
@@ -138,7 +138,7 @@ export function ProtocolRevenueChart({
                   key={m}
                   onClick={() => setMode(m)}
                   className={cn(
-                    "rounded px-3 py-1 text-xs font-medium capitalize transition-colors",
+                    "rounded-sm px-3 py-1 text-xs font-medium capitalize transition-colors",
                     mode === m
                       ? "bg-osmo-purple text-white"
                       : "text-osmo-200 hover:text-white"

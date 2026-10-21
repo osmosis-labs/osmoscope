@@ -154,7 +154,7 @@ export function InfoTooltip({
         }}
         aria-label={ariaLabel}
         aria-expanded={open}
-        className="flex h-4 w-4 items-center justify-center rounded-full border border-white/30 text-[10px] font-bold leading-none text-osmo-200 transition-colors hover:bg-white/20 hover:text-white"
+        className="flex h-4 w-4 items-center justify-center rounded-full border border-white/30 text-[10px] leading-none font-bold text-osmo-200 transition-colors hover:bg-white/20 hover:text-white"
       >
         ?
       </button>
@@ -163,7 +163,7 @@ export function InfoTooltip({
           inside has focus. */}
       <span
         role="tooltip"
-        className={`absolute z-20 w-64 rounded-lg border border-white/20 bg-osmo-900 p-3 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-osmo-100 shadow-xl transition-opacity duration-150 ${
+        className={`absolute z-20 w-64 rounded-lg border border-white/20 bg-osmo-900 p-3 text-left text-xs leading-relaxed font-normal tracking-normal text-osmo-100 normal-case shadow-xl transition-opacity duration-150 ${
           align === "end"
             ? "right-0"
             : align === "start"

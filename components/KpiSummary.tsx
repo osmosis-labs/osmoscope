@@ -80,7 +80,7 @@ export function KpiSummary({ data }: KpiSummaryProps) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {kpis.map((kpi) => (
           <Card key={kpi.label} className="p-4">
-            <div className="text-xs uppercase tracking-wide text-osmo-200">
+            <div className="text-xs tracking-wide text-osmo-200 uppercase">
               {kpi.label}
             </div>
             <div className="mt-1 text-2xl font-bold text-white">

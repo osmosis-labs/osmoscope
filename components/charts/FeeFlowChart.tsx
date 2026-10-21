@@ -720,7 +720,7 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
 
   return (
     // Lift the whole card's z-index while the node tooltip is open. The tooltip is
-    // an in-card absolute overlay, and Card's backdrop-blur creates a stacking
+    // an in-card absolute overlay, and Card's backdrop-blur-sm creates a stacking
     // context, so without this the overlay is painted UNDER the next card below.
     // Same fix as TokenBalancesChart's explainer popovers.
     <Card ref={cardRef} className={displayNode ? "relative z-30" : undefined}>
@@ -746,7 +746,7 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
       <CardContent>
         <div className="relative">
           {/* Gradient box encompassing both sources and destinations */}
-          <div className="via-white/2 rounded-lg bg-gradient-to-b from-white/5 to-transparent p-4">
+          <div className="rounded-lg bg-linear-to-b from-white/5 via-white/2 to-transparent p-4">
             {/* Sources with proportional widths */}
             <div>
               <div className="mb-2 text-xs font-semibold text-osmo-200">
@@ -770,7 +770,7 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
                         role="button"
                         tabIndex={0}
                         aria-label={`${node.label}: ${formatUSD(node.value)}. Activate for detail.`}
-                        className="flex h-16 cursor-pointer flex-col items-center justify-center rounded transition-all hover:opacity-80 hover:ring-2 hover:ring-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                        className="flex h-16 cursor-pointer flex-col items-center justify-center rounded-sm transition-all hover:opacity-80 hover:ring-2 hover:ring-white focus:outline-hidden focus-visible:ring-2 focus-visible:ring-white"
                         style={{ backgroundColor: node.color }}
                         onMouseEnter={() =>
                           !selectedNode && setHoveredNode(node.id)
@@ -813,7 +813,7 @@ export function FeeFlowChart({ historicalData = [] }: FeeFlowChartProps) {
                         role="button"
                         tabIndex={0}
                         aria-label={`${node.label}: ${formatUSD(node.value)}. Activate for detail.`}
-                        className="flex h-24 cursor-pointer flex-col items-center justify-center rounded transition-all hover:opacity-80 hover:ring-2 hover:ring-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                        className="flex h-24 cursor-pointer flex-col items-center justify-center rounded-sm transition-all hover:opacity-80 hover:ring-2 hover:ring-white focus:outline-hidden focus-visible:ring-2 focus-visible:ring-white"
                         style={{ backgroundColor: node.color }}
                         onMouseEnter={() =>
                           !selectedNode && setHoveredNode(node.id)
