@@ -25,8 +25,28 @@ export function shiftDate(day: string, days: number): string {
   return d.toISOString().split("T")[0];
 }
 
+// Days where Numia's published APR is known to be wrong, replaced with an
+// onchain figure. Applied inside aprByDate so the snapshot, the hourly refresh
+// and the resync script all use the corrected value; otherwise the hourly
+// refresh would rewrite Numia's figure over a hand-edited row.
+//
+// Onchain method: uosmo delegation-reward accrual between consecutive day-epoch
+// payouts (archive LCD, ~30 delegations across the four largest validators,
+// all agreeing to 3dp), grossed up by each validator's commission, annualised
+// x365, then netted by the active set's stake-weighted commission. Numia's day
+// D is the payout at the epoch on D. The same method lands within ~1-2% of
+// Numia on 2026-10-17..20 and within ~4% on the clean days before.
+export const NUMIA_APR_OVERRIDES: Record<string, number> = {
+  // Numia published 4.04 / 4.10 / 4.16, about half the onchain rate, across
+  // the drop in bonded stake and the rise in stakers' taker-fee share.
+  "2026-10-14": 6.884,
+  "2026-10-15": 9.311,
+  "2026-10-16": 7.754,
+};
+
 // One APR per UTC date. Numia lists each day under both "OSMO" and "total"
-// (same value); OSMO wins when both are present.
+// (same value); OSMO wins when both are present. Dates in NUMIA_APR_OVERRIDES
+// that Numia covers take the override instead.
 export function aprByDate(entries: NumiaAprEntry[]): Map<string, number> {
   const byDate = new Map<string, number>();
   for (const e of entries) {
@@ -34,6 +54,9 @@ export function aprByDate(entries: NumiaAprEntry[]): Map<string, number> {
     if (!Number.isFinite(e.apr)) continue;
     const date = e.labels.split(" ")[0];
     if (e.symbol === "OSMO" || !byDate.has(date)) byDate.set(date, e.apr);
+  }
+  for (const [date, apr] of Object.entries(NUMIA_APR_OVERRIDES)) {
+    if (byDate.has(date)) byDate.set(date, apr);
   }
   return byDate;
 }
