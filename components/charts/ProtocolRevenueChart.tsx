@@ -192,8 +192,8 @@ export function ProtocolRevenueChart({
                   boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
                 }}
                 labelStyle={{ color: "#fff" }}
-                formatter={(value: number, name: string) => [
-                  "$" + formatNumberWithCommas(value, 0),
+                formatter={(value, name) => [
+                  "$" + formatNumberWithCommas(Number(value), 0),
                   name,
                 ]}
               />

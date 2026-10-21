@@ -232,10 +232,10 @@ export function StakingRatioChart({
                   boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
                 }}
                 labelStyle={{ color: "#fff" }}
-                formatter={(value: number, name: string) =>
+                formatter={(value, name) =>
                   name === "Staked %"
-                    ? [formatPercentage(value, 2), name]
-                    : [formatNumberWithCommas(value) + " OSMO", name]
+                    ? [formatPercentage(Number(value), 2), name]
+                    : [formatNumberWithCommas(Number(value)) + " OSMO", name]
                 }
               />
               <Area

@@ -9,7 +9,8 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  TooltipProps,
+  TooltipContentProps,
+  type TooltipValueType,
   Area,
   AreaChart,
 } from "recharts";
@@ -32,7 +33,7 @@ function CustomTooltip({
   active,
   payload,
   label,
-}: TooltipProps<number, string>) {
+}: TooltipContentProps<TooltipValueType, string | number>) {
   if (!active || !payload || payload.length === 0) return null;
 
   const data = payload[0].payload as Record<string, number | null>;
@@ -258,7 +259,7 @@ export function StakingAprChart({
               tick={{ fill: "#e0d5f5" }}
               tickFormatter={(value) => `${Math.round(value)}%`}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={CustomTooltip} />
             <Area
               type="monotone"
               dataKey="Inflation APR"

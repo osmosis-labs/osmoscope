@@ -511,7 +511,7 @@ function ValuePie({
                 ))}
               </Pie>
               <Tooltip
-                formatter={(v: number) => usd(v)}
+                formatter={(v) => usd(Number(v))}
                 contentStyle={{
                   background: "#1F0A29",
                   border: "1px solid rgba(255,255,255,0.2)",
