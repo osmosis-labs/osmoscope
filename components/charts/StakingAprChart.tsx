@@ -3,7 +3,6 @@
 import { Card, CardContent, CardHeader } from "../ui/Card";
 import { useMemo, useState, useRef } from "react";
 import {
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -275,13 +274,6 @@ export function StakingAprChart({
               stroke="#9C27B0"
               fill="url(#revenueGradient)"
               strokeWidth={2}
-            />
-            <Line
-              type="monotone"
-              dataKey="Staking APR"
-              stroke="#E1BEE7"
-              strokeWidth={2}
-              dot={false}
             />
           </AreaChart>
         </ResponsiveContainer>
