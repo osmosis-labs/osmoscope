@@ -13,13 +13,27 @@ import {
 const YIELDETH =
   "ibc/FBB3FEF80ED2344D821D4F95C31DBFD33E4E31D5324CAD94EF756E67B749F668";
 
-test("a token without an exponent is unpriced and flagged", () => {
+test("a token without an exponent keeps its price and is flagged", () => {
   const row = effectivePriceRow(
     { denom: "ibc/NODECIMALS", symbol: "NODEC", price: 3 },
     {}
   );
   assert.equal(row.exponentUnknown, true);
-  assert.equal(row.price, 0);
+  assert.equal(row.price, 3);
+});
+
+test("a priced denom with unknown decimals: an Osmosis amount is not valued", async () => {
+  const [h] = await decomposeBankDenom("ibc/NODECIMALS", 5_000_000, {
+    "ibc/NODECIMALS": {
+      symbol: "NODEC",
+      price: 3,
+      exponent: 0,
+      exponentUnknown: true,
+    },
+  });
+  assert.equal(h.decimalsUnknown, true);
+  assert.equal(h.priceUnavailable, true);
+  assert.equal(h.value, 0);
 });
 
 test("a token with Numia's exponent keeps price and decimals", () => {
@@ -143,4 +157,32 @@ test("CL assets keep the unknown-decimals flag into holdings", async () => {
   assert.equal(rows[0].decimalsUnknown, true);
   const [total] = aggregateBySymbol(rows);
   assert.equal(total.decimalsUnknown, true);
+});
+
+test("a symbol-priced EVM holding keeps its value when Osmosis decimals are unknown", async () => {
+  const { revalueHolding } = await import("./holdings");
+  const h = revalueHolding(
+    {
+      symbol: "USDC",
+      info: "",
+      amount: 100,
+      value: 0,
+      denom: "evm:1:0xusdc",
+      priceUnavailable: true,
+    },
+    {
+      "ibc/USDC": {
+        symbol: "USDC",
+        price: 1,
+        exponent: 0,
+        exponentUnknown: true,
+      },
+    }
+  );
+  assert.equal(h.priceUnavailable, false);
+  assert.equal(
+    h.value,
+    100,
+    "amount is in the chain's own units, so the price applies"
+  );
 });

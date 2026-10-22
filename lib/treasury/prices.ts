@@ -396,8 +396,10 @@ type SymbolIndex = Record<string, { price: number; exponent: number | null }>;
 // The effective price row for one Numia token after the curated overrides.
 // Decimals come from, in order: EXPONENT_OVERRIDES, an absolute override's own
 // exponent, Numia's exponent for the denom, then (for an alias) the base
-// symbol's. With none of those the row is unpriced and flagged
-// exponentUnknown, never scaled with a default of 0. Exported for tests.
+// symbol's. With none of those the row is flagged exponentUnknown: an Osmosis
+// amount is then never scaled with a default of 0 or valued, while a holding
+// sized by its own chain's decimals can still use the price. Exported for
+// tests.
 export function effectivePriceRow(
   item: NumiaToken,
   symbolIndex: SymbolIndex
@@ -418,8 +420,11 @@ export function effectivePriceRow(
     row: { symbol: string; price: number },
     exponent: number | null
   ) =>
+    // The price stays: it is per whole token, and a holding whose amount is
+    // sized elsewhere (EVM or Solana balances carry their own decimals) can
+    // still be valued. Only an Osmosis amount needs this exponent.
     exponent == null
-      ? { ...row, denom, price: 0, exponent: 0, exponentUnknown: true }
+      ? { ...row, denom, exponent: 0, exponentUnknown: true }
       : { ...row, denom, exponent };
 
   // EXPONENT_OVERRIDES is keyed by DENOM (factory/.../allOP, ibc/... etc.), so
