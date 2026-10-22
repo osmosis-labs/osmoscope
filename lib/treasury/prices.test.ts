@@ -244,3 +244,10 @@ test("a known CL reward keeps its value beside an unknown-decimals variant", asy
     100
   );
 });
+
+test("YieldETH keeps a CoinGecko fallback through its own symbol", async () => {
+  const { COINGECKO_ID_BY_SYMBOL, DENOM_SYMBOL_OVERRIDES } =
+    await import("../../config/community-pool");
+  assert.equal(DENOM_SYMBOL_OVERRIDES[YIELDETH], "YieldETH");
+  assert.equal(COINGECKO_ID_BY_SYMBOL.YieldETH, COINGECKO_ID_BY_SYMBOL.ETH);
+});

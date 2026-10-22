@@ -332,6 +332,9 @@ export const COINGECKO_ID_BY_SYMBOL: Record<string, string> = {
   // change in Numia's symbol coverage can't silently value them at $0.
   WETH: "ethereum",
   ETH: "ethereum",
+  // YieldETH borrows allETH's price by denom, so its own symbol carries the
+  // CoinGecko fallback the old "ETH" symbol alias used to give it.
+  YieldETH: "ethereum",
   WBTC: "wrapped-bitcoin",
   BTC: "bitcoin",
   USDC: "usd-coin",
