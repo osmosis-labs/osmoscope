@@ -203,3 +203,44 @@ test("revaluation keeps an unknown-decimals holding unpriced and listed", async 
   assert.equal(r.decimalsUnknown, true);
   assert.equal(r.value, 0);
 });
+
+test("a known CL reward keeps its value beside an unknown-decimals variant", async () => {
+  const { clPositionToHoldings } = await import("./cl");
+  const { revalueHolding } = await import("./holdings");
+  const rows = clPositionToHoldings({
+    positionId: "1",
+    poolId: "1",
+    assets: [],
+    rewards: [
+      {
+        symbol: "USDC",
+        denom: "ibc/USDC",
+        amount: 100,
+        value: 100,
+        priceUnavailable: false,
+      },
+      {
+        symbol: "USDC",
+        denom: "ibc/USDCX",
+        amount: 0,
+        value: 0,
+        priceUnavailable: true,
+        decimalsUnknown: true,
+      },
+    ],
+  } as unknown as Parameters<typeof clPositionToHoldings>[0]);
+  const priceMap = {
+    "ibc/USDC": { symbol: "USDC", price: 1, exponent: 6 },
+    "ibc/USDCX": {
+      symbol: "USDC",
+      price: 1,
+      exponent: 0,
+      exponentUnknown: true,
+    },
+  };
+  const valued = rows.map((r) => revalueHolding(r, priceMap));
+  assert.equal(
+    valued.reduce((s, r) => s + r.value, 0),
+    100
+  );
+});

@@ -112,12 +112,15 @@ function valueAsset(
 }
 
 // Sum a list of reward coins by symbol (spread rewards + incentives combined).
+// A coin with unknown decimals is kept in its own entry, so merging it
+// never makes a known reward of the same symbol unvalued.
 function sumRewards(coins: RawAsset[], priceMap: PriceMap): ClRewardAsset[] {
   const bySymbol = new Map<string, ClRewardAsset>();
   for (const c of coins) {
     const a = valueAsset(c.denom, c.amount, priceMap);
     if (a.amount === 0 && !a.decimalsUnknown) continue;
-    const cur = bySymbol.get(a.symbol) ?? {
+    const key = a.decimalsUnknown ? `${a.symbol}\u0000unknown` : a.symbol;
+    const cur = bySymbol.get(key) ?? {
       symbol: a.symbol,
       denom: a.denom,
       amount: 0,
@@ -128,7 +131,7 @@ function sumRewards(coins: RawAsset[], priceMap: PriceMap): ClRewardAsset[] {
     cur.value += a.value;
     cur.priceUnavailable = cur.priceUnavailable || a.priceUnavailable;
     if (a.decimalsUnknown) cur.decimalsUnknown = true;
-    bySymbol.set(a.symbol, cur);
+    bySymbol.set(key, cur);
   }
   return [...bySymbol.values()];
 }

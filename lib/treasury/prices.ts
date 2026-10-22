@@ -151,10 +151,12 @@ export async function resolveMissingPrices(
   map: PriceMap,
   denoms: string[]
 ): Promise<void> {
-  // A denom with unknown decimals stays unpriced: its holding amount was not
-  // scaled, so a price would value raw base units (10^6 to 10^18 too high).
+  // A denom with unknown decimals is priced like any other: the price is per
+  // whole token, EVM and Solana holdings sized by their own chain's decimals
+  // can use it, and revalueHolding keeps its unsized Osmosis holdings
+  // unvalued.
   const missing = [...new Set(denoms)].filter(
-    (d) => map[d] && !(map[d].price > 0) && !map[d].exponentUnknown
+    (d) => map[d] && !(map[d].price > 0)
   );
   if (missing.length === 0) return;
 

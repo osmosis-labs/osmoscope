@@ -147,8 +147,8 @@ function UnpricedNotice({ symbols }: { symbols: string[] }) {
       <summary className="cursor-pointer list-none">
         <span className="font-medium">{n}</span> minor asset{n === 1 ? "" : "s"}{" "}
         held here {n === 1 ? "has" : "have"} no market price (illiquid variants)
-        and {n === 1 ? "is" : "are"} excluded.{" "}
-        <span className="underline">show list</span>
+        or unknown decimals, and {n === 1 ? "is" : "are"} left out of the
+        totals. <span className="underline">show list</span>
       </summary>
       <p className="mt-2 leading-relaxed wrap-break-word text-amber-200/80">
         {symbols.join(", ")}
@@ -602,6 +602,7 @@ function ValuePie({
                 title={`${usd(s.value)}${s.decimalsUnknown ? " + unknown" : ""}`}
               >
                 {usdCompact(s.value)}
+                {s.decimalsUnknown ? " + ?" : ""}
               </span>
             </div>
           ))}
