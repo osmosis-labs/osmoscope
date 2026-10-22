@@ -21,21 +21,36 @@ Watches the onchain IBC rate limiter and does two jobs:
 The deployed rate limiter (`osmo17r7qdw2zk6jyw62cvwm6flmhtj9q7zd26r8zc6sqyf0pnaq46cfss8hgxg`)
 has no list-all-quotas query. The monitor dumps raw contract state and decodes
 the cw-storage-plus keys under the `flow` namespace as (channel, denom);
-entries with an empty quota list carry no limit and are skipped. The contract
-enforces NET flow per window against a channel-value snapshot taken at window
-start, and clamps quota percentages above 100 to 100.
+entries with an empty quota list carry no limit and are skipped.
+
+Each direction of a quota has up to two bounds, and the parser reads both
+shapes:
+
+- **Percentage** of a channel-value snapshot taken at window start, enforced on
+  the NET flow (inflow minus outflow, or the reverse). Contract 0.1.x always
+  sets one and clamps it to 100; from 0.2.0 it is optional (`null`) and values
+  above 100 are real.
+- **Absolute** amount in base units, enforced on the GROSS flow (inflow or
+  outflow as stored). Added in 0.2.0; entries written earlier have no field.
+
+A window's utilization is the bound closest to tripping across both directions,
+and alerts fire on whichever it is (the message says "absolute" when it is the
+absolute cap). Readings store the absolute caps in `maxAbsoluteSend` /
+`maxAbsoluteRecv`, NULL when unset, so readings from before the migration read
+as "no absolute bound", never zero.
 
 Two situations are deliberately not alerted on:
 
 - **Expired windows** (period end in the past): the contract lazily resets
   them on the next transfer, so their counters no longer bind.
-- **Directions with a 0% cap**: deliberate one-way wind-down closures
-  (deposits blocked by design, e.g. dead-bridge assets).
+- **Directions with a zero cap** (0% or an absolute 0): deliberate one-way
+  wind-down closures (deposits blocked by design, e.g. dead-bridge assets).
 
 ## Setup
 
 1. Apply the schema (adds `rate_limit_snapshots`, `rate_limit_alert_states`,
-   and `rate_limit_readings`). Note: while sibling branches with their own
+   and `rate_limit_readings`) with `yarn db:migrate:deploy`, before deploying
+   code that writes new reading columns. Note: while sibling branches with their own
    schema additions are unmerged, apply the three CREATE TABLEs surgically via
    `prisma db execute` rather than `db push` (push would drop the siblings'
    objects).

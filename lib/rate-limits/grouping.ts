@@ -4,19 +4,31 @@
 import type { PathUtilization, WindowUtilization } from "./snapshot";
 
 // Absolute remaining capacity in a window's binding direction, in BASE units
-// (comparable across windows of the same denom without a price). Null when the
-// window has no computable utilization.
+// (comparable across windows of the same denom without a price): the least
+// headroom left under any bound set in that direction, the percentage bound
+// against the net flow and the absolute bound against the gross flow. The
+// contract saturates the net balance at zero, so flow in the opposite
+// direction adds percentage headroom. Null when the window has no computable
+// utilization.
 export function remainingBase(w: WindowUtilization): number | null {
-  if (w.utilizationPct == null || !w.direction || !w.channelValue) return null;
-  const chan = Number(w.channelValue);
-  const dirPct = w.direction === "in" ? w.recvPct : w.sendPct;
+  if (w.utilizationPct == null || !w.direction) return null;
   const inflow = Number(w.inflow);
   const outflow = Number(w.outflow);
-  const used =
-    w.direction === "in"
-      ? Math.max(0, inflow - outflow)
-      : Math.max(0, outflow - inflow);
-  return Math.max(0, chan * (dirPct / 100) - used);
+  const dirPct = w.direction === "in" ? w.recvPct : w.sendPct;
+  const dirAbs =
+    (w.direction === "in" ? w.maxAbsoluteRecv : w.maxAbsoluteSend) ?? null;
+  const remaining: number[] = [];
+  if (dirPct != null && w.channelValue) {
+    const signedNet =
+      w.direction === "in" ? inflow - outflow : outflow - inflow;
+    remaining.push(Number(w.channelValue) * (dirPct / 100) - signedNet);
+  }
+  if (dirAbs != null) {
+    const gross = w.direction === "in" ? inflow : outflow;
+    remaining.push(Number(dirAbs) - gross);
+  }
+  if (remaining.length === 0) return null;
+  return Math.max(0, Math.min(...remaining));
 }
 
 // One asset's rate-limit summary: every (channel, window) pair for its denom.

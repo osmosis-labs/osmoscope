@@ -75,12 +75,16 @@ const LEVEL_EMOJI: Record<string, string> = {
   blocking: "⛔",
 };
 
+// "inflow cap" for a percentage bound (measured on net flow), "absolute
+// inflow cap" for an absolute bound (measured on gross flow).
 function directionLabel(t: AlertTransition): string {
-  return t.direction === "out"
-    ? "outflow"
-    : t.direction === "in"
-      ? "inflow"
-      : "flow";
+  const dir =
+    t.direction === "out"
+      ? "outflow"
+      : t.direction === "in"
+        ? "inflow"
+        : "flow";
+  return t.bound === "absolute" ? `absolute ${dir}` : dir;
 }
 
 function describeWith(

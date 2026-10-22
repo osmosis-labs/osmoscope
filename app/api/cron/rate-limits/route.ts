@@ -169,6 +169,7 @@ export async function GET(request: Request) {
           symbol: "DELIVERY TEST",
           quotaName: "(ignore me)",
           direction: "out",
+          bound: "percentage",
           pct: 80,
           from: null,
           to: "warn",
