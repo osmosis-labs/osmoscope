@@ -11,9 +11,11 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Customized,
   Cell,
   Treemap,
+  usePlotArea,
+  ZIndexLayer,
+  DefaultZIndexes,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
 import { useValidatorData } from "@/lib/hooks/useValidatorData";
@@ -147,7 +149,7 @@ function MetricLineChart({
   }));
 
   // Snap each event to the nearest plotted day by absolute time distance and keep
-  // its INDEX into chartData. We render the vertical markers via <Customized>
+  // its INDEX into chartData. We render the vertical markers as a chart child
   // positioned by index (see EventLine) rather than a category ReferenceLine:
   // at the wide "all"/"1y" ranges many days share one month label, and a category
   // ReferenceLine keyed on that shared label resolves unreliably. Index → pixel is
@@ -284,21 +286,13 @@ function MetricLineChart({
                 }}
                 labelStyle={{ color: "#fff" }}
                 itemStyle={{ color: "#fff" }}
-                formatter={(value: number) => [
-                  `${value.toFixed(decimals)}${unit}`,
+                formatter={(value) => [
+                  `${Number(value).toFixed(decimals)}${unit}`,
                   title,
                 ]}
               />
               {eventMarkers.length > 0 && (
-                <Customized
-                  component={(props: CustomizedAxisProps) => (
-                    <EventLines
-                      markers={eventMarkers}
-                      count={chartData.length}
-                      axis={props}
-                    />
-                  )}
-                />
+                <EventLines markers={eventMarkers} count={chartData.length} />
               )}
               <Line
                 type="monotone"
@@ -316,13 +310,22 @@ function MetricLineChart({
   );
 }
 
-// Recharts-passed props we read off the Customized child (only the bits we use).
-interface CustomizedAxisProps {
-  offset?: { left: number; top: number; width: number; height: number };
+// The geometric overlays below draw above the series (bars and lines) but under
+// the axes: recharts 3 puts plain SVG children on its lowest layer, where an
+// opaque bar would cover them.
+const OVERLAY_Z = DefaultZIndexes.line + 1;
+
+// The chart's plot area (inside the axes), for the geometric overlays below.
+// Rendered as a direct chart child, an overlay reads it from the chart context.
+function usePlotOffset() {
+  const plot = usePlotArea();
+  return plot
+    ? { left: plot.x, top: plot.y, width: plot.width, height: plot.height }
+    : null;
 }
 
 // Vertical event markers on a time-series line chart, positioned by DATA INDEX
-// via <Customized> pure geometry (not a category ReferenceLine, which resolves
+// with pure geometry (not a category ReferenceLine, which resolves
 // unreliably when many days share one month label on the wide ranges). Point i of
 // `count` sits at i/(count-1) across the plot width — matching how the category
 // axis spaces points. Labels stagger (alternate up/down) so adjacent events don't
@@ -330,92 +333,92 @@ interface CustomizedAxisProps {
 function EventLines({
   markers,
   count,
-  axis,
 }: {
   markers: { index: number; label: string; kind: NetworkEvent["kind"] }[];
   count: number;
-  axis: CustomizedAxisProps;
 }) {
-  const off = axis.offset;
+  const off = usePlotOffset();
   if (!off || count <= 1) return null;
   return (
-    <g pointerEvents="none">
-      {markers.map((m, i) => {
-        const frac = count > 1 ? m.index / (count - 1) : 0;
-        const x = off.left + frac * off.width;
-        const color = EVENT_COLOR[m.kind];
-        // Stagger labels across 3 rows so tight clusters (e.g. the v21-v25 run in
-        // early 2024, close together on the wide ranges) don't overprint.
-        const yLabel = off.top + 12 + (i % 3) * 14;
-        // Anchor the label so it stays inside the plot at either edge.
-        const nearRight = frac > 0.85;
-        const anchor = nearRight ? "end" : "start";
-        const tx = nearRight ? x - 4 : x + 4;
-        return (
-          <g key={`${m.label}-${m.index}`}>
-            <line
-              x1={x}
-              x2={x}
-              y1={off.top}
-              y2={off.top + off.height}
-              stroke={color}
-              strokeWidth={1.5}
-              strokeDasharray="4 4"
-            />
-            <text
-              x={tx}
-              y={yLabel}
-              textAnchor={anchor}
-              fill={color}
-              fontSize={11}
-            >
-              {m.label}
-            </text>
-          </g>
-        );
-      })}
-    </g>
+    <ZIndexLayer zIndex={OVERLAY_Z}>
+      <g pointerEvents="none">
+        {markers.map((m, i) => {
+          const frac = count > 1 ? m.index / (count - 1) : 0;
+          const x = off.left + frac * off.width;
+          const color = EVENT_COLOR[m.kind];
+          // Stagger labels across 3 rows so tight clusters (e.g. the v21-v25 run in
+          // early 2024, close together on the wide ranges) don't overprint.
+          const yLabel = off.top + 12 + (i % 3) * 14;
+          // Anchor the label so it stays inside the plot at either edge.
+          const nearRight = frac > 0.85;
+          const anchor = nearRight ? "end" : "start";
+          const tx = nearRight ? x - 4 : x + 4;
+          return (
+            <g key={`${m.label}-${m.index}`}>
+              <line
+                x1={x}
+                x2={x}
+                y1={off.top}
+                y2={off.top + off.height}
+                stroke={color}
+                strokeWidth={1.5}
+                strokeDasharray="4 4"
+              />
+              <text
+                x={tx}
+                y={yLabel}
+                textAnchor={anchor}
+                fill={color}
+                fontSize={11}
+              >
+                {m.label}
+              </text>
+            </g>
+          );
+        })}
+      </g>
+    </ZIndexLayer>
   );
 }
 
 // Vertical "Today" divider on the combined undelegation BAR chart, positioned by
-// bar-band index via <Customized>. Bar i of `count` occupies the band from
+// bar-band index. Bar i of `count` occupies the band from
 // i/count to (i+1)/count of the plot width; the line sits at the CENTRE of today's
 // bar (history bar `index`) — at (index+0.5)/count. A category ReferenceLine on the
 // mixed history+forecast label axis resolves unreliably, so we draw it geometrically.
 function UndelegBoundaryLine({
   index,
   count,
-  axis,
 }: {
   index: number;
   count: number;
-  axis: CustomizedAxisProps;
 }) {
-  const off = axis.offset;
+  const off = usePlotOffset();
   if (!off || count <= 0 || index < 0) return null;
   const x = off.left + ((index + 0.5) / count) * off.width;
   return (
-    <g pointerEvents="none">
-      <line
-        x1={x}
-        x2={x}
-        y1={off.top}
-        y2={off.top + off.height}
-        stroke="#FFB74D"
-        strokeWidth={1.5}
-        strokeDasharray="4 4"
-      />
-      <text
-        x={x - 4}
-        y={off.top + 12}
-        textAnchor="end"
-        fill="#FFB74D"
-        fontSize={11}
-      >
-        Today
-      </text>
-    </g>
+    <ZIndexLayer zIndex={OVERLAY_Z}>
+      <g pointerEvents="none">
+        <line
+          x1={x}
+          x2={x}
+          y1={off.top}
+          y2={off.top + off.height}
+          stroke="#FFB74D"
+          strokeWidth={1.5}
+          strokeDasharray="4 4"
+        />
+        <text
+          x={x - 4}
+          y={off.top + 12}
+          textAnchor="end"
+          fill="#FFB74D"
+          fontSize={11}
+        >
+          Today
+        </text>
+      </g>
+    </ZIndexLayer>
   );
 }
 
@@ -1445,8 +1448,8 @@ export function StakingView() {
                   }}
                   labelStyle={{ color: "#fff" }}
                   itemStyle={{ color: "#fff" }}
-                  formatter={(value: number, _n, p) => [
-                    `${formatPercentage((p?.payload?.share as number) ?? value, 2)} voting power`,
+                  formatter={(value, _n, p) => [
+                    `${formatPercentage((p?.payload?.share as number) ?? Number(value), 2)} voting power`,
                     (p?.payload?.name as string) ?? "",
                   ]}
                 />
@@ -1657,7 +1660,7 @@ export function StakingView() {
                     }}
                     labelStyle={{ color: "#fff" }}
                     itemStyle={{ color: "#fff" }}
-                    formatter={(value: number, _n, p) => {
+                    formatter={(value, _n, p) => {
                       const kind = p?.payload?.kind;
                       const label =
                         kind === "forecast"
@@ -1666,23 +1669,18 @@ export function StakingView() {
                             ? "Releasing"
                             : "Completed";
                       return [
-                        `${formatNumberWithCommas(value, 0)} OSMO`,
+                        `${formatNumberWithCommas(Number(value), 0)} OSMO`,
                         label,
                       ];
                     }}
                   />
                   {/* Today divider (history→forecast boundary), positioned by
-                      bar-band index via <Customized> so it lands reliably on the
+                      bar-band index so it lands reliably on the
                       mixed-label axis. Only when both parts are shown. */}
                   {undelegBoundaryIndex >= 0 && (
-                    <Customized
-                      component={(props: CustomizedAxisProps) => (
-                        <UndelegBoundaryLine
-                          index={undelegBoundaryIndex}
-                          count={undelegChartData.length}
-                          axis={props}
-                        />
-                      )}
+                    <UndelegBoundaryLine
+                      index={undelegBoundaryIndex}
+                      count={undelegChartData.length}
                     />
                   )}
                   {/* One full-width bar per day; colour by kind (history purple,

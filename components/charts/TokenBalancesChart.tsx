@@ -204,8 +204,8 @@ export function TokenBalancesChart({
                 boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
               }}
               labelStyle={{ color: "#fff" }}
-              formatter={(value: number) =>
-                formatNumberWithCommas(value) + " OSMO"
+              formatter={(value) =>
+                formatNumberWithCommas(Number(value)) + " OSMO"
               }
             />
             <Area

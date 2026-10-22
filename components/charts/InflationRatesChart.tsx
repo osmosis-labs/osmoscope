@@ -10,7 +10,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
-  TooltipProps,
+  TooltipContentProps,
+  type TooltipValueType,
 } from "recharts";
 import { Card, CardContent, CardHeader } from "../ui/Card";
 import {
@@ -31,7 +32,7 @@ function CustomTooltip({
   active,
   payload,
   label,
-}: TooltipProps<number, string>) {
+}: TooltipContentProps<TooltipValueType, string | number>) {
   if (!active || !payload || payload.length === 0) return null;
 
   const data = payload[0].payload as Record<string, number | null>;
@@ -344,7 +345,7 @@ export function InflationRatesChart({
               tick={{ fill: "#e0d5f5" }}
               tickFormatter={(value) => `${Math.round(value)}%`}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={CustomTooltip} />
             <ReferenceLine y={0} stroke="#fff" strokeDasharray="3 3" />
             <Bar dataKey="Inflation Rate" fill="#7C4DFF" opacity={0.8} />
             <Bar dataKey="Burn Rate" fill="#FF7043" opacity={0.8} />

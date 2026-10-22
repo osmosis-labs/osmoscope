@@ -165,8 +165,8 @@ export function OsmosisDashboard() {
                       <Cell fill="#95E1D3" />
                     </Pie>
                     <Tooltip
-                      formatter={(value: number) =>
-                        formatNumberWithCommas(value) + " OSMO"
+                      formatter={(value) =>
+                        formatNumberWithCommas(Number(value)) + " OSMO"
                       }
                       contentStyle={{
                         backgroundColor: "rgba(31, 10, 41, 0.95)",
