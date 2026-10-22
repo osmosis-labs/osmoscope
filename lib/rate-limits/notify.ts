@@ -152,7 +152,8 @@ async function postTelegram(chatId: string, text: string): Promise<void> {
   } | null;
   if (!response.ok || !body?.ok) {
     throw new Error(
-      `Telegram send to ${chatId} failed: ${response.status} ${body?.description ?? ""}`
+      // No chat id here: route output reaches the public Actions log.
+      `Telegram send failed: ${response.status} ${body?.description ?? ""}`
     );
   }
 }

@@ -78,9 +78,13 @@ function makeHolding(
   fallbackExponent?: number
 ): Holding {
   const p = lookup(priceMap, denom);
-  const exponent = p.exponent || fallbackExponent || 0;
-  const amount = rawAmount / Math.pow(10, exponent);
-  const priceUnavailable = !(p.price > 0);
+  const exponent = p.exponentUnknown
+    ? fallbackExponent
+    : p.exponent || fallbackExponent || 0;
+  // Unknown decimals: the amount cannot be sized, so it is not valued (and
+  // the raw base-unit figure is not shown as a token amount).
+  const amount = exponent == null ? 0 : rawAmount / Math.pow(10, exponent);
+  const priceUnavailable = exponent == null || !(p.price > 0);
   return {
     symbol: p.symbol,
     info,

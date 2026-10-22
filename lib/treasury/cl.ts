@@ -88,8 +88,11 @@ function valueAsset(
   priceMap: PriceMap
 ): ClRewardAsset {
   const p = priceMap[denom] ?? { symbol: "Unknown", price: 0, exponent: 0 };
-  const amount = parseFloat(rawAmount || "0") / Math.pow(10, p.exponent || 0);
-  const priceUnavailable = !(p.price > 0);
+  // Unknown decimals: the amount cannot be sized, so it is not valued.
+  const amount = p.exponentUnknown
+    ? 0
+    : parseFloat(rawAmount || "0") / Math.pow(10, p.exponent || 0);
+  const priceUnavailable = !!p.exponentUnknown || !(p.price > 0);
   return {
     symbol: p.symbol,
     denom,
@@ -160,8 +163,12 @@ export async function fetchClPositions(
     const asset0 = a0 ? valueAsset(a0.denom, a0.amount, priceMap) : null;
     const asset1 = a1 ? valueAsset(a1.denom, a1.amount, priceMap) : null;
 
-    const exp0 = a0 ? (priceMap[a0.denom]?.exponent ?? null) : null;
-    const exp1 = a1 ? (priceMap[a1.denom]?.exponent ?? null) : null;
+    const knownExp = (denom: string) => {
+      const info = priceMap[denom];
+      return info && !info.exponentUnknown ? info.exponent : null;
+    };
+    const exp0 = a0 ? knownExp(a0.denom) : null;
+    const exp1 = a1 ? knownExp(a1.denom) : null;
 
     // Display range only when both exponents are known (else a wrong range is
     // worse than none — this is financial data).

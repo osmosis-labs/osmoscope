@@ -30,6 +30,10 @@ export interface PriceInfo {
   symbol: string;
   price: number;
   exponent: number;
+  // Set when no source gave this denom's decimals (Numia omitted them and no
+  // override covers the denom). `exponent` is then a placeholder 0 that must
+  // not scale an amount: the denom is left unpriced and is never valued.
+  exponentUnknown?: boolean;
 }
 export type PriceMap = Record<string, PriceInfo>;
 
@@ -53,12 +57,14 @@ export async function buildPriceMap(): Promise<PriceMap> {
   const list = (await resp.json()) as NumiaToken[];
 
   // symbol -> {price, exponent} index, used to resolve derivative aliases.
-  const symbolIndex: Record<string, { price: number; exponent: number }> = {};
+  const symbolIndex: SymbolIndex = {};
   for (const item of list) {
     if (!item?.symbol || item.price == null) continue;
     symbolIndex[String(item.symbol)] = {
       price: Number(item.price),
-      exponent: Number.isFinite(item.exponent) ? (item.exponent as number) : 0,
+      exponent: Number.isFinite(item.exponent)
+        ? (item.exponent as number)
+        : null,
     };
   }
   for (const ov of Object.values(PRICE_OVERRIDES_BY_DENOM)) {
@@ -78,6 +84,7 @@ export async function buildPriceMap(): Promise<PriceMap> {
       symbol: info.symbol,
       price: info.price,
       exponent: info.exponent,
+      ...(info.exponentUnknown ? { exponentUnknown: true } : {}),
     };
     // Remember a usable CoinGecko id per denom for the on-demand fallback.
     const cgId = coingeckoId(info.denom, info.symbol);
@@ -122,8 +129,10 @@ export async function resolveMissingPrices(
   map: PriceMap,
   denoms: string[]
 ): Promise<void> {
+  // A denom with unknown decimals stays unpriced: its holding amount was not
+  // scaled, so a price would value raw base units (10^6 to 10^18 too high).
   const missing = [...new Set(denoms)].filter(
-    (d) => map[d] && !(map[d].price > 0)
+    (d) => map[d] && !(map[d].price > 0) && !map[d].exponentUnknown
   );
   if (missing.length === 0) return;
 
@@ -360,16 +369,36 @@ async function fetchSqsChunk(
   }
 }
 
-function effectivePriceRow(
+type SymbolIndex = Record<string, { price: number; exponent: number | null }>;
+
+// The effective price row for one Numia token after the curated overrides.
+// Decimals come from, in order: EXPONENT_OVERRIDES, an absolute override's own
+// exponent, Numia's exponent for the denom, then (for an alias) the base
+// symbol's. With none of those the row is unpriced and flagged
+// exponentUnknown, never scaled with a default of 0. Exported for tests.
+export function effectivePriceRow(
   item: NumiaToken,
-  symbolIndex: Record<string, { price: number; exponent: number }>
-): { symbol: string; price: number; denom: string; exponent: number } {
+  symbolIndex: SymbolIndex
+): {
+  symbol: string;
+  price: number;
+  denom: string;
+  exponent: number;
+  exponentUnknown?: boolean;
+} {
   const originalSymbol = item?.symbol ? String(item.symbol) : "Unknown";
   const denom = item?.denom ? String(item.denom) : "";
   const apiPrice = item?.price != null ? Number(item.price) : null;
   const apiExp = Number.isFinite(item?.exponent)
     ? (item.exponent as number)
-    : 0;
+    : null;
+  const resolved = (
+    row: { symbol: string; price: number },
+    exponent: number | null
+  ) =>
+    exponent == null
+      ? { ...row, denom, price: 0, exponent: 0, exponentUnknown: true }
+      : { ...row, denom, exponent };
 
   // EXPONENT_OVERRIDES is keyed by DENOM (factory/.../allOP, ibc/... etc.), so
   // look up by denom first, then symbol as a fallback. The previous symbol-only
@@ -382,12 +411,10 @@ function effectivePriceRow(
   const abs = PRICE_OVERRIDES_BY_DENOM[denom];
   if (abs) {
     const sym = abs.symbol || originalSymbol;
-    return {
-      symbol: sym,
-      price: abs.price,
-      denom,
-      exponent: expOverride(sym) ?? abs.exponent ?? apiExp,
-    };
+    return resolved(
+      { symbol: sym, price: abs.price },
+      expOverride(sym) ?? abs.exponent ?? apiExp
+    );
   }
 
   // 2) Force display symbol for this denom.
@@ -398,21 +425,19 @@ function effectivePriceRow(
   // denom first; fall back to the symbol so a symbol-keyed alias would also work.
   const aliasBase = SYMBOL_PRICE_ALIASES[denom] ?? SYMBOL_PRICE_ALIASES[symbol];
   if (aliasBase) {
-    const base = symbolIndex[aliasBase] || { price: 0, exponent: apiExp };
-    return {
-      symbol,
-      price: Number(base.price || 0),
-      denom,
-      exponent: expOverride(symbol) ?? base.exponent ?? apiExp,
-    };
+    // The denom's own decimals win over the base symbol's: an alias borrows
+    // a price, and its amount is still in the denom's own units.
+    const base = symbolIndex[aliasBase] || { price: 0, exponent: null };
+    return resolved(
+      { symbol, price: Number(base.price || 0) },
+      expOverride(symbol) ?? apiExp ?? base.exponent
+    );
   }
 
-  return {
-    symbol,
-    price: Number(apiPrice || 0),
-    denom,
-    exponent: expOverride(symbol) ?? apiExp,
-  };
+  return resolved(
+    { symbol, price: Number(apiPrice || 0) },
+    expOverride(symbol) ?? apiExp
+  );
 }
 
 // A CoinGecko id for the fallback, but ONLY from the curated

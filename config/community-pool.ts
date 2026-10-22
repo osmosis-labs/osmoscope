@@ -269,17 +269,9 @@ export const PRICE_OVERRIDES_BY_DENOM: Record<
   string,
   { symbol: string; price: number; exponent: number }
 > = {
-  // USDN
-  "ibc/0C39BD03B5C57A1753A9B73164705871A9B549F1A5226CFD7E39BE7BF73CF8CF": {
-    symbol: "USDN",
-    price: 1.0,
-    exponent: 6,
-  },
-  "ibc/FBB3FEF80ED2344D821D4F95C31DBFD33E4E31D5324CAD94EF756E67B749F668": {
-    symbol: "YieldETH",
-    price: 4200,
-    exponent: 18,
-  },
+  // Empty: a fixed price goes stale. YieldETH is priced through its ETH alias
+  // below (it held a $4,200 pin while ETH traded near $2,500), and the USDN pin
+  // went with it as the treasury no longer holds USDN.
 };
 
 export const SYMBOL_PRICE_ALIASES: Record<string, string> = {
@@ -309,6 +301,8 @@ export const DENOM_SYMBOL_OVERRIDES: Record<string, string> = {
 };
 
 export const EXPONENT_OVERRIDES: Record<string, number> = {
+  // YieldETH: 18 decimals, as its removed absolute price override carried.
+  "ibc/FBB3FEF80ED2344D821D4F95C31DBFD33E4E31D5324CAD94EF756E67B749F668": 18,
   "factory/osmo1dv8wz09tckslr2wy5z86r46dxvegylhpt97r9yd6qc3kyc6tv42qa89dr9/ampOSMO": 6,
   "factory/osmo1qw0seay47y8m96l774zm4x4k77v2ewr5rmgp86/wosmo": 6,
   "ibc/54B2D9DC9602A1CE2A0329D51C6A1C7C4ADE71477186AEAAA549318C4513A453": 6,

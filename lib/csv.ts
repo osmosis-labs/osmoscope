@@ -8,12 +8,28 @@ export type CsvValue = string | number | boolean | null | undefined;
 // header order is taken from `columns` (or the first row's key order).
 export type CsvRow = Record<string, CsvValue>;
 
+// A spreadsheet runs a cell starting with one of these as a formula. Text
+// cells carry onchain strings (validator monikers, asset symbols), so a
+// moniker such as =HYPERLINK(...) would execute when the export is opened.
+const FORMULA_START = /^[=+\-@\t\r]/;
+// A plain number stays as is (negative values, percentages).
+const PLAIN_NUMBER = /^[-+]?\d+(\.\d+)?%?$/;
+
 // RFC 4180 field escaping: wrap in double quotes and double any embedded quotes
 // when the value contains a comma, quote, or newline. Numbers/booleans stringify
-// plainly; null/undefined become empty.
-function escapeCsvField(value: CsvValue): string {
+// plainly; null/undefined become empty. A text value that would start a
+// formula is prefixed with a single quote, which spreadsheets show as text.
+// Exported for tests.
+export function escapeCsvField(value: CsvValue): string {
   if (value === null || value === undefined) return "";
-  const s = String(value);
+  let s = String(value);
+  if (
+    typeof value === "string" &&
+    FORMULA_START.test(s) &&
+    !PLAIN_NUMBER.test(s)
+  ) {
+    s = `'${s}`;
+  }
   if (/[",\r\n]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
