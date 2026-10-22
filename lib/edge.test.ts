@@ -65,5 +65,10 @@ test("security headers are added without dropping the response's own", async () 
     out.headers.get("content-security-policy") ?? "",
     /frame-ancestors 'none'/
   );
+  // The zone injects the Cloudflare Web Analytics beacon into every page.
+  assert.match(
+    out.headers.get("content-security-policy") ?? "",
+    /script-src [^;]*https:\/\/static\.cloudflareinsights\.com/
+  );
   assert.equal(await out.text(), "ok");
 });
