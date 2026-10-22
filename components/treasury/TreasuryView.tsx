@@ -28,6 +28,17 @@ function usdCompact(value: number): string {
 // Token amount: meaningful precision without noise. At/above 1000 the fractional
 // part is just noise, so drop the decimals; 1-1000 keeps 2 places; sub-1 keeps
 // 4 significant figures.
+// A row's value: a dash when unpriced, and qualified when part of it has
+// unknown decimals (that part is unvalued, so the figure is a floor).
+function valueText(x: {
+  value: number;
+  priceUnavailable: boolean;
+  decimalsUnknown?: boolean;
+}): string {
+  if (x.priceUnavailable) return x.decimalsUnknown ? "unknown" : "—";
+  return x.decimalsUnknown ? `${usd(x.value)} + unknown` : usd(x.value);
+}
+
 // An amount with unknown decimals: only the sized part (if any) is known.
 function amountUnknown(known: number): string {
   return known > 0 ? `${amount(known)} + unknown` : "unknown";
@@ -120,7 +131,7 @@ function AssetRow({ asset }: { asset: AssetTotal }) {
             : amount(asset.amount)}
         </span>
         <span className="w-28 font-semibold text-white tabular-nums">
-          {asset.priceUnavailable ? "—" : usd(asset.value)}
+          {valueText(asset)}
         </span>
       </span>
     </div>
@@ -245,6 +256,9 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
         <div className="shrink-0 text-right">
           <div className="text-lg font-bold text-white tabular-nums">
             {usd(pos.value)}
+            {[...pos.assets, ...pos.rewards].some((a) => a.decimalsUnknown)
+              ? " + unknown"
+              : ""}
           </div>
           {rewardValue > 0 && (
             <div className="text-xs text-osmo-pink">
@@ -296,7 +310,7 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
                 {a.decimalsUnknown ? amountUnknown(a.amount) : amount(a.amount)}
               </span>
               <span className="w-24 text-osmo-100 tabular-nums">
-                {a.priceUnavailable ? "—" : usd(a.value)}
+                {valueText(a)}
               </span>
             </span>
           </div>
@@ -317,7 +331,7 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
                 {r.decimalsUnknown ? amountUnknown(r.amount) : amount(r.amount)}
               </span>
               <span className="w-24 text-osmo-100 tabular-nums">
-                {r.priceUnavailable ? "—" : usd(r.value)}
+                {valueText(r)}
               </span>
             </span>
           </div>
@@ -358,6 +372,7 @@ function VaultCard({ pos }: { pos: VaultPositionCard }) {
         </div>
         <div className="shrink-0 text-lg font-bold text-white tabular-nums">
           {usd(pos.value)}
+          {pos.assets.some((a) => a.decimalsUnknown) ? " + unknown" : ""}
         </div>
       </div>
       <div className="space-y-1">
@@ -375,7 +390,7 @@ function VaultCard({ pos }: { pos: VaultPositionCard }) {
                 {a.decimalsUnknown ? amountUnknown(a.amount) : amount(a.amount)}
               </span>
               <span className="w-24 text-osmo-100 tabular-nums">
-                {a.priceUnavailable ? "—" : usd(a.value)}
+                {valueText(a)}
               </span>
             </span>
           </div>
@@ -520,7 +535,9 @@ function ValuePie({
                 ))}
               </Pie>
               <Tooltip
-                formatter={(v) => usd(Number(v))}
+                formatter={(v, _name, item) =>
+                  `${usd(Number(v))}${(item?.payload as Slice | undefined)?.decimalsUnknown ? " + unknown" : ""}`
+                }
                 contentStyle={{
                   background: "#1F0A29",
                   border: "1px solid rgba(255,255,255,0.2)",
@@ -573,7 +590,7 @@ function ValuePie({
               )}
               <span
                 className="cursor-help justify-self-end text-osmo-100 tabular-nums"
-                title={usd(s.value)}
+                title={`${usd(s.value)}${s.decimalsUnknown ? " + unknown" : ""}`}
               >
                 {usdCompact(s.value)}
               </span>
