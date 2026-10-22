@@ -81,13 +81,19 @@ function makeHolding(
   const exponent = p.exponentUnknown
     ? fallbackExponent
     : p.exponent || fallbackExponent || 0;
-  // Unknown decimals: the amount cannot be sized, so it is not valued (and
-  // the raw base-unit figure is not shown as a token amount).
-  const amount = exponent == null ? 0 : rawAmount / Math.pow(10, exponent);
-  const priceUnavailable = exponent == null || !(p.price > 0);
+  // Unknown decimals: the amount cannot be sized, so it is never valued. The
+  // holding keeps its raw amount (labelled as base units) so it still shows,
+  // and still counts among the unpriced holdings, rather than disappearing.
+  const decimalsUnknown = exponent == null;
+  const amount = decimalsUnknown
+    ? rawAmount
+    : rawAmount / Math.pow(10, exponent);
+  const priceUnavailable = decimalsUnknown || !(p.price > 0);
   return {
     symbol: p.symbol,
-    info,
+    info: decimalsUnknown
+      ? `${info ? `${info}; ` : ""}decimals unknown, amount in base units`
+      : info,
     amount,
     value: priceUnavailable ? 0 : amount * p.price,
     denom,

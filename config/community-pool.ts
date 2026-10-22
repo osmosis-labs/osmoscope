@@ -260,7 +260,7 @@ export const SOLANA_TOKEN_ALLOWLIST: Array<{
 // ---------------------------------------------------------------------------
 // Price / symbol / exponent overrides. See the price engine for how they layer:
 //   PRICE_OVERRIDES_BY_DENOM: absolute price for a denom (wins over all)
-//   SYMBOL_PRICE_ALIASES: derivative denom borrows a base symbol's price
+//   SYMBOL_PRICE_ALIASES: derivative denom borrows a base symbol's (or denom's) price
 //   DENOM_SYMBOL_OVERRIDES: force the display symbol for a denom
 //   EXPONENT_OVERRIDES: correct the decimals for a denom/symbol
 //   COINGECKO_ID_BY_SYMBOL: manual CoinGecko id for the price fallback
@@ -275,10 +275,17 @@ export const PRICE_OVERRIDES_BY_DENOM: Record<
 };
 
 export const SYMBOL_PRICE_ALIASES: Record<string, string> = {
-  "ibc/FBB3FEF80ED2344D821D4F95C31DBFD33E4E31D5324CAD94EF756E67B749F668": "ETH",
+  // YieldETH borrows allETH's price, by denom: the deepest ETH market, and
+  // not whichever "ETH"-symbol row Numia happens to list last.
+  "ibc/FBB3FEF80ED2344D821D4F95C31DBFD33E4E31D5324CAD94EF756E67B749F668":
+    "factory/osmo1k6c8jln7ejuqwtqmay3yvzrg3kueaczl96pk067ldg8u835w0yhsw27twm/alloyed/allETH",
 };
 
 export const DENOM_SYMBOL_OVERRIDES: Record<string, string> = {
+  // YieldETH is priced through its ETH alias; the label keeps a row seeded
+  // without Numia (prices.ts) from reading as plain ETH.
+  "ibc/FBB3FEF80ED2344D821D4F95C31DBFD33E4E31D5324CAD94EF756E67B749F668":
+    "YieldETH",
   "factory/osmo1dv8wz09tckslr2wy5z86r46dxvegylhpt97r9yd6qc3kyc6tv42qa89dr9/ampOSMO":
     "ampOSMO",
   "factory/osmo1qw0seay47y8m96l774zm4x4k77v2ewr5rmgp86/wosmo": "WOSMO",

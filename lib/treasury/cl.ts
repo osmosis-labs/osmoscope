@@ -88,10 +88,10 @@ function valueAsset(
   priceMap: PriceMap
 ): ClRewardAsset {
   const p = priceMap[denom] ?? { symbol: "Unknown", price: 0, exponent: 0 };
-  // Unknown decimals: the amount cannot be sized, so it is not valued.
-  const amount = p.exponentUnknown
-    ? 0
-    : parseFloat(rawAmount || "0") / Math.pow(10, p.exponent || 0);
+  // Unknown decimals: the amount cannot be sized, so it is never valued. It
+  // keeps its raw base-unit amount so the asset still shows as unpriced.
+  const raw = parseFloat(rawAmount || "0");
+  const amount = p.exponentUnknown ? raw : raw / Math.pow(10, p.exponent || 0);
   const priceUnavailable = !!p.exponentUnknown || !(p.price > 0);
   return {
     symbol: p.symbol,

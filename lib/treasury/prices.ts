@@ -57,15 +57,20 @@ export async function buildPriceMap(): Promise<PriceMap> {
   const list = (await resp.json()) as NumiaToken[];
 
   // symbol -> {price, exponent} index, used to resolve derivative aliases.
+  // Keyed by symbol and by denom: an alias names its base either way, and a
+  // denom is the robust choice (several rows share a symbol such as "ETH", and
+  // the symbol entry is whichever priced row comes last in Numia's list).
   const symbolIndex: SymbolIndex = {};
   for (const item of list) {
-    if (!item?.symbol || item.price == null) continue;
-    symbolIndex[String(item.symbol)] = {
+    if (item?.price == null) continue;
+    const entry = {
       price: Number(item.price),
       exponent: Number.isFinite(item.exponent)
         ? (item.exponent as number)
         : null,
     };
+    if (item.symbol) symbolIndex[String(item.symbol)] = entry;
+    if (item.denom) symbolIndex[String(item.denom)] = entry;
   }
   for (const ov of Object.values(PRICE_OVERRIDES_BY_DENOM)) {
     symbolIndex[ov.symbol] = { price: ov.price, exponent: ov.exponent };
@@ -89,6 +94,23 @@ export async function buildPriceMap(): Promise<PriceMap> {
     // Remember a usable CoinGecko id per denom for the on-demand fallback.
     const cgId = coingeckoId(info.denom, info.symbol);
     if (cgId) cgIndex[info.denom] = cgId;
+  }
+
+  // Aliased denoms Numia does not list (it has dropped rows before): seed
+  // them so they are still priced through their base symbol, as the absolute
+  // overrides below are.
+  for (const denom of Object.keys(SYMBOL_PRICE_ALIASES)) {
+    if (map[denom] || !denom.includes("/")) continue;
+    const info = effectivePriceRow(
+      { denom, symbol: DENOM_SYMBOL_OVERRIDES[denom] ?? denom },
+      symbolIndex
+    );
+    map[denom] = {
+      symbol: info.symbol,
+      price: info.price,
+      exponent: info.exponent,
+      ...(info.exponentUnknown ? { exponentUnknown: true } : {}),
+    };
   }
 
   // Absolute per-denom overrides not present in the Numia list. EXPONENT_OVERRIDES
