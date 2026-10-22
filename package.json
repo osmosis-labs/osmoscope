@@ -76,7 +76,8 @@
     "wrangler": "^4.151.3"
   },
   "resolutions": {
-    "react-is": "^19.3.1"
+    "react-is": "^19.3.1",
+    "glob@npm:10.3.3": "^10.5.0"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
