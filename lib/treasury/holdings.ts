@@ -132,6 +132,9 @@ export function revalueHolding(h: Holding, priceMap: PriceMap): Holding {
   }
   const p = priceMap[h.denom];
   if (!p) return h; // unknown denom — keep as valued
+  // Decimals unknown: the amount was never sized, so a price (even one
+  // filled in since) cannot value it; it stays unpriced and listed.
+  if (h.decimalsUnknown) return { ...h, value: 0, priceUnavailable: true };
   const priceUnavailable = !(p.price > 0);
   return {
     ...h,

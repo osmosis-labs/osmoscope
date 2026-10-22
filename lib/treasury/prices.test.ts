@@ -186,3 +186,20 @@ test("a symbol-priced EVM holding keeps its value when Osmosis decimals are unkn
     "amount is in the chain's own units, so the price applies"
   );
 });
+
+test("revaluation keeps an unknown-decimals holding unpriced and listed", async () => {
+  const { revalueHolding } = await import("./holdings");
+  const priceMap = {
+    "ibc/NODECIMALS": {
+      symbol: "NODEC",
+      price: 3,
+      exponent: 0,
+      exponentUnknown: true,
+    },
+  };
+  const [h] = await decomposeBankDenom("ibc/NODECIMALS", 5_000_000, priceMap);
+  const r = revalueHolding(h, priceMap);
+  assert.equal(r.priceUnavailable, true);
+  assert.equal(r.decimalsUnknown, true);
+  assert.equal(r.value, 0);
+});
