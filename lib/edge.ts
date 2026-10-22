@@ -78,13 +78,15 @@ export function canonicalApiUrl(url: URL): URL | null {
 //
 // script-src keeps 'unsafe-inline' because the prerendered pages carry
 // Next.js inline bootstrap scripts; a nonce would force every page to render
-// per request. img-src and connect-src allow any https host because asset
+// per request. It also allows Cloudflare Web Analytics, whose beacon the zone
+// injects into every page (it reports to cloudflareinsights.com, covered by
+// connect-src). img-src and connect-src allow any https host because asset
 // logos come from assetlist-supplied URLs and the screenshot export fetches
 // them to draw the PNG.
 export const SECURITY_HEADERS: Record<string, string> = {
   "Content-Security-Policy": [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
