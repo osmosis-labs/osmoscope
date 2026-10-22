@@ -32,8 +32,9 @@ async function getPriceMap(): Promise<PriceMap | null> {
     logger.warn(
       `Rate-limits price enrichment unavailable: ${e instanceof Error ? e.message : String(e)}`
     );
-    // Serve a stale map over none at all.
-    return priceCache?.map ?? null;
+    // No older map: a price past its 5-minute window shows as unknown on the
+    // card, never as a stale figure presented as current.
+    return null;
   }
 }
 
@@ -76,7 +77,7 @@ export async function GET() {
       const info = prices?.[p.denom];
       return {
         ...p,
-        exponent: info?.exponent ?? null,
+        exponent: info && !info.exponentUnknown ? info.exponent : null,
         priceUsd: info != null && info.price > 0 ? info.price : null,
         logoUri: logos.get(p.denom) ?? null,
       };

@@ -28,6 +28,22 @@ function usdCompact(value: number): string {
 // Token amount: meaningful precision without noise. At/above 1000 the fractional
 // part is just noise, so drop the decimals; 1-1000 keeps 2 places; sub-1 keeps
 // 4 significant figures.
+// A row's value: a dash when unpriced, and qualified when part of it has
+// unknown decimals (that part is unvalued, so the figure is a floor).
+function valueText(x: {
+  value: number;
+  priceUnavailable: boolean;
+  decimalsUnknown?: boolean;
+}): string {
+  if (x.priceUnavailable) return x.decimalsUnknown ? "unknown" : "—";
+  return x.decimalsUnknown ? `${usd(x.value)} + unknown` : usd(x.value);
+}
+
+// An amount with unknown decimals: only the sized part (if any) is known.
+function amountUnknown(known: number): string {
+  return known > 0 ? `${amount(known)} + unknown` : "unknown";
+}
+
 function amount(n: number): string {
   if (n === 0) return "0";
   const abs = Math.abs(n);
@@ -110,10 +126,12 @@ function AssetRow({ asset }: { asset: AssetTotal }) {
       </span>
       <span className="flex shrink-0 items-baseline gap-4 text-right">
         <span className="text-osmo-200 tabular-nums">
-          {amount(asset.amount)}
+          {asset.decimalsUnknown
+            ? amountUnknown(asset.amount)
+            : amount(asset.amount)}
         </span>
         <span className="w-28 font-semibold text-white tabular-nums">
-          {asset.priceUnavailable ? "—" : usd(asset.value)}
+          {valueText(asset)}
         </span>
       </span>
     </div>
@@ -129,8 +147,8 @@ function UnpricedNotice({ symbols }: { symbols: string[] }) {
       <summary className="cursor-pointer list-none">
         <span className="font-medium">{n}</span> minor asset{n === 1 ? "" : "s"}{" "}
         held here {n === 1 ? "has" : "have"} no market price (illiquid variants)
-        and {n === 1 ? "is" : "are"} excluded.{" "}
-        <span className="underline">show list</span>
+        or unknown decimals, and {n === 1 ? "is" : "are"} left out of the
+        totals. <span className="underline">show list</span>
       </summary>
       <p className="mt-2 leading-relaxed wrap-break-word text-amber-200/80">
         {symbols.join(", ")}
@@ -238,6 +256,9 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
         <div className="shrink-0 text-right">
           <div className="text-lg font-bold text-white tabular-nums">
             {usd(pos.value)}
+            {[...pos.assets, ...pos.rewards].some((a) => a.decimalsUnknown)
+              ? " + unknown"
+              : ""}
           </div>
           {rewardValue > 0 && (
             <div className="text-xs text-osmo-pink">
@@ -286,10 +307,10 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
             </span>
             <span className="flex items-baseline gap-3 text-right">
               <span className="text-osmo-200 tabular-nums">
-                {amount(a.amount)}
+                {a.decimalsUnknown ? amountUnknown(a.amount) : amount(a.amount)}
               </span>
               <span className="w-24 text-osmo-100 tabular-nums">
-                {a.priceUnavailable ? "—" : usd(a.value)}
+                {valueText(a)}
               </span>
             </span>
           </div>
@@ -307,10 +328,10 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
             </span>
             <span className="flex items-baseline gap-3 text-right">
               <span className="text-osmo-200 tabular-nums">
-                {amount(r.amount)}
+                {r.decimalsUnknown ? amountUnknown(r.amount) : amount(r.amount)}
               </span>
               <span className="w-24 text-osmo-100 tabular-nums">
-                {r.priceUnavailable ? "—" : usd(r.value)}
+                {valueText(r)}
               </span>
             </span>
           </div>
@@ -351,6 +372,7 @@ function VaultCard({ pos }: { pos: VaultPositionCard }) {
         </div>
         <div className="shrink-0 text-lg font-bold text-white tabular-nums">
           {usd(pos.value)}
+          {pos.assets.some((a) => a.decimalsUnknown) ? " + unknown" : ""}
         </div>
       </div>
       <div className="space-y-1">
@@ -365,10 +387,10 @@ function VaultCard({ pos }: { pos: VaultPositionCard }) {
             </span>
             <span className="flex items-baseline gap-3 text-right">
               <span className="text-osmo-200 tabular-nums">
-                {amount(a.amount)}
+                {a.decimalsUnknown ? amountUnknown(a.amount) : amount(a.amount)}
               </span>
               <span className="w-24 text-osmo-100 tabular-nums">
-                {a.priceUnavailable ? "—" : usd(a.value)}
+                {valueText(a)}
               </span>
             </span>
           </div>
@@ -391,6 +413,8 @@ interface Slice {
   // Optional token quantity (by-Asset pie shows this instead of a % column).
   // Undefined for slices with no single amount (by-Address, folded "Other").
   amount?: number;
+  // Part of the quantity has unknown decimals (see Holding.decimalsUnknown).
+  decimalsUnknown?: boolean;
 }
 
 function foldSmall(slices: Slice[]): { data: Slice[]; total: number } {
@@ -398,11 +422,20 @@ function foldSmall(slices: Slice[]): { data: Slice[]; total: number } {
   if (total <= 0) return { data: [], total: 0 };
   const big: Slice[] = [];
   let otherValue = 0;
+  let otherUnknown = false;
   for (const s of [...slices].sort((a, b) => b.value - a.value)) {
     if (s.value / total >= MIN_SLICE_FRACTION) big.push(s);
-    else otherValue += s.value;
+    else {
+      otherValue += s.value;
+      if (s.decimalsUnknown) otherUnknown = true;
+    }
   }
-  if (otherValue > 0) big.push({ name: "Other", value: otherValue });
+  if (otherValue > 0)
+    big.push({
+      name: "Other",
+      value: otherValue,
+      ...(otherUnknown ? { decimalsUnknown: true } : {}),
+    });
   return { data: big, total };
 }
 
@@ -511,7 +544,9 @@ function ValuePie({
                 ))}
               </Pie>
               <Tooltip
-                formatter={(v) => usd(Number(v))}
+                formatter={(v, _name, item) =>
+                  `${usd(Number(v))}${(item?.payload as Slice | undefined)?.decimalsUnknown ? " + unknown" : ""}`
+                }
                 contentStyle={{
                   background: "#1F0A29",
                   border: "1px solid rgba(255,255,255,0.2)",
@@ -555,14 +590,19 @@ function ValuePie({
               </span>
               {slices.some((x) => x.amount != null) && (
                 <span className="justify-self-end text-osmo-300 tabular-nums">
-                  {s.amount != null ? amount(s.amount) : ""}
+                  {s.amount != null
+                    ? s.decimalsUnknown
+                      ? amountUnknown(s.amount)
+                      : amount(s.amount)
+                    : ""}
                 </span>
               )}
               <span
                 className="cursor-help justify-self-end text-osmo-100 tabular-nums"
-                title={usd(s.value)}
+                title={`${usd(s.value)}${s.decimalsUnknown ? " + unknown" : ""}`}
               >
                 {usdCompact(s.value)}
+                {s.decimalsUnknown ? " + ?" : ""}
               </span>
             </div>
           ))}
@@ -626,10 +666,20 @@ export function TreasuryView() {
   // each slice to its non-OSMO holdings.
   const tokenFull: Slice[] = data.byAsset
     .filter((a) => !a.priceUnavailable && a.value > 0)
-    .map((a) => ({ name: a.symbol, value: a.value, amount: a.amount }));
+    .map((a) => ({
+      name: a.symbol,
+      value: a.value,
+      amount: a.amount,
+      decimalsUnknown: a.decimalsUnknown,
+    }));
   const tokenExOsmo: Slice[] = data.byAsset
     .filter((a) => !a.priceUnavailable && a.value > 0 && !a.isOsmo)
-    .map((a) => ({ name: a.symbol, value: a.value, amount: a.amount }));
+    .map((a) => ({
+      name: a.symbol,
+      value: a.value,
+      amount: a.amount,
+      decimalsUnknown: a.decimalsUnknown,
+    }));
 
   const addressFull: Slice[] = data.holders
     .filter((h) => h.totalValue > 0)

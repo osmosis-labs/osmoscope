@@ -30,9 +30,19 @@ export interface Holding {
   value: number; // USD; 0 when priceUnavailable
   denom: string;
   priceUnavailable: boolean; // true when no price was found — value is NOT trustworthy
+  // No source gave this denom's decimals, so `amount` (0) is unknown, not
+  // zero: the holding is never valued but stays listed as unpriced.
+  decimalsUnknown?: boolean;
 }
 
-const UNKNOWN_PRICE: PriceInfo = { symbol: "Unknown", price: 0, exponent: 0 };
+// A denom missing from the price map: its decimals are unknown too, so it
+// takes the decimalsUnknown path rather than a default of 0.
+const UNKNOWN_PRICE: PriceInfo = {
+  symbol: "Unknown",
+  price: 0,
+  exponent: 0,
+  exponentUnknown: true,
+};
 
 function lookup(priceMap: PriceMap, denom: string): PriceInfo {
   return priceMap[denom] ?? UNKNOWN_PRICE;
@@ -78,10 +88,17 @@ function makeHolding(
   fallbackExponent?: number
 ): Holding {
   const p = lookup(priceMap, denom);
-  const exponent = p.exponent || fallbackExponent || 0;
-  const amount = rawAmount / Math.pow(10, exponent);
-  const priceUnavailable = !(p.price > 0);
+  const exponent = p.exponentUnknown
+    ? fallbackExponent
+    : p.exponent || fallbackExponent || 0;
+  // Unknown decimals: the amount cannot be sized, so it is never valued. It
+  // is flagged rather than given a raw base-unit amount, which would mix into
+  // per-symbol totals; filters keep flagged holdings listed as unpriced.
+  const decimalsUnknown = exponent == null;
+  const amount = decimalsUnknown ? 0 : rawAmount / Math.pow(10, exponent);
+  const priceUnavailable = decimalsUnknown || !(p.price > 0);
   return {
+    ...(decimalsUnknown && rawAmount > 0 ? { decimalsUnknown: true } : {}),
     symbol: p.symbol,
     info,
     amount,
@@ -115,6 +132,9 @@ export function revalueHolding(h: Holding, priceMap: PriceMap): Holding {
   }
   const p = priceMap[h.denom];
   if (!p) return h; // unknown denom — keep as valued
+  // Decimals unknown: the amount was never sized, so a price (even one
+  // filled in since) cannot value it; it stays unpriced and listed.
+  if (h.decimalsUnknown) return { ...h, value: 0, priceUnavailable: true };
   const priceUnavailable = !(p.price > 0);
   return {
     ...h,

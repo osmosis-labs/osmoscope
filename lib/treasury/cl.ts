@@ -39,6 +39,8 @@ export interface ClRewardAsset {
   amount: number;
   value: number;
   priceUnavailable: boolean;
+  // Decimals unknown: `amount` (0) is unknown, not zero (see Holding).
+  decimalsUnknown?: boolean;
 }
 
 export interface ClPosition {
@@ -87,25 +89,38 @@ function valueAsset(
   rawAmount: string,
   priceMap: PriceMap
 ): ClRewardAsset {
-  const p = priceMap[denom] ?? { symbol: "Unknown", price: 0, exponent: 0 };
-  const amount = parseFloat(rawAmount || "0") / Math.pow(10, p.exponent || 0);
-  const priceUnavailable = !(p.price > 0);
+  // A denom missing from the price map has unknown decimals too.
+  const p = priceMap[denom] ?? {
+    symbol: "Unknown",
+    price: 0,
+    exponent: 0,
+    exponentUnknown: true,
+  };
+  // Unknown decimals: the amount cannot be sized, so it is never valued, and
+  // it is flagged so it still shows as unpriced (see Holding).
+  const raw = parseFloat(rawAmount || "0");
+  const amount = p.exponentUnknown ? 0 : raw / Math.pow(10, p.exponent || 0);
+  const priceUnavailable = !!p.exponentUnknown || !(p.price > 0);
   return {
     symbol: p.symbol,
     denom,
     amount,
     value: priceUnavailable ? 0 : amount * p.price,
     priceUnavailable,
+    ...(p.exponentUnknown && raw > 0 ? { decimalsUnknown: true } : {}),
   };
 }
 
 // Sum a list of reward coins by symbol (spread rewards + incentives combined).
+// A coin with unknown decimals is kept in its own entry, so merging it
+// never makes a known reward of the same symbol unvalued.
 function sumRewards(coins: RawAsset[], priceMap: PriceMap): ClRewardAsset[] {
   const bySymbol = new Map<string, ClRewardAsset>();
   for (const c of coins) {
     const a = valueAsset(c.denom, c.amount, priceMap);
-    if (a.amount === 0) continue;
-    const cur = bySymbol.get(a.symbol) ?? {
+    if (a.amount === 0 && !a.decimalsUnknown) continue;
+    const key = a.decimalsUnknown ? `${a.symbol}\u0000unknown` : a.symbol;
+    const cur = bySymbol.get(key) ?? {
       symbol: a.symbol,
       denom: a.denom,
       amount: 0,
@@ -115,7 +130,8 @@ function sumRewards(coins: RawAsset[], priceMap: PriceMap): ClRewardAsset[] {
     cur.amount += a.amount;
     cur.value += a.value;
     cur.priceUnavailable = cur.priceUnavailable || a.priceUnavailable;
-    bySymbol.set(a.symbol, cur);
+    if (a.decimalsUnknown) cur.decimalsUnknown = true;
+    bySymbol.set(key, cur);
   }
   return [...bySymbol.values()];
 }
@@ -138,6 +154,7 @@ export function clPositionToHoldings(pos: ClPosition): Holding[] {
     value: a.value,
     denom: a.denom,
     priceUnavailable: a.priceUnavailable,
+    ...(a.decimalsUnknown ? { decimalsUnknown: true } : {}),
   }));
 }
 
@@ -160,8 +177,12 @@ export async function fetchClPositions(
     const asset0 = a0 ? valueAsset(a0.denom, a0.amount, priceMap) : null;
     const asset1 = a1 ? valueAsset(a1.denom, a1.amount, priceMap) : null;
 
-    const exp0 = a0 ? (priceMap[a0.denom]?.exponent ?? null) : null;
-    const exp1 = a1 ? (priceMap[a1.denom]?.exponent ?? null) : null;
+    const knownExp = (denom: string) => {
+      const info = priceMap[denom];
+      return info && !info.exponentUnknown ? info.exponent : null;
+    };
+    const exp0 = a0 ? knownExp(a0.denom) : null;
+    const exp1 = a1 ? knownExp(a1.denom) : null;
 
     // Display range only when both exponents are known (else a wrong range is
     // worse than none — this is financial data).
