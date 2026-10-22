@@ -1,6 +1,7 @@
 // Cloudflare Worker for osmoscope.osmosis.zone: the Next.js app built with
-// OpenNext (`opennextjs-cloudflare build`), deployed by Workers Builds. No
-// cron triggers: the crons run from GitHub Actions. Uncached pages and APIs
+// OpenNext (`opennextjs-cloudflare build`), deployed by Workers Builds. The
+// data crons run from GitHub Actions; the one cron trigger below is the
+// rate-limit monitor heartbeat. Uncached pages and APIs
 // use more CPU than Workers Free allows, so this needs Workers Paid.
 {
   "name": "osmoscope",
@@ -26,6 +27,9 @@
   // default to the workers_dev value, so they are set explicitly.
   "workers_dev": false,
   "preview_urls": true,
+  // The rate-limit monitor heartbeat (worker.ts scheduled, lib/heartbeat.ts).
+  // Previews do not run cron triggers.
+  "triggers": { "crons": ["*/30 * * * *"] },
   "vars": {
     // robots.ts only allows indexing when this is "production".
     "SITE_ENV": "production",
