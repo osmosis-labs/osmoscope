@@ -528,6 +528,7 @@ export async function buildTreasurySnapshot(
         value: a.value,
         denom: a.symbol,
         priceUnavailable: a.priceUnavailable,
+        ...(a.decimalsUnknown ? { decimalsUnknown: true } : {}),
       }))
     )
   );

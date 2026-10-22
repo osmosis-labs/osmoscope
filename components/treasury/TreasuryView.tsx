@@ -398,6 +398,8 @@ interface Slice {
   // Optional token quantity (by-Asset pie shows this instead of a % column).
   // Undefined for slices with no single amount (by-Address, folded "Other").
   amount?: number;
+  // Part of the quantity has unknown decimals (see Holding.decimalsUnknown).
+  decimalsUnknown?: boolean;
 }
 
 function foldSmall(slices: Slice[]): { data: Slice[]; total: number } {
@@ -562,7 +564,11 @@ function ValuePie({
               </span>
               {slices.some((x) => x.amount != null) && (
                 <span className="justify-self-end text-osmo-300 tabular-nums">
-                  {s.amount != null ? amount(s.amount) : ""}
+                  {s.amount != null
+                    ? s.decimalsUnknown
+                      ? amountUnknown(s.amount)
+                      : amount(s.amount)
+                    : ""}
                 </span>
               )}
               <span
@@ -633,10 +639,20 @@ export function TreasuryView() {
   // each slice to its non-OSMO holdings.
   const tokenFull: Slice[] = data.byAsset
     .filter((a) => !a.priceUnavailable && a.value > 0)
-    .map((a) => ({ name: a.symbol, value: a.value, amount: a.amount }));
+    .map((a) => ({
+      name: a.symbol,
+      value: a.value,
+      amount: a.amount,
+      decimalsUnknown: a.decimalsUnknown,
+    }));
   const tokenExOsmo: Slice[] = data.byAsset
     .filter((a) => !a.priceUnavailable && a.value > 0 && !a.isOsmo)
-    .map((a) => ({ name: a.symbol, value: a.value, amount: a.amount }));
+    .map((a) => ({
+      name: a.symbol,
+      value: a.value,
+      amount: a.amount,
+      decimalsUnknown: a.decimalsUnknown,
+    }));
 
   const addressFull: Slice[] = data.holders
     .filter((h) => h.totalValue > 0)

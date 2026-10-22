@@ -121,6 +121,7 @@ function sumRewards(coins: RawAsset[], priceMap: PriceMap): ClRewardAsset[] {
     cur.amount += a.amount;
     cur.value += a.value;
     cur.priceUnavailable = cur.priceUnavailable || a.priceUnavailable;
+    if (a.decimalsUnknown) cur.decimalsUnknown = true;
     bySymbol.set(a.symbol, cur);
   }
   return [...bySymbol.values()];
@@ -144,6 +145,7 @@ export function clPositionToHoldings(pos: ClPosition): Holding[] {
     value: a.value,
     denom: a.denom,
     priceUnavailable: a.priceUnavailable,
+    ...(a.decimalsUnknown ? { decimalsUnknown: true } : {}),
   }));
 }
 

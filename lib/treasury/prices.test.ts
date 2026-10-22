@@ -122,3 +122,25 @@ test("an aliased denom Numia does not list is still seeded and priced", async ()
     globalThis.fetch = originalFetch;
   }
 });
+
+test("CL assets keep the unknown-decimals flag into holdings", async () => {
+  const { clPositionToHoldings } = await import("./cl");
+  const rows = clPositionToHoldings({
+    positionId: "1",
+    poolId: "1",
+    assets: [
+      {
+        symbol: "NODEC",
+        denom: "ibc/NODECIMALS",
+        amount: 0,
+        value: 0,
+        priceUnavailable: true,
+        decimalsUnknown: true,
+      },
+    ],
+    rewards: [],
+  } as unknown as Parameters<typeof clPositionToHoldings>[0]);
+  assert.equal(rows[0].decimalsUnknown, true);
+  const [total] = aggregateBySymbol(rows);
+  assert.equal(total.decimalsUnknown, true);
+});
