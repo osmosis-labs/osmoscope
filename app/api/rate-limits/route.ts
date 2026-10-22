@@ -1,18 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma, isDatabaseEnabled } from "@/lib/database";
-import {
-  buildRateLimitSnapshot,
-  type RateLimitSnapshotData,
-} from "@/lib/rate-limits/snapshot";
+import type { RateLimitSnapshotData } from "@/lib/rate-limits/snapshot";
 import { buildPriceMap, type PriceMap } from "@/lib/treasury/prices";
 import { fetchLogoMap } from "@/lib/rate-limits/fetch";
 import { logger } from "@/lib/logger";
 
 // IBC rate-limit utilization for the /network page: the latest per-path
 // snapshot (written every 15 minutes by /api/cron/rate-limits). Serves the
-// stored snapshot; only if none exists yet (fresh deploy before the first
-// cron run) does it fall back to one live contract dump, without persisting
-// it. Per-denom flow history accumulates in rate_limit_readings, unqueried
+// stored snapshot only, and answers 503 when none exists yet (fresh database
+// before the first cron run). Per-denom flow history accumulates in rate_limit_readings, unqueried
 // here until something charts it.
 //
 // Each path is enriched with the asset's exponent and USD price (Numia via the
@@ -62,11 +58,14 @@ export async function GET() {
       if (latest) current = latest.data as unknown as RateLimitSnapshotData;
     }
 
+    // No live contract dump on the request path: that is a multi-page LCD
+    // read, and cache-busted requests could drive it. Without a stored
+    // snapshot (a fresh database before the first cron run) answer 503.
     if (!current) {
-      logger.warn(
-        "No stored rate-limit snapshot; falling back to a live contract dump (first run?)."
+      return NextResponse.json(
+        { error: "Rate-limit data is temporarily unavailable" },
+        { status: 503, headers: { "Cache-Control": "no-store" } }
       );
-      current = await buildRateLimitSnapshot();
     }
 
     // Enrich each path with exponent + USD price for display-unit conversion,
@@ -96,8 +95,8 @@ export async function GET() {
   } catch (error) {
     logger.error("Rate-limits route failed:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
+      { error: "Failed to fetch rate-limit data" },
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }

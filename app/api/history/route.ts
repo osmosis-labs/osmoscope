@@ -3,6 +3,7 @@ import { getHistory } from "@/lib/historical-file";
 import { isDatabaseEnabled } from "@/lib/database";
 import { getHistoryPaginated } from "@/lib/historical-file-db";
 import { logger } from "@/lib/logger";
+import { parseHistoryQuery } from "@/lib/edge";
 
 // Historical data only changes once a day (written by the snapshot cron at 17:20
 // UTC), so cache the response at the CDN for an hour and serve stale while
@@ -25,24 +26,22 @@ function fromDataStart<T extends { timestamp: string }>(records: T[]): T[] {
 
 export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-
-    // Check if pagination is requested
-    const page = searchParams.get("page");
-    const pageSize = searchParams.get("pageSize") || searchParams.get("limit");
-    const orderBy = searchParams.get("orderBy") || searchParams.get("order");
+    // Validated with the same parser the edge cache keys on (lib/edge.ts),
+    // so an accepted query always maps to one cached copy.
+    const query = parseHistoryQuery(new URL(request.url).searchParams);
+    if (query.kind === "invalid") {
+      return NextResponse.json(
+        { error: `Invalid query: ${query.reason}` },
+        { status: 400, headers: { "Cache-Control": "no-store" } }
+      );
+    }
 
     // If database is enabled and pagination requested, use paginated query
-    if (isDatabaseEnabled() && page) {
-      const pageNum = parseInt(page, 10) || 1;
-      const pageSizeNum = parseInt(pageSize || "100", 10);
-      const order = (orderBy?.toLowerCase() === "asc" ? "asc" : "desc") as
-        "asc" | "desc";
-
+    if (isDatabaseEnabled() && query.kind === "page") {
       const result = await getHistoryPaginated(
-        pageNum,
-        pageSizeNum,
-        order,
+        query.page,
+        query.pageSize,
+        query.order,
         DATA_START_DATE
       );
 
@@ -65,12 +64,13 @@ export async function GET(request: Request) {
     }
 
     // Support simple ordering via query param even without pagination
-    if (orderBy?.toLowerCase() === "asc") {
+    const orderBy = query.kind === "all" ? query.order : null;
+    if (orderBy === "asc") {
       history.sort(
         (a, b) =>
           new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
-    } else if (orderBy?.toLowerCase() === "desc") {
+    } else if (orderBy === "desc") {
       history.sort(
         (a, b) =>
           new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
@@ -83,10 +83,7 @@ export async function GET(request: Request) {
   } catch (error) {
     logger.error("Error fetching history:", error);
     return NextResponse.json(
-      {
-        error: "Failed to fetch historical data",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
+      { error: "Failed to fetch historical data" },
       { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
