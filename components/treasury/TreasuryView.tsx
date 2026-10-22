@@ -87,7 +87,7 @@ function ExplorerLink({ addr }: { addr: HolderAddress }) {
       onClick={(e) => e.stopPropagation()}
       title={`${ex.name}: ${addr.address}`}
       aria-label={`View on ${ex.name}`}
-      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-white/10 p-0.5 transition-colors hover:bg-white/25"
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm bg-white/10 p-0.5 transition-colors hover:bg-white/25"
     >
       {addr.chain === "ethereum" ? (
         <EtherscanMark className="h-full w-full text-white" />
@@ -109,10 +109,10 @@ function AssetRow({ asset }: { asset: AssetTotal }) {
         <span className="truncate">{asset.symbol}</span>
       </span>
       <span className="flex shrink-0 items-baseline gap-4 text-right">
-        <span className="tabular-nums text-osmo-200">
+        <span className="text-osmo-200 tabular-nums">
           {amount(asset.amount)}
         </span>
-        <span className="w-28 font-semibold tabular-nums text-white">
+        <span className="w-28 font-semibold text-white tabular-nums">
           {asset.priceUnavailable ? "—" : usd(asset.value)}
         </span>
       </span>
@@ -125,14 +125,14 @@ function UnpricedNotice({ symbols }: { symbols: string[] }) {
   const n = symbols.length;
   if (n === 0) return null;
   return (
-    <details className="mt-3 rounded bg-amber-500/10 p-3 text-xs text-amber-200">
+    <details className="mt-3 rounded-sm bg-amber-500/10 p-3 text-xs text-amber-200">
       <summary className="cursor-pointer list-none">
         <span className="font-medium">{n}</span> minor asset{n === 1 ? "" : "s"}{" "}
         held here {n === 1 ? "has" : "have"} no market price (illiquid variants)
         and {n === 1 ? "is" : "are"} excluded.{" "}
         <span className="underline">show list</span>
       </summary>
-      <p className="mt-2 break-words leading-relaxed text-amber-200/80">
+      <p className="mt-2 leading-relaxed wrap-break-word text-amber-200/80">
         {symbols.join(", ")}
       </p>
     </details>
@@ -152,7 +152,7 @@ function HolderCard({
   return (
     // relative + a raised z-index while the `?` tooltip is open lifts this card's
     // whole stacking context above the cards below, so the popover isn't painted
-    // under them (each Card's backdrop-blur is its own stacking context).
+    // under them (each Card's backdrop-blur-sm is its own stacking context).
     <Card className={`relative p-0 ${tipOpen ? "z-30" : ""}`}>
       <div className="flex w-full items-center justify-between gap-3 px-5 py-4">
         {/* Collapse toggle. A role="button" DIV rather than a real <button>
@@ -201,7 +201,7 @@ function HolderCard({
             </span>
           </span>
         </div>
-        <span className="shrink-0 text-lg font-bold tabular-nums text-white">
+        <span className="shrink-0 text-lg font-bold text-white tabular-nums">
           {usd(holder.totalValue)}
         </span>
       </div>
@@ -236,7 +236,7 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <div className="text-lg font-bold tabular-nums text-white">
+          <div className="text-lg font-bold text-white tabular-nums">
             {usd(pos.value)}
           </div>
           {rewardValue > 0 && (
@@ -247,7 +247,7 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
         </div>
       </div>
 
-      <div className="mb-3 flex items-center justify-between gap-2 rounded bg-white/5 px-3 py-2 text-xs text-osmo-100">
+      <div className="mb-3 flex items-center justify-between gap-2 rounded-sm bg-white/5 px-3 py-2 text-xs text-osmo-100">
         <span>
           {hasRange ? (
             <>
@@ -266,7 +266,7 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
         </span>
         {pos.outOfRange && (
           <span
-            className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-500/20 px-1.5 py-0.5 font-medium text-amber-300"
+            className="inline-flex shrink-0 items-center gap-1 rounded-sm bg-amber-500/20 px-1.5 py-0.5 font-medium text-amber-300"
             title="This position is out of range: its price has moved outside the set bounds, so it currently earns no trading fees."
           >
             <span aria-hidden>⚠</span> Out of range
@@ -285,10 +285,10 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
               <span className="truncate">{a.symbol}</span>
             </span>
             <span className="flex items-baseline gap-3 text-right">
-              <span className="tabular-nums text-osmo-200">
+              <span className="text-osmo-200 tabular-nums">
                 {amount(a.amount)}
               </span>
-              <span className="w-24 tabular-nums text-osmo-100">
+              <span className="w-24 text-osmo-100 tabular-nums">
                 {a.priceUnavailable ? "—" : usd(a.value)}
               </span>
             </span>
@@ -306,10 +306,10 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
               <span className="truncate">{r.symbol}</span>
             </span>
             <span className="flex items-baseline gap-3 text-right">
-              <span className="tabular-nums text-osmo-200">
+              <span className="text-osmo-200 tabular-nums">
                 {amount(r.amount)}
               </span>
-              <span className="w-24 tabular-nums text-osmo-100">
+              <span className="w-24 text-osmo-100 tabular-nums">
                 {r.priceUnavailable ? "—" : usd(r.value)}
               </span>
             </span>
@@ -338,7 +338,7 @@ function VaultCard({ pos }: { pos: VaultPositionCard }) {
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-white">{pos.label}</span>
             <span
-              className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+              className="shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase"
               style={{ background: badge.bg, color: badge.fg }}
             >
               {badge.label}
@@ -349,7 +349,7 @@ function VaultCard({ pos }: { pos: VaultPositionCard }) {
             {pos.holderLabel}
           </div>
         </div>
-        <div className="shrink-0 text-lg font-bold tabular-nums text-white">
+        <div className="shrink-0 text-lg font-bold text-white tabular-nums">
           {usd(pos.value)}
         </div>
       </div>
@@ -364,10 +364,10 @@ function VaultCard({ pos }: { pos: VaultPositionCard }) {
               <span className="truncate">{a.symbol}</span>
             </span>
             <span className="flex items-baseline gap-3 text-right">
-              <span className="tabular-nums text-osmo-200">
+              <span className="text-osmo-200 tabular-nums">
                 {amount(a.amount)}
               </span>
-              <span className="w-24 tabular-nums text-osmo-100">
+              <span className="w-24 text-osmo-100 tabular-nums">
                 {a.priceUnavailable ? "—" : usd(a.value)}
               </span>
             </span>
@@ -541,7 +541,7 @@ function ValuePie({
             >
               <span className="flex min-w-0 items-start gap-2">
                 <span
-                  className="mt-1 h-2.5 w-2.5 shrink-0 rounded-sm"
+                  className="mt-1 h-2.5 w-2.5 shrink-0 rounded-xs"
                   style={{ background: colorFor(s.name, i) }}
                 />
                 {/* Logos only when slice names are asset symbols; the
@@ -549,15 +549,17 @@ function ValuePie({
                 {namesAreSymbols && (
                   <AssetLogo symbol={s.name} className="mt-0.5" />
                 )}
-                <span className="min-w-0 break-words text-white">{s.name}</span>
+                <span className="min-w-0 wrap-break-word text-white">
+                  {s.name}
+                </span>
               </span>
               {slices.some((x) => x.amount != null) && (
-                <span className="justify-self-end tabular-nums text-osmo-300">
+                <span className="justify-self-end text-osmo-300 tabular-nums">
                   {s.amount != null ? amount(s.amount) : ""}
                 </span>
               )}
               <span
-                className="cursor-help justify-self-end tabular-nums text-osmo-100"
+                className="cursor-help justify-self-end text-osmo-100 tabular-nums"
                 title={usd(s.value)}
               >
                 {usdCompact(s.value)}
@@ -646,7 +648,7 @@ export function TreasuryView() {
       {/* Headline: total + non-OSMO */}
       <div className="grid gap-3 sm:grid-cols-2">
         <Card>
-          <div className="text-xs uppercase tracking-wide text-osmo-200">
+          <div className="text-xs tracking-wide text-osmo-200 uppercase">
             Total treasury value
           </div>
           <div className="mt-1 text-4xl font-bold text-white sm:text-5xl">
@@ -658,7 +660,7 @@ export function TreasuryView() {
           </div>
         </Card>
         <Card>
-          <div className="text-xs uppercase tracking-wide text-osmo-200">
+          <div className="text-xs tracking-wide text-osmo-200 uppercase">
             Non-OSMO value
           </div>
           <div className="mt-1 text-4xl font-bold text-white sm:text-5xl">

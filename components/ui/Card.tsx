@@ -5,7 +5,7 @@ interface CardProps {
   children: React.ReactNode;
   className?: string;
   /**
-   * Raise the card above its siblings while hovered. The card's `backdrop-blur`
+   * Raise the card above its siblings while hovered. The card's `backdrop-blur-sm`
    * creates a stacking context, so an in-card popover/tooltip (Recharts tooltips,
    * the `?` explainers) that overflows the card bottom is otherwise painted UNDER
    * the next card. A CSS-only `hover:z-30` lifts the whole card exactly while the
@@ -21,7 +21,7 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(
       <div
         ref={ref}
         className={cn(
-          "rounded-lg bg-white/10 p-6 backdrop-blur-sm",
+          "rounded-lg bg-white/10 p-6 backdrop-blur-xs",
           "border border-white/20 shadow-xl",
           liftOnHover && "relative z-0 hover:z-30",
           className

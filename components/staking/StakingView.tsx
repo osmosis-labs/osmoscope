@@ -1100,7 +1100,7 @@ export function StakingView() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {kpis.map((kpi) => (
             <Card key={kpi.label} className="p-4" liftOnHover>
-              <div className="inline-flex items-center gap-1 text-xs uppercase tracking-wide text-osmo-200">
+              <div className="inline-flex items-center gap-1 text-xs tracking-wide text-osmo-200 uppercase">
                 {kpi.label}
                 {kpi.tooltip && (
                   <InfoTooltip
@@ -1110,7 +1110,7 @@ export function StakingView() {
                 )}
               </div>
               <div
-                className={`mt-1 text-xl font-bold leading-tight sm:text-2xl ${kpi.color ?? "text-white"}`}
+                className={`mt-1 text-xl leading-tight font-bold sm:text-2xl ${kpi.color ?? "text-white"}`}
               >
                 {kpi.value}
               </div>
@@ -1176,11 +1176,11 @@ export function StakingView() {
                   Columns ▾
                 </button>
                 {colMenuOpen && (
-                  <div className="absolute right-0 top-full z-20 mt-1 w-56 rounded-lg border border-white/20 bg-osmo-900 p-2 shadow-xl">
+                  <div className="absolute top-full right-0 z-20 mt-1 w-56 rounded-lg border border-white/20 bg-osmo-900 p-2 shadow-xl">
                     {valColumns.map((c) => (
                       <label
                         key={c.key}
-                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-osmo-100 hover:bg-white/10"
+                        className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-osmo-100 hover:bg-white/10"
                       >
                         <input
                           type="checkbox"
@@ -1230,7 +1230,7 @@ export function StakingView() {
                             after the final word rather than each word breaking onto
                             its own line. */}
                         <span
-                          className={`inline items-baseline whitespace-normal align-baseline ${c.align === "right" ? "text-right" : "text-left"}`}
+                          className={`inline items-baseline align-baseline whitespace-normal ${c.align === "right" ? "text-right" : "text-left"}`}
                           style={
                             c.key === "cumulative"
                               ? { display: "inline-block", width: "5.5rem" }
@@ -1284,7 +1284,7 @@ export function StakingView() {
                     return (
                       <Fragment key={v.operatorAddress}>
                         <tr className="border-b border-white/5">
-                          <td className="py-2 pr-3 tabular-nums text-osmo-200">
+                          <td className="py-2 pr-3 text-osmo-200 tabular-nums">
                             {i + 1}
                           </td>
                           <td className="py-2 pr-3 font-medium text-white">
@@ -1596,7 +1596,7 @@ export function StakingView() {
                 : "—"
             }
             headlineLabel="OSMO total unbonding"
-            headlineColor="text-[#7C4DFF]"
+            headlineColor="text-osmo-accent"
           />
         </CardHeader>
         <CardContent>
@@ -1746,7 +1746,7 @@ export function StakingView() {
                           key={`${e.delegator}-${e.validator}-${e.completionTime}-${rank}`}
                           className="border-b border-white/5"
                         >
-                          <td className="py-2 pr-3 tabular-nums text-osmo-200">
+                          <td className="py-2 pr-3 text-osmo-200 tabular-nums">
                             {rank}
                           </td>
                           <td className="py-2 pr-3">
@@ -1761,10 +1761,10 @@ export function StakingView() {
                             </a>
                           </td>
                           <td className="py-2 pr-3 text-white">{e.moniker}</td>
-                          <td className="py-2 pr-3 text-right tabular-nums text-white">
+                          <td className="py-2 pr-3 text-right text-white tabular-nums">
                             {formatNumberWithCommas(e.amount, 0)} OSMO
                           </td>
-                          <td className="py-2 text-right tabular-nums text-osmo-100">
+                          <td className="py-2 text-right text-osmo-100 tabular-nums">
                             {new Date(e.completionTime).toLocaleDateString(
                               undefined,
                               {

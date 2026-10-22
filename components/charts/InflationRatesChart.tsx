@@ -293,7 +293,7 @@ export function InflationRatesChart({
             </div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-[#7C4DFF]">
+            <div className="text-2xl font-bold text-osmo-accent">
               {formatPercentage(averageInflationRate)}
             </div>
             <div className="flex items-center justify-center gap-1.5 text-sm text-osmo-100">

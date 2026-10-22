@@ -56,7 +56,7 @@ export function SiteHeader({
     }`;
 
   return (
-    <header className="mb-6 mt-2 flex items-center justify-between gap-3 sm:gap-4">
+    <header className="mt-2 mb-6 flex items-center justify-between gap-3 sm:gap-4">
       <div className="flex items-center gap-3 sm:gap-4">
         {/* eslint-disable-next-line @next/next/no-img-element -- small static
             brand icon, class-sized (no CLS); next/image adds no value here. */}
@@ -66,7 +66,7 @@ export function SiteHeader({
           className="h-12 w-12 shrink-0 sm:h-16 sm:w-16"
         />
         <div>
-          <h1 className="text-2xl font-bold leading-tight text-white sm:text-4xl">
+          <h1 className="text-2xl leading-tight font-bold text-white sm:text-4xl">
             OSMOscope
           </h1>
           <p className="text-sm text-osmo-200 sm:text-base">{subtitle}</p>
@@ -128,7 +128,7 @@ export function SiteHeader({
         {menuOpen && (
           <ul
             id="mobile-nav"
-            className="absolute right-0 top-12 z-30 flex min-w-[10rem] flex-col gap-2 rounded-lg border border-white/20 bg-osmo-900 p-2 shadow-xl sm:hidden"
+            className="absolute top-12 right-0 z-30 flex min-w-40 flex-col gap-2 rounded-lg border border-white/20 bg-osmo-900 p-2 shadow-xl sm:hidden"
           >
             {NAV.map(({ href, label }) => (
               <li key={href}>

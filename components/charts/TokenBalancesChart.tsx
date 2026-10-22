@@ -149,7 +149,7 @@ export function TokenBalancesChart({
           }
           headlineValue={formatNumberWithCommas(circulating)}
           headlineLabel="Circulating"
-          headlineColor="text-[#7C4DFF]"
+          headlineColor="text-osmo-accent"
         />
       </CardHeader>
       <CardContent>
@@ -242,7 +242,7 @@ export function TokenBalancesChart({
           {SERIES_LEGEND.map((s, i) => (
             <span key={s.label} className="inline-flex items-center gap-1.5">
               <span
-                className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                className="h-2.5 w-2.5 shrink-0 rounded-xs"
                 style={{ backgroundColor: s.color }}
                 aria-hidden
               />

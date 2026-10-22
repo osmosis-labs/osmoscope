@@ -121,7 +121,7 @@ function UtilBar({
           a green "inbound" on every quiet row reads as signal that isn't
           there. */}
       <span
-        className="inline-flex w-4 shrink-0 items-center justify-center self-stretch text-xs font-bold leading-none"
+        className="inline-flex w-4 shrink-0 items-center justify-center self-stretch text-xs leading-none font-bold"
         title={
           w.direction && (pct ?? 0) > 0
             ? w.direction === "in"
@@ -179,7 +179,7 @@ function UtilBar({
         </span>
         {/* Capacity popup, on bar hover. pointer-events-none so it never
             traps the cursor. */}
-        <span className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 hidden w-72 -translate-x-1/2 rounded-lg border border-white/20 bg-osmo-900 p-3 text-left text-xs font-normal leading-relaxed text-osmo-100 shadow-xl group-hover:block">
+        <span className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 hidden w-72 -translate-x-1/2 rounded-lg border border-white/20 bg-osmo-900 p-3 text-left text-xs leading-relaxed font-normal text-osmo-100 shadow-xl group-hover:block">
           <span className="block">
             Utilization:{" "}
             <span style={{ color: utilizationColor(pct ?? 0) }}>
@@ -212,7 +212,7 @@ function UtilBar({
       {/* Period end (UTC) with the countdown in brackets, under the list's
           "Period End" header. The percentage lives in the bar length and the
           hover popup; the window name in the expanded rows. */}
-      <span className="w-32 shrink-0 text-right text-xs tabular-nums text-osmo-300">
+      <span className="w-32 shrink-0 text-right text-xs text-osmo-300 tabular-nums">
         {pct == null ? windowStatus(w) : formatReset(w.periodEnd)}
       </span>
     </>
@@ -332,7 +332,7 @@ export function RateLimitsCard() {
                       type="button"
                       onClick={() => toggle(g.denom)}
                       aria-expanded={isOpen}
-                      className="flex w-full items-center gap-3 rounded px-1 py-1 text-left transition-colors hover:bg-white/5"
+                      className="flex w-full items-center gap-3 rounded-sm px-1 py-1 text-left transition-colors hover:bg-white/5"
                     >
                       <span className="flex w-36 shrink-0 items-center text-sm text-osmo-100">
                         <span
@@ -381,7 +381,7 @@ export function RateLimitsCard() {
                                 channel id only appears if a channel-scoped
                                 limit ever ships; rows are labelled by their
                                 window instead. */}
-                            <span className="w-[6.75rem] shrink-0 truncate text-xs text-osmo-200">
+                            <span className="w-27 shrink-0 truncate text-xs text-osmo-200">
                               {p.channel === "any"
                                 ? windowLabel(w)
                                 : `${p.channel} · ${windowLabel(w)}`}
