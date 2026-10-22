@@ -89,7 +89,13 @@ function valueAsset(
   rawAmount: string,
   priceMap: PriceMap
 ): ClRewardAsset {
-  const p = priceMap[denom] ?? { symbol: "Unknown", price: 0, exponent: 0 };
+  // A denom missing from the price map has unknown decimals too.
+  const p = priceMap[denom] ?? {
+    symbol: "Unknown",
+    price: 0,
+    exponent: 0,
+    exponentUnknown: true,
+  };
   // Unknown decimals: the amount cannot be sized, so it is never valued, and
   // it is flagged so it still shows as unpriced (see Holding).
   const raw = parseFloat(rawAmount || "0");

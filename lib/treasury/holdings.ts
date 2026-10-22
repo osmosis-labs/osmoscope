@@ -35,7 +35,14 @@ export interface Holding {
   decimalsUnknown?: boolean;
 }
 
-const UNKNOWN_PRICE: PriceInfo = { symbol: "Unknown", price: 0, exponent: 0 };
+// A denom missing from the price map: its decimals are unknown too, so it
+// takes the decimalsUnknown path rather than a default of 0.
+const UNKNOWN_PRICE: PriceInfo = {
+  symbol: "Unknown",
+  price: 0,
+  exponent: 0,
+  exponentUnknown: true,
+};
 
 function lookup(priceMap: PriceMap, denom: string): PriceInfo {
   return priceMap[denom] ?? UNKNOWN_PRICE;

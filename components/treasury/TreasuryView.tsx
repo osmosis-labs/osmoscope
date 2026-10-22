@@ -422,11 +422,20 @@ function foldSmall(slices: Slice[]): { data: Slice[]; total: number } {
   if (total <= 0) return { data: [], total: 0 };
   const big: Slice[] = [];
   let otherValue = 0;
+  let otherUnknown = false;
   for (const s of [...slices].sort((a, b) => b.value - a.value)) {
     if (s.value / total >= MIN_SLICE_FRACTION) big.push(s);
-    else otherValue += s.value;
+    else {
+      otherValue += s.value;
+      if (s.decimalsUnknown) otherUnknown = true;
+    }
   }
-  if (otherValue > 0) big.push({ name: "Other", value: otherValue });
+  if (otherValue > 0)
+    big.push({
+      name: "Other",
+      value: otherValue,
+      ...(otherUnknown ? { decimalsUnknown: true } : {}),
+    });
   return { data: big, total };
 }
 
