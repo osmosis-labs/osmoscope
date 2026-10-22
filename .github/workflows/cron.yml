@@ -45,21 +45,13 @@ jobs:
       # Values a cron keeps between runs (lib/cron-state.ts), carried in the
       # actions cache below.
       CRON_STATE_FILE: .cron-state/state.json
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      NUMIA_API_KEY: ${{ secrets.NUMIA_API_KEY }}
-      NUMIA_API_URL: ${{ secrets.NUMIA_API_URL }}
-      SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
-      SQS_API_URL: ${{ secrets.SQS_API_URL }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Yarn 4 comes from the packageManager field via Corepack.
       - run: corepack enable
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: yarn
@@ -70,7 +62,7 @@ jobs:
       # The newest state this cron saved. Cache keys are immutable, so each
       # run attempt saves under its own key (run_id stays the same on a
       # re-run, run_attempt does not) and restores the newest by prefix.
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cron-state
           key: cron-state-${{ env.JOB }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -78,10 +70,22 @@ jobs:
 
       # An unknown JOB fails here with the runner's usage message. The state
       # directory always exists, so the save below has something to store.
+      # The secrets are scoped to this step only, so `yarn install` and any
+      # dependency lifecycle script it runs never see the database URL or the
+      # alert tokens.
       - run: mkdir -p .cron-state && yarn cron "$JOB"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NUMIA_API_KEY: ${{ secrets.NUMIA_API_KEY }}
+          NUMIA_API_URL: ${{ secrets.NUMIA_API_URL }}
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+          SQS_API_URL: ${{ secrets.SQS_API_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
       - if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cron-state
           key: cron-state-${{ env.JOB }}-${{ github.run_id }}-${{ github.run_attempt }}

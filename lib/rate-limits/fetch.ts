@@ -97,7 +97,24 @@ export function decodeFlowKey(
   };
 }
 
-async function fetchJson<T>(url: string, height?: number): Promise<T> {
+// The block height the node answered from, which LCDs echo on every
+// response.
+function servedHeight(response: Response): number | null {
+  const served = Number(
+    response.headers.get("grpc-metadata-x-cosmos-block-height")
+  );
+  return Number.isFinite(served) && served > 0 ? served : null;
+}
+
+// How far behind the probed latest block a fallback's state page may be
+// (a few seconds of blocks, for load-balanced backends).
+export const FALLBACK_MAX_HEIGHT_LAG = 10;
+
+async function fetchJson<T>(
+  url: string,
+  height?: number,
+  minHeight?: number
+): Promise<T> {
   const response = await fetch(url, {
     headers: {
       accept: "application/json",
@@ -112,16 +129,22 @@ async function fetchJson<T>(url: string, height?: number): Promise<T> {
   }
   // Every page of a past-height dump must come from that height: a node that
   // pruned it can answer from another one.
-  const served = response.headers.get("grpc-metadata-x-cosmos-block-height");
-  if (height && served !== String(height)) {
+  const served = servedHeight(response);
+  if (height && served !== height) {
     throw new Error(`served height ${served ?? "unknown"}, not ${height}`);
+  }
+  // A fallback's live pages must come from at or near the block its freshness
+  // probe saw: a hostname can front backends at different heights.
+  if (minHeight && (served == null || served < minHeight)) {
+    throw new Error(`served height ${served ?? "unknown"}, below ${minHeight}`);
   }
   return (await response.json()) as T;
 }
 
 async function dumpStateFrom(
   endpoint: string,
-  height?: number
+  height?: number,
+  minHeight?: number
 ): Promise<RateLimitPath[]> {
   const paths: RateLimitPath[] = [];
   let nextKey: string | null = null;
@@ -132,7 +155,8 @@ async function dumpStateFrom(
     if (nextKey) params.set("pagination.key", nextKey);
     const data: StatePage = await fetchJson(
       `${endpoint}/cosmwasm/wasm/v1/contract/${RATE_LIMITER_CONTRACT}/state?${params.toString()}`,
-      height
+      height,
+      minHeight
     );
     for (const model of data.models ?? []) {
       const key = decodeFlowKey(model.key);
@@ -163,10 +187,40 @@ async function dumpStateFrom(
   return paths;
 }
 
+// A public fallback can serve from a node that has fallen behind, which
+// would report old flows as current. Before its dump is used, its latest
+// block must be recent.
+export const FALLBACK_MAX_BLOCK_AGE_MS = 2 * 60_000;
+
+// Returns the latest height, which the dump's pages are then held to.
+export async function assertEndpointCurrent(
+  endpoint: string,
+  nowMs = Date.now()
+): Promise<number> {
+  const latest: { block?: { header?: { time?: string; height?: string } } } =
+    await fetchJson(`${endpoint}/cosmos/base/tendermint/v1beta1/blocks/latest`);
+  const header = latest.block?.header;
+  const at = header?.time ? Date.parse(header.time) : NaN;
+  if (!Number.isFinite(at)) {
+    throw new Error("latest block has no time");
+  }
+  if (nowMs - at > FALLBACK_MAX_BLOCK_AGE_MS) {
+    throw new Error(
+      `latest block ${header?.height ?? "?"} is ${Math.round((nowMs - at) / 1000)}s old`
+    );
+  }
+  const latestHeight = Number(header?.height);
+  if (!Number.isFinite(latestHeight) || latestHeight <= 0) {
+    throw new Error("latest block has no height");
+  }
+  return latestHeight;
+}
+
 // Dump every configured rate-limit path, failing over across LCD endpoints.
 // A partial dump is never returned: any page failure discards the endpoint.
-// With `height`, the dump is of that past block, from the historical
-// endpoints only.
+// A fallback endpoint is used only once its latest block is recent. With
+// `height`, the dump is of that past block, from the historical endpoints
+// only (the served height is checked per page instead).
 export async function fetchRateLimitPaths(height?: number): Promise<{
   paths: RateLimitPath[];
   endpoint: string;
@@ -174,7 +228,11 @@ export async function fetchRateLimitPaths(height?: number): Promise<{
   let lastError: unknown = null;
   for (const endpoint of height ? HISTORICAL_LCD_ENDPOINTS : LCD_ENDPOINTS) {
     try {
-      const paths = await dumpStateFrom(endpoint, height);
+      const minHeight =
+        !height && endpoint !== LCD_ENDPOINTS[0]
+          ? (await assertEndpointCurrent(endpoint)) - FALLBACK_MAX_HEIGHT_LAG
+          : undefined;
+      const paths = await dumpStateFrom(endpoint, height, minHeight);
       return { paths, endpoint };
     } catch (error) {
       lastError = error;

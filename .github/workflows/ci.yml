@@ -9,6 +9,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only token: the job only checks the code (the repository default is
+# write, which pushes to main would otherwise get).
+permissions:
+  contents: read
+
 jobs:
   checks:
     name: type-check, lint, format, test
@@ -19,13 +24,13 @@ jobs:
       # a placeholder is enough.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Yarn 4 comes from the packageManager field via Corepack; enable it
       # before setup-node so the yarn cache resolves against the right binary.
       - run: corepack enable
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: yarn

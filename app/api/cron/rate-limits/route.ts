@@ -4,6 +4,7 @@ import { computeAlertTransitions } from "@/lib/rate-limits/alerts";
 import { dispatchAlerts, sendOpsNotice } from "@/lib/rate-limits/notify";
 import { readCronState, writeCronState } from "@/lib/cron-state";
 import { catchUpReadings } from "@/lib/rate-limits/catch-up";
+import { HEARTBEAT_MAX_AGE_MS } from "@/lib/heartbeat";
 import {
   loadAlertStates,
   refreshRateLimitSnapshot,
@@ -46,6 +47,9 @@ const FAILURES_KEY = "rateLimits.consecutiveFailures";
 // so only the first clean run of each hour writes them; later runs only bring
 // the hour's snapshot (what /api/rate-limits shows) up to date.
 const PERSISTED_HOUR_KEY = "rateLimits.persistedHour";
+// When the last run completed (alerts delivered, states saved), for the
+// "resumed" notice after a gap.
+const LAST_COMPLETED_KEY = "rateLimits.lastCompletedAt";
 
 // Which stage of the run failed — so ops knows WHERE it broke, not just that
 // it did. Carried on the thrown error via CronStageError below.
@@ -246,6 +250,29 @@ export async function GET(request: Request) {
     }
 
     writeCronState(FAILURES_KEY, 0); // a clean run clears the streak
+
+    // The all-clear for the Worker heartbeat (lib/heartbeat.ts), which warns
+    // when runs stop: the first run to COMPLETE after a gap says monitoring is
+    // current again. Keyed on the last completed run (cron state), not on the
+    // stored snapshot, which a run that fails after persisting still refreshes.
+    // No record means a first run or a state cache lost to a long outage;
+    // both deserve the notice. Best-effort, after the alerts.
+    const lastCompleted = Date.parse(readCronState(LAST_COMPLETED_KEY, ""));
+    const completedAt = new Date(snapshot.timestamp);
+    const gapMs = completedAt.getTime() - lastCompleted;
+    if (!Number.isFinite(lastCompleted) || gapMs > HEARTBEAT_MAX_AGE_MS) {
+      try {
+        await sendOpsNotice(
+          "Rate-limit monitor resumed",
+          Number.isFinite(lastCompleted)
+            ? `No run had completed since ${new Date(lastCompleted).toISOString()} (${Math.round(gapMs / 60_000)} minutes). Monitoring is current again.`
+            : "No earlier completed run is on record. Monitoring is running."
+        );
+      } catch (error) {
+        logger.warn("Resumed notice not delivered:", error);
+      }
+    }
+    writeCronState(LAST_COMPLETED_KEY, completedAt.toISOString());
 
     // Once an hour (the run that wrote this hour's readings), fill earlier
     // hours that had no run. After the alerts, so it never delays them, and
