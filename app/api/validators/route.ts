@@ -22,8 +22,8 @@ export async function GET() {
   } catch (error) {
     logger.error("Validators route failed:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
+      { error: "Failed to fetch validator data" },
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }

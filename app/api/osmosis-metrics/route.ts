@@ -222,10 +222,7 @@ export async function GET() {
   } catch (error) {
     logger.error("Error fetching Osmosis metrics:", error);
     return NextResponse.json(
-      {
-        error: "Failed to fetch Osmosis metrics",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
+      { error: "Failed to fetch Osmosis metrics" },
       { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }

@@ -53,10 +53,7 @@ export async function GET() {
   } catch (error) {
     logger.error("Error fetching treasury snapshot:", error);
     return NextResponse.json(
-      {
-        error: "Failed to fetch treasury snapshot",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
+      { error: "Failed to fetch treasury snapshot" },
       { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }

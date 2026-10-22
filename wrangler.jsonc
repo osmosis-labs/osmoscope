@@ -21,6 +21,11 @@
     "command": "yarn cf:build",
   },
   "observability": { "enabled": true },
+  // Production is served only on the custom domain; the workers.dev twin of
+  // it is off. Preview URLs (per-branch, also on workers.dev) stay on: they
+  // default to the workers_dev value, so they are set explicitly.
+  "workers_dev": false,
+  "preview_urls": true,
   "vars": {
     // robots.ts only allows indexing when this is "production".
     "SITE_ENV": "production",

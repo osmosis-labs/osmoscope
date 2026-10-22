@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  fetchUnbondingSchedule,
-  type UnbondingSchedule,
-} from "@/lib/validators";
+import type { UnbondingSchedule } from "@/lib/validators";
 import {
   getUndelegationDays,
   getUnbondingForecast,
@@ -15,8 +12,9 @@ import { logger } from "@/lib/logger";
 // A DAY by the snapshot cron — enumerating every bonded validator's
 // unbonding_delegations is a ~71-call LCD fan-out that the public LCD rate-limits
 // (403) if run per request. So we serve the cron's stored blob here and never
-// fan out on a page load. Only if no blob exists yet (fresh deploy before the
-// first cron run) do we fall back to a single live fetch. The per-completion-day
+// fan out on a request: with no stored forecast (a failed read, or a fresh
+// database before the first cron run) the route answers 503, uncached, rather
+// than letting cache-busted requests drive the fan-out. The per-completion-day
 // history comes from UndelegationDay (backfilled + cron).
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -38,21 +36,14 @@ export async function GET() {
       }),
     ]);
 
-    // Serve the cron's stored forecast; fall back to a live fetch only if the
-    // cron hasn't populated it yet (first deploy). The live fallback is the
-    // expensive fan-out, so it should essentially never run in steady state.
-    let schedule: UnbondingSchedule;
-    let computedAt: string | null;
-    if (forecast?.data) {
-      schedule = forecast.data as UnbondingSchedule;
-      computedAt = forecast.computedAt;
-    } else {
-      logger.warn(
-        "No stored unbonding forecast; falling back to a live fan-out (first run?)."
+    if (!forecast?.data) {
+      return NextResponse.json(
+        { error: "Unbonding forecast is temporarily unavailable" },
+        { status: 503, headers: { "Cache-Control": "no-store" } }
       );
-      schedule = await fetchUnbondingSchedule();
-      computedAt = new Date().toISOString();
     }
+    const schedule = forecast.data as UnbondingSchedule;
+    const computedAt: string | null = forecast.computedAt;
 
     return NextResponse.json(
       // computedAt = when the forecast fan-out ran, so the UI can show staleness.
@@ -66,8 +57,8 @@ export async function GET() {
   } catch (error) {
     logger.error("Undelegations route failed:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
+      { error: "Failed to fetch undelegations" },
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }
