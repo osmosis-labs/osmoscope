@@ -28,6 +28,11 @@ function usdCompact(value: number): string {
 // Token amount: meaningful precision without noise. At/above 1000 the fractional
 // part is just noise, so drop the decimals; 1-1000 keeps 2 places; sub-1 keeps
 // 4 significant figures.
+// An amount with unknown decimals: only the sized part (if any) is known.
+function amountUnknown(known: number): string {
+  return known > 0 ? `${amount(known)} + unknown` : "unknown";
+}
+
 function amount(n: number): string {
   if (n === 0) return "0";
   const abs = Math.abs(n);
@@ -110,7 +115,9 @@ function AssetRow({ asset }: { asset: AssetTotal }) {
       </span>
       <span className="flex shrink-0 items-baseline gap-4 text-right">
         <span className="text-osmo-200 tabular-nums">
-          {amount(asset.amount)}
+          {asset.decimalsUnknown
+            ? amountUnknown(asset.amount)
+            : amount(asset.amount)}
         </span>
         <span className="w-28 font-semibold text-white tabular-nums">
           {asset.priceUnavailable ? "—" : usd(asset.value)}
@@ -286,7 +293,7 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
             </span>
             <span className="flex items-baseline gap-3 text-right">
               <span className="text-osmo-200 tabular-nums">
-                {amount(a.amount)}
+                {a.decimalsUnknown ? amountUnknown(a.amount) : amount(a.amount)}
               </span>
               <span className="w-24 text-osmo-100 tabular-nums">
                 {a.priceUnavailable ? "—" : usd(a.value)}
@@ -307,7 +314,7 @@ function ClCard({ pos }: { pos: ClPositionCard }) {
             </span>
             <span className="flex items-baseline gap-3 text-right">
               <span className="text-osmo-200 tabular-nums">
-                {amount(r.amount)}
+                {r.decimalsUnknown ? amountUnknown(r.amount) : amount(r.amount)}
               </span>
               <span className="w-24 text-osmo-100 tabular-nums">
                 {r.priceUnavailable ? "—" : usd(r.value)}
@@ -365,7 +372,7 @@ function VaultCard({ pos }: { pos: VaultPositionCard }) {
             </span>
             <span className="flex items-baseline gap-3 text-right">
               <span className="text-osmo-200 tabular-nums">
-                {amount(a.amount)}
+                {a.decimalsUnknown ? amountUnknown(a.amount) : amount(a.amount)}
               </span>
               <span className="w-24 text-osmo-100 tabular-nums">
                 {a.priceUnavailable ? "—" : usd(a.value)}

@@ -30,6 +30,9 @@ export interface Holding {
   value: number; // USD; 0 when priceUnavailable
   denom: string;
   priceUnavailable: boolean; // true when no price was found — value is NOT trustworthy
+  // No source gave this denom's decimals, so `amount` (0) is unknown, not
+  // zero: the holding is never valued but stays listed as unpriced.
+  decimalsUnknown?: boolean;
 }
 
 const UNKNOWN_PRICE: PriceInfo = { symbol: "Unknown", price: 0, exponent: 0 };
@@ -81,19 +84,16 @@ function makeHolding(
   const exponent = p.exponentUnknown
     ? fallbackExponent
     : p.exponent || fallbackExponent || 0;
-  // Unknown decimals: the amount cannot be sized, so it is never valued. The
-  // holding keeps its raw amount (labelled as base units) so it still shows,
-  // and still counts among the unpriced holdings, rather than disappearing.
+  // Unknown decimals: the amount cannot be sized, so it is never valued. It
+  // is flagged rather than given a raw base-unit amount, which would mix into
+  // per-symbol totals; filters keep flagged holdings listed as unpriced.
   const decimalsUnknown = exponent == null;
-  const amount = decimalsUnknown
-    ? rawAmount
-    : rawAmount / Math.pow(10, exponent);
+  const amount = decimalsUnknown ? 0 : rawAmount / Math.pow(10, exponent);
   const priceUnavailable = decimalsUnknown || !(p.price > 0);
   return {
+    ...(decimalsUnknown && rawAmount > 0 ? { decimalsUnknown: true } : {}),
     symbol: p.symbol,
-    info: decimalsUnknown
-      ? `${info ? `${info}; ` : ""}decimals unknown, amount in base units`
-      : info,
+    info,
     amount,
     value: priceUnavailable ? 0 : amount * p.price,
     denom,

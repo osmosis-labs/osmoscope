@@ -39,6 +39,8 @@ export interface ClRewardAsset {
   amount: number;
   value: number;
   priceUnavailable: boolean;
+  // Decimals unknown: `amount` (0) is unknown, not zero (see Holding).
+  decimalsUnknown?: boolean;
 }
 
 export interface ClPosition {
@@ -88,10 +90,10 @@ function valueAsset(
   priceMap: PriceMap
 ): ClRewardAsset {
   const p = priceMap[denom] ?? { symbol: "Unknown", price: 0, exponent: 0 };
-  // Unknown decimals: the amount cannot be sized, so it is never valued. It
-  // keeps its raw base-unit amount so the asset still shows as unpriced.
+  // Unknown decimals: the amount cannot be sized, so it is never valued, and
+  // it is flagged so it still shows as unpriced (see Holding).
   const raw = parseFloat(rawAmount || "0");
-  const amount = p.exponentUnknown ? raw : raw / Math.pow(10, p.exponent || 0);
+  const amount = p.exponentUnknown ? 0 : raw / Math.pow(10, p.exponent || 0);
   const priceUnavailable = !!p.exponentUnknown || !(p.price > 0);
   return {
     symbol: p.symbol,
@@ -99,6 +101,7 @@ function valueAsset(
     amount,
     value: priceUnavailable ? 0 : amount * p.price,
     priceUnavailable,
+    ...(p.exponentUnknown && raw > 0 ? { decimalsUnknown: true } : {}),
   };
 }
 
@@ -107,7 +110,7 @@ function sumRewards(coins: RawAsset[], priceMap: PriceMap): ClRewardAsset[] {
   const bySymbol = new Map<string, ClRewardAsset>();
   for (const c of coins) {
     const a = valueAsset(c.denom, c.amount, priceMap);
-    if (a.amount === 0) continue;
+    if (a.amount === 0 && !a.decimalsUnknown) continue;
     const cur = bySymbol.get(a.symbol) ?? {
       symbol: a.symbol,
       denom: a.denom,

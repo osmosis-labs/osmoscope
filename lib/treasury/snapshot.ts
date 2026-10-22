@@ -35,6 +35,9 @@ export interface AssetTotal {
   value: number;
   priceUnavailable: boolean;
   isOsmo: boolean; // OSMO token or an OSMO LST/derivative (see isOsmoExposure)
+  // Part of this symbol's holdings has unknown decimals, so `amount` and
+  // `value` leave that part out (see Holding.decimalsUnknown).
+  decimalsUnknown?: boolean;
 }
 
 // One underlying address of a holder (surfaced for explorer links).
@@ -85,6 +88,7 @@ export interface VaultPositionCard {
     amount: number;
     value: number;
     priceUnavailable: boolean;
+    decimalsUnknown?: boolean;
   }>;
 }
 
@@ -154,6 +158,7 @@ export function aggregateBySymbol(holdings: Holding[]): AssetTotal[] {
     cur.amount += h.amount;
     cur.value += h.value;
     if (!h.priceUnavailable) cur.hasPriced = true;
+    if (h.decimalsUnknown) cur.decimalsUnknown = true;
     bySymbol.set(h.symbol, cur);
   }
   return [...bySymbol.values()]
@@ -233,6 +238,7 @@ function buildVaultPositions(
       amount: h.amount,
       value: h.value,
       priceUnavailable: h.priceUnavailable,
+      ...(h.decimalsUnknown ? { decimalsUnknown: true } : {}),
     });
     byKey.set(cls.key, acc);
   }
@@ -268,7 +274,7 @@ function buildVaultPositions(
 // but couldn't price. Feeds each holder's own "minor assets" notice.
 function unpricedFrom(assets: AssetTotal[]): string[] {
   return assets
-    .filter((a) => a.priceUnavailable && a.amount > 0)
+    .filter((a) => (a.priceUnavailable && a.amount > 0) || a.decimalsUnknown)
     .map((a) => a.symbol)
     .sort((a, b) => a.localeCompare(b));
 }
@@ -374,7 +380,7 @@ export async function buildTreasurySnapshot(
   const mainFiltered = mainRevalued.filter(
     (h) =>
       (Number.isFinite(h.value) && h.value >= 1) ||
-      (h.priceUnavailable && h.amount > 0)
+      (h.priceUnavailable && (h.amount > 0 || h.decimalsUnknown))
   );
   const mainSorted = sortHoldings(mainFiltered);
   const mainTotal = mainSorted.reduce((s, h) => s + h.value, 0);
@@ -492,7 +498,9 @@ export async function buildTreasurySnapshot(
     // dropped below $1: the community pool holds ~0 shares in ancient pools
     // (1, 10, ...) that are just noise.
     .filter((p) =>
-      p.kind === "Classic" ? p.value >= 1 : p.assets.some((a) => a.amount > 0)
+      p.kind === "Classic"
+        ? p.value >= 1 || p.assets.some((a) => a.decimalsUnknown)
+        : p.assets.some((a) => a.amount > 0 || a.decimalsUnknown)
     )
     .sort((a, b) => b.value - a.value);
 

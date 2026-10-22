@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildPriceMap, effectivePriceRow } from "./prices";
 import { decomposeBankDenom } from "./holdings";
+import { aggregateBySymbol } from "./snapshot";
 import {
   EXPONENT_OVERRIDES,
   PRICE_OVERRIDES_BY_DENOM,
@@ -65,7 +66,7 @@ test("an alias keeps its own decimals over the base symbol's", () => {
   assert.equal(row.exponent, 18);
 });
 
-test("a held denom with unknown decimals stays listed, unpriced, in base units", async () => {
+test("a held denom with unknown decimals is flagged, unpriced and never valued", async () => {
   const [h] = await decomposeBankDenom("ibc/NODECIMALS", 5_000_000, {
     "ibc/NODECIMALS": {
       symbol: "NODEC",
@@ -74,14 +75,31 @@ test("a held denom with unknown decimals stays listed, unpriced, in base units",
       exponentUnknown: true,
     },
   });
-  assert.equal(
-    h.amount,
-    5_000_000,
-    "raw amount kept so the holding is not filtered out"
-  );
+  assert.equal(h.decimalsUnknown, true);
+  assert.equal(h.amount, 0, "no raw base units in amount");
   assert.equal(h.priceUnavailable, true);
   assert.equal(h.value, 0);
-  assert.match(h.info, /decimals unknown/);
+  assert.equal(h.info, "", "info untouched, so position grouping is unchanged");
+});
+
+test("an unknown-decimals variant does not inflate its symbol's total", async () => {
+  const priceMap = {
+    "ibc/USDC": { symbol: "USDC", price: 1, exponent: 6 },
+    "ibc/USDCX": {
+      symbol: "USDC",
+      price: 0,
+      exponent: 0,
+      exponentUnknown: true,
+    },
+  };
+  const holdings = [
+    ...(await decomposeBankDenom("ibc/USDC", 1_000_000, priceMap)),
+    ...(await decomposeBankDenom("ibc/USDCX", 5_000_000, priceMap)),
+  ];
+  const [usdc] = aggregateBySymbol(holdings);
+  assert.equal(usdc.amount, 1, "1 USDC, not 5,000,001");
+  assert.equal(usdc.value, 1);
+  assert.equal(usdc.decimalsUnknown, true, "the unknown part is flagged");
 });
 
 test("an aliased denom Numia does not list is still seeded and priced", async () => {
