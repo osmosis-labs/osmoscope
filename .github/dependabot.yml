@@ -5,8 +5,18 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # One PR for all actions: cache/restore and cache/save must move together,
+    # and the workflows are easier to check as one change.
+    groups:
+      github-actions:
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # @types/node tracks the Node runtime (.nvmrc); its major moves with a
+      # Node upgrade, not on its own.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
