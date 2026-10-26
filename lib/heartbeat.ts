@@ -18,8 +18,10 @@
 
 // The trigger cadence (wrangler.jsonc "*/30 * * * *").
 export const HEARTBEAT_INTERVAL_MS = 30 * 60_000;
-// Three missed 15-minute monitor runs.
-export const HEARTBEAT_MAX_AGE_MS = 45 * 60_000;
+// Six missed 15-minute monitor runs. GitHub routinely drops every scheduled
+// run for about an hour around 00:00 UTC (and sometimes at other busy times),
+// so a shorter limit would page for those gaps every night.
+export const HEARTBEAT_MAX_AGE_MS = 90 * 60_000;
 // While the monitor stays down, repeat the notice this often.
 export const HEARTBEAT_RENOTIFY_MS = 6 * 60 * 60_000;
 
@@ -84,6 +86,18 @@ export function isNoticeSlot(status: HeartbeatStatus, slotMs: number): boolean {
     (status.ageMs - HEARTBEAT_MAX_AGE_MS) / HEARTBEAT_INTERVAL_MS
   );
   return slot >= 1 && mod(slot - 1, slotsPerWindow) === 0;
+}
+
+// Whether a gap between monitor runs, from lastMs to nowMs, was long enough
+// for the heartbeat to send its outage notice: some trigger slot fell after
+// the snapshot passed MAX_AGE and before the run at nowMs refreshed it. The
+// monitor sends its "resumed" notice only then, so every all-clear follows
+// an outage notice.
+export function heartbeatNoticedGap(lastMs: number, nowMs: number): boolean {
+  const firstStaleSlot =
+    (Math.floor((lastMs + HEARTBEAT_MAX_AGE_MS) / HEARTBEAT_INTERVAL_MS) + 1) *
+    HEARTBEAT_INTERVAL_MS;
+  return firstStaleSlot < nowMs;
 }
 
 export type HeartbeatEnv = {
