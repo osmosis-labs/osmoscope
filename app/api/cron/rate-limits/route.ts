@@ -4,7 +4,7 @@ import { computeAlertTransitions } from "@/lib/rate-limits/alerts";
 import { dispatchAlerts, sendOpsNotice } from "@/lib/rate-limits/notify";
 import { readCronState, writeCronState } from "@/lib/cron-state";
 import { catchUpReadings } from "@/lib/rate-limits/catch-up";
-import { HEARTBEAT_MAX_AGE_MS } from "@/lib/heartbeat";
+import { heartbeatNoticedGap } from "@/lib/heartbeat";
 import {
   loadAlertStates,
   refreshRateLimitSnapshot,
@@ -252,15 +252,21 @@ export async function GET(request: Request) {
     writeCronState(FAILURES_KEY, 0); // a clean run clears the streak
 
     // The all-clear for the Worker heartbeat (lib/heartbeat.ts), which warns
-    // when runs stop: the first run to COMPLETE after a gap says monitoring is
-    // current again. Keyed on the last completed run (cron state), not on the
-    // stored snapshot, which a run that fails after persisting still refreshes.
-    // No record means a first run or a state cache lost to a long outage;
-    // both deserve the notice. Best-effort, after the alerts.
+    // when runs stop: the first run to COMPLETE after a gap the heartbeat
+    // would have reported says monitoring is current again. Shorter gaps
+    // (GitHub dropping scheduled runs for an hour or so) pass silently, so
+    // there is never an all-clear without a warning before it. Keyed on the
+    // last completed run (cron state), not on the stored snapshot, which a
+    // run that fails after persisting still refreshes. No record means a
+    // first run or a state cache lost to a long outage; both deserve the
+    // notice. Best-effort, after the alerts.
     const lastCompleted = Date.parse(readCronState(LAST_COMPLETED_KEY, ""));
     const completedAt = new Date(snapshot.timestamp);
     const gapMs = completedAt.getTime() - lastCompleted;
-    if (!Number.isFinite(lastCompleted) || gapMs > HEARTBEAT_MAX_AGE_MS) {
+    if (
+      !Number.isFinite(lastCompleted) ||
+      heartbeatNoticedGap(lastCompleted, completedAt.getTime())
+    ) {
       try {
         await sendOpsNotice(
           "Rate-limit monitor resumed",
