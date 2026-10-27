@@ -1,5 +1,6 @@
 // Curated timeline of network events annotated onto the Block Rate chart as
-// vertical marker lines. This is hand-maintained knowledge that cannot be
+// vertical marker lines (the validator-set changes also go on the Nakamoto and
+// Gini charts). This is hand-maintained knowledge that cannot be
 // derived from the metric series itself: which chain upgrade or validator-set
 // change a given inflection in block time corresponds to.
 //
@@ -114,7 +115,25 @@ export const NETWORK_EVENTS: NetworkEvent[] = [
     kind: "validator-set",
     note: "Prop 1017: max validators 100 → 70. Block rate ~1.10s → ~1.00s the same day.",
   },
+  {
+    date: "2026-10-14",
+    label: "30 validators",
+    kind: "validator-set",
+    note: "Prop 1051: max validators 70 → 30. Block rate ~1.40s → ~1.50s; Gini ~0.60 → ~0.34, Nakamoto 5 → 4.",
+  },
+  {
+    date: "2026-10-27",
+    label: "v32",
+    kind: "upgrade",
+    note: "Prop 1054: upgrade height 73,304,000, activated the same day as voting ended. Block-rate effect not yet measured.",
+  },
 ];
+
+// Validator-set changes only, for the decentralization charts (Nakamoto, Gini),
+// where the set size moves the metric directly and upgrades would be noise.
+export const VALIDATOR_SET_EVENTS = NETWORK_EVENTS.filter(
+  (ev) => ev.kind === "validator-set"
+);
 
 // Marker colours by kind (dotted vertical ReferenceLine). Upgrades use the
 // block-rate series' own green; validator-set changes use the control-threshold
