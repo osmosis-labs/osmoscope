@@ -40,6 +40,7 @@ import { StakingRatioChart } from "../charts/StakingRatioChart";
 import { RateLimitsCard } from "./RateLimitsCard";
 import {
   NETWORK_EVENTS,
+  VALIDATOR_SET_EVENTS,
   EVENT_COLOR,
   type NetworkEvent,
 } from "@/config/network-events";
@@ -1469,6 +1470,7 @@ export function StakingView() {
           dataKey="nakamotoCoefficient"
           color="#4FC3F7"
           decimals={0}
+          events={VALIDATOR_SET_EVENTS}
           defaultRange="1y"
         />
         <MetricLineChart
@@ -1478,6 +1480,7 @@ export function StakingView() {
           dataKey="giniCoefficient"
           color="#FF66CC"
           decimals={3}
+          events={VALIDATOR_SET_EVENTS}
           defaultRange="1y"
         />
       </div>
