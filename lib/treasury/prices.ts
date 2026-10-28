@@ -10,6 +10,7 @@
 // on that small set. Ported/extended from the sheet's get_prices (which had no
 // SQS layer and priced everything eagerly).
 import { logger } from "../logger";
+import { numiaFetch } from "../numia";
 import {
   PRICE_OVERRIDES_BY_DENOM,
   SYMBOL_PRICE_ALIASES,
@@ -18,13 +19,14 @@ import {
   COINGECKO_ID_BY_SYMBOL,
 } from "@/config/community-pool";
 
-const NUMIA_API_URL =
-  process.env.NUMIA_API_URL || "https://public-osmosis-api.numia.xyz";
-const NUMIA_API_KEY = process.env.NUMIA_API_KEY;
-
 // Osmosis SQS (sidecar query server): the chain's own quote engine, used here as
-// the denom-keyed price fallback between Numia and CoinGecko.
-const SQS_API_URL = process.env.SQS_API_URL || "https://sqsprod.osmosis.zone";
+// the denom-keyed price fallback between Numia and CoinGecko. The public host:
+// sqsprod.osmosis.zone is reserved for app.osmosis.zone and answers 403 to
+// everything else, which silently emptied this fallback.
+const SQS_API_URL = process.env.SQS_API_URL || "https://sqs.osmosis.zone";
+// Per-request bound so a hung SQS call can't stall the cron; a timeout is
+// caught and leaves the denom for the next fallback.
+const SQS_TIMEOUT_MS = 20_000;
 
 export interface PriceInfo {
   symbol: string;
@@ -46,11 +48,11 @@ interface NumiaToken {
 }
 
 // Build the full denom -> PriceInfo map.
+// Throws if Numia is still failing after numiaFetch's retries: without the list
+// the main pool can't be valued, and the snapshot's sanity gate would refuse a
+// near-zero result anyway, so the previous snapshot is kept instead.
 export async function buildPriceMap(): Promise<PriceMap> {
-  const headers: HeadersInit = { Accept: "application/json" };
-  if (NUMIA_API_KEY) headers.Authorization = `Bearer ${NUMIA_API_KEY}`;
-
-  const resp = await fetch(`${NUMIA_API_URL}/tokens/v2/all`, { headers });
+  const resp = await numiaFetch("/tokens/v2/all");
   if (!resp.ok) {
     throw new Error(`Numia /tokens/v2/all HTTP ${resp.status}`);
   }
@@ -211,6 +213,14 @@ async function fetchSqsPrices(
   return out;
 }
 
+// USD per whole token of one denom from SQS, through the same router
+// cross-check as the treasury path. null when SQS can't price it.
+export async function fetchSqsUsdPrice(denom: string): Promise<number | null> {
+  const verified = await verifySqsPrices(await fetchSqsPrices([denom]));
+  const p = verified[denom];
+  return p != null && p > 0 ? p : null;
+}
+
 // USDC (Alloyed USDC, the quote denom SQS prices against since Prop 1039), used
 // by the router cross-check. 6 decimals, like the variants it alloys.
 const USDC_DENOM =
@@ -294,7 +304,10 @@ async function fetchRouterPrice(denom: string): Promise<number | null> {
     const url =
       `${SQS_API_URL}/router/quote?tokenIn=${oneToken}${encodeURIComponent(denom)}` +
       `&tokenOutDenom=${encodeURIComponent(USDC_DENOM)}`;
-    const resp = await fetch(url, { headers: { Accept: "application/json" } });
+    const resp = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(SQS_TIMEOUT_MS),
+    });
     if (!resp.ok) return null;
     const data = (await resp.json()) as { amount_out?: string | number };
     if (data?.amount_out == null) return null;
@@ -317,6 +330,7 @@ async function fetchSqsExponent(denom: string): Promise<number | null> {
       try {
         const resp = await fetch(`${SQS_API_URL}/tokens/metadata`, {
           headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(SQS_TIMEOUT_MS),
         });
         if (!resp.ok) {
           logger.warn(`SQS /tokens/metadata HTTP ${resp.status}`);
@@ -356,7 +370,10 @@ async function fetchSqsChunk(
     chunk.join(",")
   )}`;
   try {
-    const resp = await fetch(url, { headers: { Accept: "application/json" } });
+    const resp = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(SQS_TIMEOUT_MS),
+    });
     if (resp.status === 400 && chunk.length > 1) {
       // Split and retry the halves concurrently so isolating a bad denom doesn't
       // serialize into a long chain of round-trips.

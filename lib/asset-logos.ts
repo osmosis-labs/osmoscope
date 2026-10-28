@@ -22,6 +22,7 @@
 // the two factually-wrong pairs — both long-tail tickers the treasury doesn't
 // hold. The durable fix is threading denoms onto AssetTotal.
 import { logger } from "./logger";
+import { numiaFetch } from "./numia";
 import {
   DENOM_SYMBOL_OVERRIDES,
   PRICE_OVERRIDES_BY_DENOM,
@@ -29,9 +30,6 @@ import {
 
 const ASSETLIST_URL =
   "https://raw.githubusercontent.com/osmosis-labs/assetlists/main/osmosis-1/generated/frontend/assetlist.json";
-const NUMIA_API_URL =
-  process.env.NUMIA_API_URL || "https://public-osmosis-api.numia.xyz";
-const NUMIA_API_KEY = process.env.NUMIA_API_KEY;
 
 // Boundary validation: every URI the map can ever serve is rendered as an
 // <img src> by every visitor, so only the repo-controlled hosting path is
@@ -117,23 +115,17 @@ export async function fetchSymbolLogoMap(): Promise<Record<string, string>> {
       // Best-effort: a Numia outage just leaves the assetlist-only map.
       let numiaTokens: NumiaLogoToken[] = [];
       try {
-        const headers: HeadersInit = { Accept: "application/json" };
-        if (NUMIA_API_KEY) headers.Authorization = `Bearer ${NUMIA_API_KEY}`;
-        const numia = createAbortController(15_000);
-        try {
-          const numiaResp = await fetch(`${NUMIA_API_URL}/tokens/v2/all`, {
-            headers,
-            signal: numia.controller.signal,
-          });
-          if (numiaResp.ok) {
-            numiaTokens = (await numiaResp.json()) as NumiaLogoToken[];
-          } else {
-            logger.warn(
-              `Numia symbol join skipped for logo map: HTTP ${numiaResp.status}`
-            );
-          }
-        } finally {
-          numia.cleanup();
+        // Logos are cosmetic: one short attempt, no retries.
+        const numiaResp = await numiaFetch("/tokens/v2/all", {
+          attempts: 1,
+          timeoutMs: 15_000,
+        });
+        if (numiaResp.ok) {
+          numiaTokens = (await numiaResp.json()) as NumiaLogoToken[];
+        } else {
+          logger.warn(
+            `Numia symbol join skipped for logo map: HTTP ${numiaResp.status}`
+          );
         }
       } catch (error) {
         logger.warn("Numia symbol join skipped for logo map:", error);

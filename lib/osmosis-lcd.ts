@@ -1,5 +1,7 @@
 import { LRUCache } from "lru-cache";
 import { logger } from "./logger";
+import { numiaFetch } from "./numia";
+import { fetchSqsUsdPrice } from "./treasury/prices";
 import { LCD_PRIMARY } from "@/config/lcd-endpoints";
 import {
   APR_WINDOW_DAYS,
@@ -21,9 +23,6 @@ import type {
 // Re-exported under the historical name so existing LCD consumers keep
 // working; config/lcd-endpoints.ts is the single place the URL is resolved.
 export const LCD_BASE_URL = LCD_PRIMARY;
-const NUMIA_API_URL =
-  process.env.NUMIA_API_URL || "https://public-osmosis-api.numia.xyz";
-const NUMIA_API_KEY = process.env.NUMIA_API_KEY;
 
 // Helper to add delay between requests
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -349,20 +348,9 @@ export async function fetchStakingAprByDate(
   startDate: string,
   endDate: string
 ): Promise<Map<string, number>> {
-  const url = `${NUMIA_API_URL}/apr?start_date=${startDate}&end_date=${endDate}`;
-
-  const headers: HeadersInit = {
-    Accept: "application/json",
-  };
-
-  // Add Authorization header if API key is configured
-  if (NUMIA_API_KEY) {
-    headers.Authorization = `Bearer ${NUMIA_API_KEY}`;
-  }
-
-  const response = await fetch(url, {
-    headers,
-  });
+  const response = await numiaFetch(
+    `/apr?start_date=${startDate}&end_date=${endDate}`
+  );
 
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);
@@ -414,12 +402,7 @@ export async function fetchOsmoPrice(): Promise<{
   price24hChange: number | null;
 } | null> {
   try {
-    const headers: HeadersInit = { Accept: "application/json" };
-    if (NUMIA_API_KEY) headers.Authorization = `Bearer ${NUMIA_API_KEY}`;
-
-    const response = await fetch(`${NUMIA_API_URL}/tokens/v2/OSMO`, {
-      headers,
-    });
+    const response = await numiaFetch("/tokens/v2/OSMO");
     if (!response.ok) {
       throw new Error(`${response.status} ${response.statusText}`);
     }
@@ -430,21 +413,28 @@ export async function fetchOsmoPrice(): Promise<{
       price_24h_change?: number;
     }> = await response.json();
     const osmo = data.find((t) => t.denom === "uosmo");
-    if (!osmo || typeof osmo.price !== "number" || osmo.price <= 0) {
-      logger.warn("OSMO price not found or non-positive in Numia /tokens/v2");
-      return null;
+    if (osmo && typeof osmo.price === "number" && osmo.price > 0) {
+      return {
+        price: osmo.price,
+        price24hChange:
+          typeof osmo.price_24h_change === "number"
+            ? osmo.price_24h_change
+            : null,
+      };
     }
-    return {
-      price: osmo.price,
-      price24hChange:
-        typeof osmo.price_24h_change === "number"
-          ? osmo.price_24h_change
-          : null,
-    };
+    logger.warn("OSMO price not found or non-positive in Numia /tokens/v2");
   } catch (error) {
-    logger.error("Error fetching OSMO price:", error);
+    logger.error("Error fetching OSMO price from Numia:", error);
+  }
+
+  // Numia sometimes answers 200 with every price null, so fall back to SQS for
+  // the current price. SQS has no 24h change, so that stays null.
+  const sqsPrice = await fetchSqsUsdPrice("uosmo");
+  if (sqsPrice == null) {
+    logger.warn("OSMO price unavailable from both Numia and SQS");
     return null;
   }
+  return { price: sqsPrice, price24hChange: null };
 }
 
 // Known addresses to exclude from circulating supply
