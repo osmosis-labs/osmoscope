@@ -23,6 +23,9 @@ import type {
 // Re-exported under the historical name so existing LCD consumers keep
 // working; config/lcd-endpoints.ts is the single place the URL is resolved.
 export const LCD_BASE_URL = LCD_PRIMARY;
+// The public LCD answers 403 to the tendermint block routes, so the chain tip
+// is read from RPC /status instead.
+const RPC_BASE_URL = process.env.RPC_BASE_URL || "https://rpc.osmosis.zone";
 
 // Helper to add delay between requests
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -313,16 +316,16 @@ export interface LatestBlock {
   time: string; // ISO block header time
 }
 export async function fetchLatestBlock(): Promise<LatestBlock> {
-  const resp = await fetchWithRetry(
-    `${LCD_BASE_URL}/cosmos/base/tendermint/v1beta1/blocks/latest`
-  );
+  const resp = await fetchWithRetry(`${RPC_BASE_URL}/status`);
   if (!resp.ok) throw new Error(`Failed to fetch latest block: ${resp.status}`);
   const data = (await resp.json()) as {
-    block: { header: { height: string; time: string } };
+    result: {
+      sync_info: { latest_block_height: string; latest_block_time: string };
+    };
   };
   return {
-    height: parseInt(data.block.header.height, 10),
-    time: data.block.header.time,
+    height: parseInt(data.result.sync_info.latest_block_height, 10),
+    time: data.result.sync_info.latest_block_time,
   };
 }
 

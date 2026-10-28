@@ -31,6 +31,9 @@ const PRUNED_FALLBACK_RETRIES = 12;
 // State queries go through the archive node (with pruned fallback); blocks and
 // headers are widely available and we need the REAL tip (not the archive node's
 // frozen one) so date->height interpolation can reach recent dates.
+// Chain tip source. The public LCD answers 403 to the tendermint block routes,
+// so the tip comes from RPC /status.
+const MAIN_RPC_URL = "https://rpc.osmosis.zone";
 const MAIN_LCD_URL = "https://lcd.osmosis.zone";
 
 // The archive node's frozen tip. For any height AT OR BELOW this, the archive
@@ -672,19 +675,20 @@ async function interpolationSearchBlockByTimestamp(
 }
 
 /**
- * Fetch the current chain tip height from the MAIN LCD.
+ * Fetch the current chain tip height from the main RPC.
  *
- * Must use the main LCD, not the archive node: the archive node is stuck at a
+ * Must use the main chain, not the archive node: the archive node is stuck at a
  * frozen tip, so using it here would cap the interpolation upper bound below the
  * real chain head and make recent dates unreachable.
  */
 async function fetchLatestHeight(): Promise<number> {
-  const response = await fetch(
-    `${MAIN_LCD_URL}/cosmos/base/tendermint/v1beta1/blocks/latest`,
-    { headers: { Accept: "application/json" } }
-  );
-  const json = (await response.json()) as { block: { header: BlockHeader } };
-  return parseInt(json.block.header.height, 10);
+  const response = await fetch(`${MAIN_RPC_URL}/status`, {
+    headers: { Accept: "application/json" },
+  });
+  const json = (await response.json()) as {
+    result: { sync_info: { latest_block_height: string } };
+  };
+  return parseInt(json.result.sync_info.latest_block_height, 10);
 }
 
 async function findBlockHeightForDate(date: string): Promise<number> {
