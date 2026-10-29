@@ -73,7 +73,7 @@
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "wrangler": "^4.151.3"
+    "wrangler": "^4.152.0"
   },
   "resolutions": {
     "react-is": "^19.3.1",
