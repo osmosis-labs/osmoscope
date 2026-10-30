@@ -15,6 +15,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # One PR a week for minor and patch bumps; majors still get a PR each,
+    # since they usually need code changes and their own testing.
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
     ignore:
       # @types/node tracks the Node runtime (.nvmrc); its major moves with a
       # Node upgrade, not on its own.
