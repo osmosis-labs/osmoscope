@@ -1,5 +1,6 @@
 import type { PrismaClient as PrismaClientType } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { Pool } from "pg";
 import { logger } from "./logger";
 
 // Prisma's Node entry compiles its query-compiler Wasm at runtime, which
@@ -51,15 +52,64 @@ const connectionString =
 // Override with DB_POOL_MAX if the deployment shape changes.
 const poolMax = Number(process.env.DB_POOL_MAX) || 2;
 
+// Prisma Postgres' connection server sometimes answers "Failed to connect to
+// upstream database" when the database behind it is briefly unreachable
+// (about 1 cron run in 100 in late October 2026, the next run always clean).
+// Nothing has run when it says that, so a new connection or a single
+// statement through pool.query is retried once after a short pause.
+// Statements inside a transaction use a checked-out client and are not
+// retried, so a transaction cut off mid-way still fails.
+const UPSTREAM_UNREACHABLE = "Failed to connect to upstream database";
+const UPSTREAM_RETRY_MS = 3_000;
+
+async function retryIfUpstreamUnreachable<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !error.message.includes(UPSTREAM_UNREACHABLE)
+    ) {
+      throw error;
+    }
+    logger.warn(`Database: ${UPSTREAM_UNREACHABLE}; retrying once`);
+    await new Promise((resolve) => setTimeout(resolve, UPSTREAM_RETRY_MS));
+    return fn();
+  }
+}
+
+// The adapter only uses the promise forms of connect() and query(); the
+// callback forms (pool.query calls connect with one) pass straight through.
 // idleTimeoutMillis: release idle connections quickly so a warm-but-idle
 // instance stops squatting on a connection other instances (or crons) need.
+const createPool = (url: string | undefined): Pool => {
+  const pool = new Pool({
+    connectionString: url,
+    max: poolMax,
+    idleTimeoutMillis: 10_000,
+  });
+  const connect = pool.connect.bind(pool) as (...args: unknown[]) => unknown;
+  const query = pool.query.bind(pool) as (...args: unknown[]) => unknown;
+  pool.connect = ((...args: unknown[]) =>
+    args.length > 0
+      ? connect(...args)
+      : retryIfUpstreamUnreachable(
+          () => connect() as Promise<unknown>
+        )) as Pool["connect"];
+  pool.query = ((...args: unknown[]) =>
+    typeof args[args.length - 1] === "function"
+      ? query(...args)
+      : retryIfUpstreamUnreachable(
+          () => query(...args) as Promise<unknown>
+        )) as Pool["query"];
+  return pool;
+};
+
 const createClient = (url: string | undefined) =>
   new PrismaClient({
-    adapter: new PrismaPg({
-      connectionString: url,
-      max: poolMax,
-      idleTimeoutMillis: 10_000,
-    }),
+    // disposeExternalPool: $disconnect still ends the pool, as it did when
+    // the adapter created it.
+    adapter: new PrismaPg(createPool(url), { disposeExternalPool: true }),
     log:
       process.env.NODE_ENV === "development"
         ? ["query", "error", "warn"]
