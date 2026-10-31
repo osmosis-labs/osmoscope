@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader } from "../ui/Card";
 import {
+  cn,
   formatNumber,
   formatNumberWithCommas,
   formatChartDate,
@@ -65,6 +66,15 @@ export function TokenBalancesChart({
 }: TokenBalancesChartProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>("all");
+  // Bands the user has switched off by clicking their legend label.
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const toggleSeries = (label: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
   // A tooltip popover would otherwise be clipped under the NEXT card: Card has
   // backdrop-blur, which creates a stacking context, so the tooltip's own z-index
   // can't beat a later sibling card. Fix (same as the treasury cards): lift the
@@ -212,6 +222,7 @@ export function TokenBalancesChart({
               type="monotone"
               dataKey="Restricted Supply"
               stackId="1"
+              hide={hidden.has("Restricted Supply")}
               stroke="#9E9E9E"
               strokeWidth={2}
               fill="url(#colorRestricted)"
@@ -220,6 +231,7 @@ export function TokenBalancesChart({
               type="monotone"
               dataKey="Community Supply"
               stackId="1"
+              hide={hidden.has("Community Supply")}
               stroke="#2994D0"
               strokeWidth={2}
               fill="url(#colorCommunity)"
@@ -228,6 +240,7 @@ export function TokenBalancesChart({
               type="monotone"
               dataKey="Circulating Supply"
               stackId="1"
+              hide={hidden.has("Circulating Supply")}
               stroke="#7C4DFF"
               strokeWidth={2}
               fill="url(#colorCirculating)"
@@ -237,16 +250,27 @@ export function TokenBalancesChart({
         {/* Custom legend with per-series explainers. The chart has no built-in
             Recharts <Legend>, and the series are otherwise only named in the
             hover tooltip — so this row both labels the bands and carries the `?`
-            explainers for what each supply bucket actually means. */}
+            explainers for what each supply bucket actually means. Clicking a
+            label hides or shows that band. */}
         <div className="mt-3 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-osmo-200">
           {SERIES_LEGEND.map((s, i) => (
             <span key={s.label} className="inline-flex items-center gap-1.5">
-              <span
-                className="h-2.5 w-2.5 shrink-0 rounded-xs"
-                style={{ backgroundColor: s.color }}
-                aria-hidden
-              />
-              <span>{s.label}</span>
+              <button
+                type="button"
+                onClick={() => toggleSeries(s.label)}
+                aria-pressed={!hidden.has(s.label)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 transition-opacity hover:text-white",
+                  hidden.has(s.label) && "opacity-40"
+                )}
+              >
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-xs"
+                  style={{ backgroundColor: s.color }}
+                  aria-hidden
+                />
+                <span>{s.label}</span>
+              </button>
               <InfoTooltip
                 text={s.explainer}
                 ariaLabel={`About ${s.label}`}

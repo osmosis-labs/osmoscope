@@ -55,6 +55,17 @@ export function ProtocolRevenueChart({
   const cardRef = useRef<HTMLDivElement>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>("90d");
   const [mode, setMode] = useState<RevenueMode>("standard");
+  // Sources the user has switched off by clicking their legend entry. Hidden
+  // sources drop out of the stack and the headline total, so the chart and its
+  // headline always describe the same combination.
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const toggleSource = (label: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
 
   const filteredData = filterDataByTimeRange(historicalData, timeRange);
 
@@ -87,13 +98,19 @@ export function ProtocolRevenueChart({
     return { date: formatChartDate(record.timestamp, timeRange), ...daily };
   });
 
-  // Headline: total PROTOCOL revenue across the visible range (sum of the four
-  // sources). We do NOT use Numia's totalRevenue here — that also includes LP /
+  // Headline: total PROTOCOL revenue across the visible range (sum of the
+  // sources currently shown; all four unless some are toggled off). We do NOT use Numia's totalRevenue here — that also includes LP /
   // swap-fee revenue, which is not protocol revenue. This makes the headline equal
   // the top of the stacked columns exactly.
   const rangeTotal = plotted.reduce((s, r) => {
     const d = protocolDaily(r);
-    return s + d["Taker Fees"] + d.ProtoRev + d["Tx Fees"] + d["Top of Block"];
+    return (
+      s +
+      SOURCES.reduce(
+        (acc, src) => (hidden.has(src.label) ? acc : acc + d[src.label]),
+        0
+      )
+    );
   }, 0);
 
   return (
@@ -126,7 +143,11 @@ export function ProtocolRevenueChart({
               })
           }
           headlineValue={`$${formatNumberWithCommas(rangeTotal)}`}
-          headlineLabel={timeRangeLabel(timeRange)}
+          headlineLabel={
+            hidden.size > 0
+              ? `${timeRangeLabel(timeRange)} · ${SOURCES.length - hidden.size} of ${SOURCES.length} sources`
+              : timeRangeLabel(timeRange)
+          }
           headlineColor="text-osmo-accent"
           extraControls={
             <div
@@ -197,9 +218,21 @@ export function ProtocolRevenueChart({
                   name,
                 ]}
               />
-              <Legend wrapperStyle={{ color: "#e0d5f5" }} />
+              <Legend
+                wrapperStyle={{ color: "#e0d5f5", cursor: "pointer" }}
+                onClick={(entry) => {
+                  if (typeof entry.dataKey === "string")
+                    toggleSource(entry.dataKey);
+                }}
+              />
               {SOURCES.map((s) => (
-                <Bar key={s.key} dataKey={s.label} stackId="1" fill={s.color} />
+                <Bar
+                  key={s.key}
+                  dataKey={s.label}
+                  stackId="1"
+                  fill={s.color}
+                  hide={hidden.has(s.label)}
+                />
               ))}
             </BarChart>
           </ResponsiveContainer>
