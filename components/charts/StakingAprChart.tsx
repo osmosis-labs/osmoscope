@@ -143,10 +143,17 @@ export function StakingAprChart({
               poolIncentivesProportion;
 
             // OSMO issued to stakers per year = (stakingProportion / circulatingProportion) × inflationRate × totalSupply
+            // Since inflation ended (2026-10-26) the chain reports every
+            // proportion except the community pool's as 0, so the share would
+            // be 0/0 = NaN and blank the whole day. No circulating emissions
+            // means nothing reaches stakers: inflation APR is 0 and the full
+            // staking APR is revenue.
             const osmoToStakersPerYear =
-              (stakingProportion / circulatingProportion) *
-              (record.inflationRate / 100) *
-              record.totalSupply;
+              circulatingProportion > 0
+                ? (stakingProportion / circulatingProportion) *
+                  (record.inflationRate / 100) *
+                  record.totalSupply
+                : 0;
 
             // APR = (osmoToStakersPerYear / totalStaked) × 100
             inflationApr = (osmoToStakersPerYear / record.totalStaked) * 100;
