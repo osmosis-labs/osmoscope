@@ -42,4 +42,11 @@ export const ONE_OFF_BURNS: OneOffBurn[] = [
       "Liquidity SubDAO burn of OSMO recovered from community pool liquidity (Props 1049 and 1050)",
     txHash: "156867B6E560E7E3A829F498D43A03C25434E45B8E70E247E1B4500E8D058488",
   },
+  {
+    time: "2026-11-04T14:26:31Z",
+    height: 74089033,
+    amount: 55_500_000,
+    label:
+      "Community pool burn bringing total OSMO burned past 100 million (Prop 1057)",
+  },
 ];
