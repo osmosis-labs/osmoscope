@@ -179,6 +179,12 @@ function MetricLineChart({
         m != null && m.dist <= 4 * 86_400_000
     );
 
+  const monthlyTicks = makeMonthlyTicks(
+    chartData.map((d) => d.date),
+    chartData.map((d) => d.timestamp),
+    timeRange
+  );
+
   // Fit the Y-axis tightly to the visible data with evenly-spaced ticks, and PIN
   // the domain to those tick bounds. Without a pinned domain Recharts picks its
   // own (often much wider) bounds, so a tight series like Nakamoto (all 6-7) ends
@@ -196,8 +202,9 @@ function MetricLineChart({
     const dataMax = Math.max(...values);
     if (decimals === 0) {
       // Integer axis: one tick per whole number (stepping up if the span is wide),
-      // domain pinned to the integer bounds.
-      const lo = Math.floor(dataMin);
+      // domain pinned to the integer bounds, with one unit of headroom below the
+      // lowest point so the minimum doesn't sit on the axis line.
+      const lo = Math.floor(dataMin) - 1;
       const hi = Math.max(lo + 1, Math.ceil(dataMax)); // ensure span > 0
       const step = Math.max(1, Math.ceil((hi - lo) / 8));
       const t: number[] = [];
@@ -260,12 +267,12 @@ function MetricLineChart({
                 dataKey="date"
                 stroke="#fff"
                 tick={{ fill: "#e0d5f5" }}
-                ticks={makeMonthlyTicks(
-                  chartData.map((d) => d.date),
-                  chartData.map((d) => d.timestamp),
-                  timeRange
-                )}
+                ticks={monthlyTicks}
                 padding={shortRangeAxisPadding(timeRange)}
+                // Monthly ticks are already thinned to one per month; render every
+                // one. The default "preserveEnd" over-estimates the angled labels'
+                // width and dropped the month before the (short) current month.
+                interval={monthlyTicks ? 0 : "preserveEnd"}
                 angle={-45}
                 textAnchor="end"
                 height={70}
@@ -538,7 +545,6 @@ export function StakingView() {
     useUndelegations();
   const { data: metrics } = useOsmosisMetrics();
   const { data: historicalData = [] } = useHistoricalData();
-  const [leaderboardExpanded, setLeaderboardExpanded] = useState(false);
   // Pending Undelegations has three INDEPENDENT toggles that can each be on or
   // off: Forecast (forward 14-day completion schedule), History (imported daily
   // total-unbonding series, scoped by undelegRange), and Details (largest
@@ -648,18 +654,7 @@ export function StakingView() {
           : "normal",
   }));
 
-  // Default leaderboard length: the control-threshold validator count (controlIdx
-  // + 1) rounded UP to the next multiple of 5, plus one more 5 of headroom — so a
-  // count of 21-25 shows 30, 26-30 shows 35. Keeps the default focused on the
-  // consensus-relevant set; "Show all" reveals the full list.
-  const controlCount = controlIdx >= 0 ? controlIdx + 1 : 0;
-  const defaultRows = controlCount
-    ? Math.ceil(controlCount / 5) * 5 + 5
-    : (data?.validators.length ?? 0);
   const allValidators = data?.validators ?? [];
-  const visibleValidators = leaderboardExpanded
-    ? allValidators
-    : allValidators.slice(0, defaultRows);
   // Running cumulative voting-power share (%) at each validator, for the
   // leaderboard's cumulative column. allValidators is stake-desc.
   const cumulativeByOperator = new Map<string, number>();
@@ -1267,7 +1262,7 @@ export function StakingView() {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleValidators.map((v, i) => {
+                  {allValidators.map((v, i) => {
                     // Consensus-threshold markers AFTER the validator that completes
                     // ⅓ (veto, red) and ⅔ (control, orange): a very narrow labeled
                     // row on the dotted line, with the meaning on hover.
@@ -1380,17 +1375,6 @@ export function StakingView() {
                   })}
                 </tbody>
               </table>
-              {allValidators.length > defaultRows && (
-                <button
-                  type="button"
-                  onClick={() => setLeaderboardExpanded((v) => !v)}
-                  className="mt-3 w-full rounded-lg border border-white/15 bg-white/5 py-2 text-sm font-medium text-osmo-100 transition-colors hover:bg-white/15 hover:text-white"
-                >
-                  {leaderboardExpanded
-                    ? "Show fewer"
-                    : `Show all ${allValidators.length} validators`}
-                </button>
-              )}
             </div>
           )}
         </CardContent>

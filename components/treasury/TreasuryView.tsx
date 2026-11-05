@@ -138,22 +138,38 @@ function AssetRow({ asset }: { asset: AssetTotal }) {
   );
 }
 
-// --- Per-holder minor-assets notice (moved off the top banner) -------------
-function UnpricedNotice({ symbols }: { symbols: string[] }) {
-  const n = symbols.length;
+// --- Per-holder minor-assets toggle ----------------------------------------
+// The holder's unpriced lines that add nothing to its total (no market price,
+// or unknown decimals with no sized part) sit behind this toggle at the foot of
+// its asset list, so the visible rows add up to the card total. Lines with a
+// partly valued "+ unknown" amount stay in the main list because they count.
+function MinorAssets({ assets }: { assets: AssetTotal[] }) {
+  const [open, setOpen] = useState(false);
+  const n = assets.length;
   if (n === 0) return null;
   return (
-    <details className="mt-3 rounded-sm bg-amber-500/10 p-3 text-xs text-amber-200">
-      <summary className="cursor-pointer list-none">
-        <span className="font-medium">{n}</span> minor asset{n === 1 ? "" : "s"}{" "}
-        held here {n === 1 ? "has" : "have"} no market price (illiquid variants)
-        or unknown decimals, and {n === 1 ? "is" : "are"} left out of the
-        totals. <span className="underline">show list</span>
-      </summary>
-      <p className="mt-2 leading-relaxed wrap-break-word text-amber-200/80">
-        {symbols.join(", ")}
-      </p>
-    </details>
+    <div className="mt-2 border-t border-white/10 pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 py-1 text-left text-xs text-amber-200 hover:text-amber-100"
+      >
+        <span
+          className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+          aria-hidden
+        >
+          ▶
+        </span>
+        <span>
+          <span className="font-medium">{n}</span> minor asset
+          {n === 1 ? "" : "s"} with no market price (illiquid variants) or
+          unknown decimals, left out of the total.{" "}
+          <span className="underline">{open ? "Hide" : "Show"}</span>
+        </span>
+      </button>
+      {open && assets.map((a) => <AssetRow key={a.symbol} asset={a} />)}
+    </div>
   );
 }
 
@@ -167,6 +183,11 @@ function HolderCard({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [tipOpen, setTipOpen] = useState(false);
+  // Split the unpriced lines that contribute $0 off into the minor-assets toggle.
+  const unpriced = new Set(holder.unpricedSymbols);
+  const isMinor = (a: AssetTotal) => unpriced.has(a.symbol) && a.value === 0;
+  const valued = holder.assets.filter((a) => !isMinor(a));
+  const minor = holder.assets.filter(isMinor);
   return (
     // relative + a raised z-index while the `?` tooltip is open lifts this card's
     // whole stacking context above the cards below, so the popover isn't painted
@@ -229,9 +250,9 @@ function HolderCard({
           {holder.assets.length === 0 ? (
             <p className="py-2 text-sm text-osmo-300">No holdings.</p>
           ) : (
-            holder.assets.map((a) => <AssetRow key={a.symbol} asset={a} />)
+            valued.map((a) => <AssetRow key={a.symbol} asset={a} />)
           )}
-          <UnpricedNotice symbols={holder.unpricedSymbols} />
+          <MinorAssets assets={minor} />
         </div>
       )}
     </Card>
