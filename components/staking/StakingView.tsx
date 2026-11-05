@@ -430,6 +430,13 @@ function UndelegBoundaryLine({
   );
 }
 
+// Validator logo by operator address, served from our own database (stored from
+// each validator's Keybase identity by the snapshot cron; see
+// lib/validator-logos.ts). Not every validator has one: the route 404s and the
+// tile's onError hides the image.
+const validatorLogoUrl = (operatorAddress: string) =>
+  `/api/validator-logos/${operatorAddress}`;
+
 // Custom Treemap tile for the voting-power treemap. Recharts passes the layout box
 // (x/y/width/height) plus our payload fields (name, share, rank, total,
 // operatorAddress). Fill is a purple ramp by rank (largest = darkest); the label
@@ -456,7 +463,13 @@ function TreemapCell(props: {
     operatorAddress,
     zone = "normal",
   } = props;
+  const [logoFailed, setLogoFailed] = useState(false);
   if (width <= 0 || height <= 0) return null;
+  // Background logo: centred, square, 70% of the tile's short side, faint so the
+  // zone tint and labels still read. Skipped on tiles too small to show it.
+  const logoSize = Math.min(width, height) * 0.7;
+  const showLogo = !!operatorAddress && !logoFailed && logoSize >= 16;
+  const clipId = `tmClip-${operatorAddress}`;
   // Tile fill = a vertical gradient in the zone's colour (veto ⅓ red, control ⅔
   // orange, else the page's Osmosis purple). Gradients defined once on the first
   // tile; each references its zone's id.
@@ -506,6 +519,25 @@ function TreemapCell(props: {
         stroke="#1f0a29"
         strokeWidth={2}
       />
+      {showLogo && operatorAddress && (
+        <>
+          <clipPath id={clipId}>
+            <rect x={x} y={y} width={width} height={height} />
+          </clipPath>
+          <image
+            href={validatorLogoUrl(operatorAddress)}
+            x={x + (width - logoSize) / 2}
+            y={y + (height - logoSize) / 2}
+            width={logoSize}
+            height={logoSize}
+            preserveAspectRatio="xMidYMid meet"
+            clipPath={`url(#${clipId})`}
+            opacity={0.3}
+            pointerEvents="none"
+            onError={() => setLogoFailed(true)}
+          />
+        </>
+      )}
       {/* Labels: plain white, inheriting the chart SVG font (no explicit
           fontFamily — setting it forced the SVG default serif). Non-interactive so
           the whole tile stays clickable. Truncated to what the width can hold. */}

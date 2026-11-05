@@ -34,6 +34,7 @@ export interface ValidatorInfo {
   longRunUptime: number | null; // long-run signing uptime % (0-100)
   selfBondPercentage: number | null; // validator's self-bond as % of its stake (SmartStake import)
   website: string | null; // validator's self-declared website (onchain description), or null
+  identity: string | null; // Keybase identity (onchain description), or null; keys the logo refresh
 }
 
 // Raw LCD shapes (only the fields we use).
@@ -42,7 +43,7 @@ interface RawValidator {
   jailed: boolean;
   status: string;
   tokens: string; // uosmo
-  description: { moniker: string; website?: string };
+  description: { moniker: string; website?: string; identity?: string };
   commission: { commission_rates: { rate: string } };
   consensus_pubkey: { "@type": string; key: string }; // ed25519, base64
 }
@@ -111,6 +112,7 @@ export async function fetchBondedValidators(): Promise<ValidatorInfo[]> {
         longRunUptime: null,
         selfBondPercentage: null,
         website: normalizeWebsite(v.description?.website),
+        identity: v.description?.identity?.trim() || null,
       };
       out.push(info);
       // Track the consensus address (for the uptime join) in a side map keyed by

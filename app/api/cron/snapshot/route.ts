@@ -7,6 +7,8 @@ import { fetchDayEpoch } from "@/lib/osmosis-lcd";
 import { getHistory } from "@/lib/historical-file";
 import { logger } from "@/lib/logger";
 import { pruneHistory } from "@/lib/retention";
+import { fetchBondedValidators } from "@/lib/validators";
+import { refreshValidatorLogos } from "@/lib/validator-logos";
 
 // Epoch-aware daily snapshot. Run by .github/workflows/cron.yml shortly
 // after the daily epoch window, NOT by page traffic.
@@ -169,7 +171,33 @@ export async function GET(request: Request) {
       retention = { error: e instanceof Error ? e.message : "Unknown error" };
     }
 
-    return NextResponse.json({ ok: true, ...result, unbonding, retention });
+    // Validator logos for the treemap (lib/validator-logos.ts). Runs on every
+    // invocation; each logo refreshes weekly, so most runs fetch nothing. Skipped
+    // when little budget is left. Non-fatal: refreshValidatorLogos never throws,
+    // and a failed validator-set fetch just leaves the stored logos in place.
+    let logos: Record<string, unknown>;
+    if (startedAt + 280_000 - Date.now() > 40_000) {
+      try {
+        logos = {
+          ...(await refreshValidatorLogos(await fetchBondedValidators())),
+        };
+      } catch (e) {
+        logger.warn(
+          `Validator logo refresh failed (non-critical): ${e instanceof Error ? e.message : String(e)}`
+        );
+        logos = { error: e instanceof Error ? e.message : "Unknown error" };
+      }
+    } else {
+      logos = { skipped: "time-budget-exhausted" };
+    }
+
+    return NextResponse.json({
+      ok: true,
+      ...result,
+      unbonding,
+      retention,
+      logos,
+    });
   } catch (error) {
     logger.error("Snapshot cron failed:", error);
     return NextResponse.json(

@@ -341,3 +341,19 @@ model RateLimitReading {
   @@index([denom, timestamp(sort: Asc)])
   @@map("rate_limit_readings")
 }
+
+// Validator logo, keyed by operator address, so the voting-power treemap serves
+// images from our own origin instead of a third-party URL. The daily snapshot
+// cron looks up each bonded validator's onchain Keybase identity, downloads the
+// avatar and stores the bytes (lib/validator-logos.ts); /api/validator-logos
+// serves them. `data` null records that Keybase has no picture for `identity`,
+// so the lookup isn't repeated until the row is due again.
+model ValidatorLogo {
+  operatorAddress String   @id
+  identity        String
+  contentType     String?
+  data            Bytes?
+  fetchedAt       DateTime @db.Timestamptz(6)
+
+  @@map("validator_logos")
+}
