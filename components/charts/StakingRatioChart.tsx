@@ -248,6 +248,7 @@ export function StakingRatioChart({
                 stroke="#7C4DFF"
                 strokeWidth={2}
                 fill="url(#colorStaked)"
+                isAnimationActive={false}
               />
               <Line
                 yAxisId="pct"
@@ -256,6 +257,7 @@ export function StakingRatioChart({
                 stroke="#4FC3F7"
                 strokeWidth={2}
                 dot={false}
+                isAnimationActive={false}
               />
             </ComposedChart>
           </ResponsiveContainer>

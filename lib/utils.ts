@@ -76,20 +76,31 @@ type ChartRange = "all" | "1y" | "90d" | "30d" | "7d";
 // On the wide timeframes ("all"/"1y") use Month + full Year (e.g. "Apr 2026") so
 // the year is always visible; on the shorter ones use day + month (e.g. "19 Nov")
 // where the year is unambiguous and day-level detail matters.
+// timeZone UTC: every plotted series is keyed to UTC days (daily cron rows,
+// UndelegationDay at UTC midnight). Rendering in the viewer's zone shifted
+// labels a day for viewers west of UTC (a midnight-keyed bar showed the
+// previous day); label by the day the data actually belongs to.
+// The formatters are built once: toLocaleDateString builds a new one on every
+// call, and charts format every point (~600ms per page load on a throttled
+// phone). Same locale and options, so the labels are identical.
+const MONTH_YEAR_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+const DAY_MONTH_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "short",
+  timeZone: "UTC",
+});
+
 export function formatChartDate(
   timestamp: string,
   timeRange: ChartRange
 ): string {
   const wide = timeRange === "all" || timeRange === "1y";
-  // timeZone UTC: every plotted series is keyed to UTC days (daily cron rows,
-  // UndelegationDay at UTC midnight). Rendering in the viewer's zone shifted
-  // labels a day for viewers west of UTC (a midnight-keyed bar showed the
-  // previous day); label by the day the data actually belongs to.
-  return new Date(timestamp).toLocaleDateString(
-    "en-GB",
-    wide
-      ? { month: "short", year: "numeric", timeZone: "UTC" }
-      : { day: "2-digit", month: "short", timeZone: "UTC" }
+  return (wide ? MONTH_YEAR_FORMAT : DAY_MONTH_FORMAT).format(
+    new Date(timestamp)
   );
 }
 

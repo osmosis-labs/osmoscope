@@ -330,6 +330,9 @@ function MetricLineChart({
                 strokeWidth={2}
                 dot={false}
                 connectNulls
+                // Drawing the line in costs ~500ms of main thread on a
+                // throttled phone (path length measured every frame).
+                isAnimationActive={false}
               />
             </LineChart>
           </ResponsiveContainer>
@@ -1533,7 +1536,10 @@ export function StakingView() {
 
       {/* Nakamoto + Gini over time (history from the SmartStake import; the cron
           keeps them current). Side by side on desktop, stacked on mobile. */}
-      <DeferUntilVisible placeholderClassName="min-h-[968px] lg:min-h-[480px]">
+      <DeferUntilVisible
+        enabled={!isLoading}
+        placeholderClassName="min-h-[968px] lg:min-h-[480px]"
+      >
         <div className="grid gap-6 lg:grid-cols-2">
           <MetricLineChart
             title="Nakamoto Coefficient"
@@ -1560,7 +1566,10 @@ export function StakingView() {
 
       {/* Staking ratio over time (moved here from Tokenomics: it's a
           staking-health metric, not a tokenomics one). */}
-      <DeferUntilVisible placeholderClassName="min-h-[480px]">
+      <DeferUntilVisible
+        enabled={!isLoading}
+        placeholderClassName="min-h-[480px]"
+      >
         <StakingRatioChart
           stakingRatio={metrics?.stakingRatio ?? null}
           historicalData={historicalData}
@@ -1568,7 +1577,10 @@ export function StakingView() {
       </DeferUntilVisible>
 
       {/* Pending undelegations — forward 14-day forecast OR imported history */}
-      <DeferUntilVisible placeholderClassName="min-h-[520px]">
+      <DeferUntilVisible
+        enabled={!isLoading}
+        placeholderClassName="min-h-[520px]"
+      >
         <Card ref={undelegationsRef} liftOnHover>
           <CardHeader>
             <ChartHeader
@@ -1927,7 +1939,10 @@ export function StakingView() {
 
       {/* Block rate — network performance (seconds per block), history from the
           SmartStake import; the cron computes it from daily block-height deltas. */}
-      <DeferUntilVisible placeholderClassName="min-h-[480px]">
+      <DeferUntilVisible
+        enabled={!isLoading}
+        placeholderClassName="min-h-[480px]"
+      >
         <MetricLineChart
           title="Block Rate"
           data={historicalData}
@@ -1941,7 +1956,10 @@ export function StakingView() {
       </DeferUntilVisible>
 
       {/* IBC rate-limit utilization (15-minute monitor snapshots). */}
-      <DeferUntilVisible placeholderClassName="min-h-[600px]">
+      <DeferUntilVisible
+        enabled={!isLoading}
+        placeholderClassName="min-h-[600px]"
+      >
         <RateLimitsCard />
       </DeferUntilVisible>
 
