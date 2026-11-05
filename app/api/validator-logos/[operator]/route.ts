@@ -16,7 +16,7 @@ const OPERATOR_RE = /^osmovaloper1[02-9ac-hj-np-z]{38}$/;
 const DAY_CACHE =
   "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800";
 const LIST_TTL_MS = 60 * 60_000;
-const PLACEHOLDER = "/Osmosis_Icon.png";
+const PLACEHOLDER = "/Osmosis_Icon_128.png";
 
 let known: { at: number; operators: Set<string> } | null = null;
 // While the database is failing, retry the list at most once a minute.

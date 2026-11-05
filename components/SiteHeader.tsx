@@ -61,7 +61,8 @@ export function SiteHeader({
         {/* eslint-disable-next-line @next/next/no-img-element -- small static
             brand icon, class-sized (no CLS); next/image adds no value here. */}
         <img
-          src="/Osmosis_Icon.png"
+          // 128px copy of /Osmosis_Icon.png (320px, ~61 KB): shown at 48-64px.
+          src="/Osmosis_Icon_128.png"
           alt="OSMOscope logo"
           className="h-12 w-12 shrink-0 sm:h-16 sm:w-16"
         />

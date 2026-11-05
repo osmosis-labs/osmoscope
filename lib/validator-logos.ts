@@ -39,9 +39,15 @@ async function fetchKeybaseLogo(identity: string): Promise<LogoFetch> {
     const url = body.them?.[0]?.pictures?.primary?.url;
     if (!url || !url.startsWith("https://")) return { kind: "none" };
 
-    const img = await fetch(url, {
+    // Keybase serves each avatar at 360, 200 and 40px (…_360_360.jpg). The
+    // treemap shows logos at up to ~125px and the tables at 18px, so store the
+    // 200px one (~12 KB instead of ~27 KB), falling back to the URL given.
+    const small = url.replace(/_360_360\.(jpe?g|png)$/i, "_200_200.$1");
+    let img = await fetch(small, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
+    if (!img.ok && small !== url)
+      img = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!img.ok) return { kind: "error", reason: `image ${img.status}` };
     const contentType = (img.headers.get("content-type") ?? "")
       .split(";")[0]

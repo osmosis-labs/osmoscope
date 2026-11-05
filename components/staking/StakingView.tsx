@@ -472,7 +472,7 @@ function ValidatorAvatar({ operatorAddress }: { operatorAddress: string }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element -- tiny same-origin image; next/image adds nothing here
     <img
-      src={failed ? "/Osmosis_Icon.png" : validatorLogoUrl(operatorAddress)}
+      src={failed ? "/Osmosis_Icon_128.png" : validatorLogoUrl(operatorAddress)}
       alt=""
       width={18}
       height={18}
