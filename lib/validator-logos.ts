@@ -10,9 +10,9 @@ import type { ValidatorInfo } from "./validators";
 // Re-fetch a stored logo (or re-check a "Keybase has no picture" row) this often.
 const REFRESH_MS = 7 * 86_400_000;
 // Keybase avatars are ~20-40 KB; refuse anything bigger rather than store it.
-const MAX_BYTES = 200_000;
+export const MAX_BYTES = 200_000;
 // Raster types only: an SVG served from our origin could carry script.
-const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+export const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const FETCH_TIMEOUT_MS = 10_000;
 const CONCURRENCY = 4;
 
@@ -70,18 +70,28 @@ export interface LogoRefreshResult {
 
 // Bring ValidatorLogo in line with the bonded set: fetch logos that are missing,
 // older than REFRESH_MS or whose identity changed, and drop rows for validators
-// that left the set or cleared their identity. A failed fetch writes nothing, so
-// the previous logo (if any) keeps serving until the next run. Never throws.
+// that left the set. A stored image is never replaced by "no picture": Keybase
+// answering with nothing keeps the existing image (which may have been set by
+// hand with scripts/import-validator-logo.ts), and validators without an identity
+// keep theirs. A failed fetch writes nothing. Never throws.
 export async function refreshValidatorLogos(
   validators: ValidatorInfo[]
 ): Promise<LogoRefreshResult | { skipped: string }> {
   if (!isDatabaseEnabled()) return { skipped: "database-disabled" };
+  // An empty set can only be a bad LCD answer; acting on it would delete every
+  // row, including hand-set logos that no later run could restore.
+  if (validators.length === 0) return { skipped: "empty-validator-set" };
   try {
     const withIdentity = validators.filter(
       (v): v is ValidatorInfo & { identity: string } => !!v.identity
     );
     const rows = await prisma.validatorLogo.findMany({
-      select: { operatorAddress: true, identity: true, fetchedAt: true },
+      select: {
+        operatorAddress: true,
+        identity: true,
+        fetchedAt: true,
+        contentType: true, // non-null exactly when an image is stored
+      },
     });
     const rowByOperator = new Map(rows.map((r) => [r.operatorAddress, r]));
     const now = Date.now();
@@ -94,7 +104,7 @@ export async function refreshValidatorLogos(
       );
     });
 
-    const keep = new Set(withIdentity.map((v) => v.operatorAddress));
+    const keep = new Set(validators.map((v) => v.operatorAddress));
     const gone = rows
       .map((r) => r.operatorAddress)
       .filter((op) => !keep.has(op));
@@ -121,10 +131,14 @@ export async function refreshValidatorLogos(
             );
             return;
           }
+          const hasImage = !!rowByOperator.get(v.operatorAddress)?.contentType;
+          // "No picture" over a stored image only records the check.
           const fields =
             logo.kind === "image"
               ? { contentType: logo.contentType, data: logo.data }
-              : { contentType: null, data: null };
+              : hasImage
+                ? {}
+                : { contentType: null, data: null };
           await prisma.validatorLogo.upsert({
             where: { operatorAddress: v.operatorAddress },
             create: {

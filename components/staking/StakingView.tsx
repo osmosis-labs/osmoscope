@@ -179,11 +179,18 @@ function MetricLineChart({
         m != null && m.dist <= 4 * 86_400_000
     );
 
-  const monthlyTicks = makeMonthlyTicks(
-    chartData.map((d) => d.date),
-    chartData.map((d) => d.timestamp),
-    timeRange
-  );
+  // One tick per month on 1Y; on All (~5 years) one per half-year, January and
+  // July, so the angled labels don't overlap now that every tick is rendered.
+  const monthlyTicks = (() => {
+    const ticks = makeMonthlyTicks(
+      chartData.map((d) => d.date),
+      chartData.map((d) => d.timestamp),
+      timeRange
+    );
+    return timeRange === "all" && ticks
+      ? ticks.filter((label) => /^(Jan|Jul) /.test(label))
+      : ticks;
+  })();
 
   // Fit the Y-axis tightly to the visible data with evenly-spaced ticks, and PIN
   // the domain to those tick bounds. Without a pinned domain Recharts picks its
@@ -432,16 +439,17 @@ function UndelegBoundaryLine({
 
 // Validator logo by operator address, served from our own database (stored from
 // each validator's Keybase identity by the snapshot cron; see
-// lib/validator-logos.ts). Not every validator has one: the route 404s and the
-// tile's onError hides the image.
+// lib/validator-logos.ts). Validators without one are redirected to the Osmosis
+// icon; onError only covers the route being unavailable.
 const validatorLogoUrl = (operatorAddress: string) =>
   `/api/validator-logos/${operatorAddress}`;
 // Corner radius as a fraction of the logo's side: matches the rounded square
 // most validator avatars are drawn in (01node's measures ~18%).
 const LOGO_CORNER = 0.18;
 
-// Small validator logo in front of a name in the tables. Falls back to the
-// Osmosis icon when the validator has no stored logo (the route 404s).
+// Small validator logo in front of a name in the tables. The route already
+// serves the Osmosis icon for validators without a logo; onError falls back to
+// it too when the route itself is unavailable.
 function ValidatorAvatar({ operatorAddress }: { operatorAddress: string }) {
   const [failed, setFailed] = useState(false);
   return (
