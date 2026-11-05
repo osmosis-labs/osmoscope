@@ -436,6 +436,28 @@ function UndelegBoundaryLine({
 // tile's onError hides the image.
 const validatorLogoUrl = (operatorAddress: string) =>
   `/api/validator-logos/${operatorAddress}`;
+// Corner radius as a fraction of the logo's side: matches the rounded square
+// most validator avatars are drawn in (01node's measures ~18%).
+const LOGO_CORNER = 0.18;
+
+// Small validator logo in front of a name in the tables. Falls back to the
+// Osmosis icon when the validator has no stored logo (the route 404s).
+function ValidatorAvatar({ operatorAddress }: { operatorAddress: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- tiny same-origin image; next/image adds nothing here
+    <img
+      src={failed ? "/Osmosis_Icon.png" : validatorLogoUrl(operatorAddress)}
+      alt=""
+      width={18}
+      height={18}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="h-[18px] w-[18px] shrink-0 rounded-[18%] object-cover"
+      aria-hidden
+    />
+  );
+}
 
 // Custom Treemap tile for the voting-power treemap. Recharts passes the layout box
 // (x/y/width/height) plus our payload fields (name, share, rank, total,
@@ -465,9 +487,12 @@ function TreemapCell(props: {
   } = props;
   const [logoFailed, setLogoFailed] = useState(false);
   if (width <= 0 || height <= 0) return null;
-  // Background logo: centred, square, 70% of the tile's short side, faint so the
-  // zone tint and labels still read. Skipped on tiles too small to show it.
-  const logoSize = Math.min(width, height) * 0.7;
+  // Background logo: centred, square, 63% of the tile's short side, faint so the
+  // zone tint and labels still read, with corners rounded like an app icon.
+  // Skipped on tiles too small to show it.
+  const logoSize = Math.min(width, height) * 0.63;
+  const logoX = x + (width - logoSize) / 2;
+  const logoY = y + (height - logoSize) / 2;
   const showLogo = !!operatorAddress && !logoFailed && logoSize >= 16;
   const clipId = `tmClip-${operatorAddress}`;
   // Tile fill = a vertical gradient in the zone's colour (veto ⅓ red, control ⅔
@@ -522,17 +547,23 @@ function TreemapCell(props: {
       {showLogo && operatorAddress && (
         <>
           <clipPath id={clipId}>
-            <rect x={x} y={y} width={width} height={height} />
+            <rect
+              x={logoX}
+              y={logoY}
+              width={logoSize}
+              height={logoSize}
+              rx={logoSize * LOGO_CORNER}
+            />
           </clipPath>
           <image
             href={validatorLogoUrl(operatorAddress)}
-            x={x + (width - logoSize) / 2}
-            y={y + (height - logoSize) / 2}
+            x={logoX}
+            y={logoY}
             width={logoSize}
             height={logoSize}
             preserveAspectRatio="xMidYMid meet"
             clipPath={`url(#${clipId})`}
-            opacity={0.3}
+            opacity={0.4}
             pointerEvents="none"
             onError={() => setLogoFailed(true)}
           />
@@ -1320,6 +1351,9 @@ export function StakingView() {
                           </td>
                           <td className="py-2 pr-3 font-medium text-white">
                             <span className="inline-flex items-center gap-1.5">
+                              <ValidatorAvatar
+                                operatorAddress={v.operatorAddress}
+                              />
                               <a
                                 href={`https://www.mintscan.io/osmosis/validators/${v.operatorAddress}`}
                                 target="_blank"
@@ -1777,7 +1811,12 @@ export function StakingView() {
                               {shortenAddress(e.delegator)}
                             </a>
                           </td>
-                          <td className="py-2 pr-3 text-white">{e.moniker}</td>
+                          <td className="py-2 pr-3 text-white">
+                            <span className="inline-flex items-center gap-1.5">
+                              <ValidatorAvatar operatorAddress={e.validator} />
+                              {e.moniker}
+                            </span>
+                          </td>
                           <td className="py-2 pr-3 text-right text-white tabular-nums">
                             {formatNumberWithCommas(e.amount, 0)} OSMO
                           </td>
