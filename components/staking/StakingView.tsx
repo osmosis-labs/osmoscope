@@ -36,6 +36,7 @@ import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
 import { ChartHeader } from "../charts/ChartHeader";
 import { ScreenshotButtons } from "../ScreenshotButtons";
 import { InfoTooltip } from "../ui/InfoTooltip";
+import { DeferUntilVisible } from "../ui/DeferUntilVisible";
 import { StakingRatioChart } from "../charts/StakingRatioChart";
 import { RateLimitsCard } from "./RateLimitsCard";
 import {
@@ -140,6 +141,8 @@ function MetricLineChart({
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>(defaultRange);
+  // Rendered chart width (from ResponsiveContainer), to thin the month labels.
+  const [chartWidth, setChartWidth] = useState(0);
   const filtered = filterDataByTimeRange(data, timeRange).filter(
     (r) => r[dataKey] != null
   );
@@ -187,9 +190,15 @@ function MetricLineChart({
       chartData.map((d) => d.timestamp),
       timeRange
     );
-    return timeRange === "all" && ticks
-      ? ticks.filter((label) => /^(Jan|Jul) /.test(label))
-      : ticks;
+    const base =
+      timeRange === "all" && ticks
+        ? ticks.filter((label) => /^(Jan|Jul) /.test(label))
+        : ticks;
+    if (!base || chartWidth === 0) return base;
+    // Every tick is rendered (interval 0 below), so keep about 32px per angled
+    // label: every month on desktop, every second or third on a phone.
+    const step = Math.max(1, Math.ceil((base.length * 32) / chartWidth));
+    return base.filter((_, i) => i % step === 0);
   })();
 
   // Fit the Y-axis tightly to the visible data with evenly-spaced ticks, and PIN
@@ -264,7 +273,11 @@ function MetricLineChart({
             No data available for this range
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={340}>
+          <ResponsiveContainer
+            width="100%"
+            height={340}
+            onResize={(w) => setChartWidth(w)}
+          >
             <LineChart data={chartData}>
               <CartesianGrid
                 strokeDasharray="3 3"
@@ -276,9 +289,10 @@ function MetricLineChart({
                 tick={{ fill: "#e0d5f5" }}
                 ticks={monthlyTicks}
                 padding={shortRangeAxisPadding(timeRange)}
-                // Monthly ticks are already thinned to one per month; render every
-                // one. The default "preserveEnd" over-estimates the angled labels'
-                // width and dropped the month before the (short) current month.
+                // Monthly ticks are already thinned to fit (above); render every
+                // one. Recharts' own thinning over-estimates the angled labels'
+                // width: "preserveEnd" dropped the month before the (short)
+                // current month, "equidistant*" kept only 3 of 13.
                 interval={monthlyTicks ? 0 : "preserveEnd"}
                 angle={-45}
                 textAnchor="end"
@@ -1520,396 +1534,417 @@ export function StakingView() {
 
       {/* Nakamoto + Gini over time (history from the SmartStake import; the cron
           keeps them current). Side by side on desktop, stacked on mobile. */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <MetricLineChart
-          title="Nakamoto Coefficient"
-          explainer="Minimum validators to exceed ⅓ of bonded stake, over time. Higher is more decentralized."
-          data={historicalData}
-          dataKey="nakamotoCoefficient"
-          color="#4FC3F7"
-          decimals={0}
-          events={VALIDATOR_SET_EVENTS}
-          defaultRange="1y"
-        />
-        <MetricLineChart
-          title="Gini Coefficient"
-          explainer="Voting power inequality across the validator set. 0 is an even distribution, 1 is a single validator holding all voting power."
-          data={historicalData}
-          dataKey="giniCoefficient"
-          color="#FF66CC"
-          decimals={3}
-          events={VALIDATOR_SET_EVENTS}
-          defaultRange="1y"
-        />
-      </div>
+      <DeferUntilVisible placeholderClassName="min-h-[968px] lg:min-h-[480px]">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <MetricLineChart
+            title="Nakamoto Coefficient"
+            explainer="Minimum validators to exceed ⅓ of bonded stake, over time. Higher is more decentralized."
+            data={historicalData}
+            dataKey="nakamotoCoefficient"
+            color="#4FC3F7"
+            decimals={0}
+            events={VALIDATOR_SET_EVENTS}
+            defaultRange="1y"
+          />
+          <MetricLineChart
+            title="Gini Coefficient"
+            explainer="Voting power inequality across the validator set. 0 is an even distribution, 1 is a single validator holding all voting power."
+            data={historicalData}
+            dataKey="giniCoefficient"
+            color="#FF66CC"
+            decimals={3}
+            events={VALIDATOR_SET_EVENTS}
+            defaultRange="1y"
+          />
+        </div>
+      </DeferUntilVisible>
 
       {/* Staking ratio over time (moved here from Tokenomics: it's a
           staking-health metric, not a tokenomics one). */}
-      <StakingRatioChart
-        stakingRatio={metrics?.stakingRatio ?? null}
-        historicalData={historicalData}
-      />
+      <DeferUntilVisible placeholderClassName="min-h-[480px]">
+        <StakingRatioChart
+          stakingRatio={metrics?.stakingRatio ?? null}
+          historicalData={historicalData}
+        />
+      </DeferUntilVisible>
 
       {/* Pending undelegations — forward 14-day forecast OR imported history */}
-      <Card ref={undelegationsRef} liftOnHover>
-        <CardHeader>
-          <ChartHeader
-            title="Pending Undelegations"
-            titleExplainer="OSMO completing its unbonding period each day, summed from every validator's actual unbonding delegations. Undelegations may be cancelled before completion, so upcoming amounts are indicative."
-            timeRange={undelegRange}
-            onRangeChange={setUndelegRange}
-            // The range lives in extraControls (under the toggles), not in the
-            // header's built-in slot, so hide the built-in one.
-            hideTimeRange
-            cardRef={undelegationsRef}
-            screenshotFilename="osmosis-pending-undelegations"
-            shareText="OSMO pending undelegations on Osmosis"
-            // Full per-completion-day series (NOT scoped to the selected range).
-            // Forecast is omitted — it's the same completing-per-day measure and the
-            // history series already carries the forward tail, so it'd be redundant.
-            csvRows={() =>
-              (undelegations?.history ?? [])
-                .slice()
-                .sort((a, b) => a.date.localeCompare(b.date))
-                .map((d) => ({
-                  date: d.date.slice(0, 10),
-                  osmoCompleting: Math.round(d.amountCompleting),
-                }))
-            }
-            csvFilename="osmosis-pending-undelegations"
-            extraControls={
-              // Interactive-only toggles: dropped from screenshots like the
-              // time-range selector (styled differently from the standard pill,
-              // they read oddly as a static image).
-              <div
-                className="flex flex-wrap items-center gap-2 text-sm"
-                data-screenshot-compact
-              >
-                {/* History + its timespan share ONE pill (merged background) so the
+      <DeferUntilVisible placeholderClassName="min-h-[520px]">
+        <Card ref={undelegationsRef} liftOnHover>
+          <CardHeader>
+            <ChartHeader
+              title="Pending Undelegations"
+              titleExplainer="OSMO completing its unbonding period each day, summed from every validator's actual unbonding delegations. Undelegations may be cancelled before completion, so upcoming amounts are indicative."
+              timeRange={undelegRange}
+              onRangeChange={setUndelegRange}
+              // The range lives in extraControls (under the toggles), not in the
+              // header's built-in slot, so hide the built-in one.
+              hideTimeRange
+              cardRef={undelegationsRef}
+              screenshotFilename="osmosis-pending-undelegations"
+              shareText="OSMO pending undelegations on Osmosis"
+              // Full per-completion-day series (NOT scoped to the selected range).
+              // Forecast is omitted — it's the same completing-per-day measure and the
+              // history series already carries the forward tail, so it'd be redundant.
+              csvRows={() =>
+                (undelegations?.history ?? [])
+                  .slice()
+                  .sort((a, b) => a.date.localeCompare(b.date))
+                  .map((d) => ({
+                    date: d.date.slice(0, 10),
+                    osmoCompleting: Math.round(d.amountCompleting),
+                  }))
+              }
+              csvFilename="osmosis-pending-undelegations"
+              extraControls={
+                // Interactive-only toggles: dropped from screenshots like the
+                // time-range selector (styled differently from the standard pill,
+                // they read oddly as a static image).
+                <div
+                  className="flex flex-wrap items-center gap-2 text-sm"
+                  data-screenshot-compact
+                >
+                  {/* History + its timespan share ONE pill (merged background) so the
                     range reads as belonging to History. Selecting a range also
                     turns History on. */}
-                <div className="flex items-center gap-1 rounded-lg bg-white/5 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setShowHistory((v) => !v)}
-                    aria-pressed={showHistory}
-                    className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                      showHistory
-                        ? "bg-white/15 text-white"
-                        : "text-osmo-200 hover:text-white"
-                    }`}
-                  >
-                    History
-                  </button>
-                  <span className="mx-0.5 h-4 w-px bg-white/15" aria-hidden />
-                  {(
-                    [
-                      { value: "30d", label: "30D" },
-                      { value: "90d", label: "90D" },
-                      { value: "1y", label: "1Y" },
-                      { value: "all", label: "All" },
-                    ] as const
-                  ).map((r) => (
+                  <div className="flex items-center gap-1 rounded-lg bg-white/5 p-1">
                     <button
-                      key={r.value}
                       type="button"
-                      onClick={() => {
-                        setUndelegRange(r.value);
-                        setShowHistory(true);
-                      }}
+                      onClick={() => setShowHistory((v) => !v)}
+                      aria-pressed={showHistory}
                       className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                        undelegRange === r.value
-                          ? "bg-osmo-purple text-white"
+                        showHistory
+                          ? "bg-white/15 text-white"
                           : "text-osmo-200 hover:text-white"
                       }`}
                     >
-                      {r.label}
+                      History
                     </button>
-                  ))}
+                    <span className="mx-0.5 h-4 w-px bg-white/15" aria-hidden />
+                    {(
+                      [
+                        { value: "30d", label: "30D" },
+                        { value: "90d", label: "90D" },
+                        { value: "1y", label: "1Y" },
+                        { value: "all", label: "All" },
+                      ] as const
+                    ).map((r) => (
+                      <button
+                        key={r.value}
+                        type="button"
+                        onClick={() => {
+                          setUndelegRange(r.value);
+                          setShowHistory(true);
+                        }}
+                        className={`rounded-md px-3 py-1 font-medium transition-colors ${
+                          undelegRange === r.value
+                            ? "bg-osmo-purple text-white"
+                            : "text-osmo-200 hover:text-white"
+                        }`}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Forecast and Details as separate standalone buttons. */}
+                  <button
+                    type="button"
+                    onClick={() => setShowForecast((v) => !v)}
+                    aria-pressed={showForecast}
+                    className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
+                      showForecast
+                        ? "bg-white/15 text-white"
+                        : "bg-white/5 text-osmo-200 hover:text-white"
+                    }`}
+                  >
+                    Forecast
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDetails((v) => !v)}
+                    aria-pressed={showDetails}
+                    className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
+                      showDetails
+                        ? "bg-white/15 text-white"
+                        : "bg-white/5 text-osmo-200 hover:text-white"
+                    }`}
+                  >
+                    Details
+                  </button>
                 </div>
-                {/* Forecast and Details as separate standalone buttons. */}
-                <button
-                  type="button"
-                  onClick={() => setShowForecast((v) => !v)}
-                  aria-pressed={showForecast}
-                  className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
-                    showForecast
-                      ? "bg-white/15 text-white"
-                      : "bg-white/5 text-osmo-200 hover:text-white"
-                  }`}
-                >
-                  Forecast
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowDetails((v) => !v)}
-                  aria-pressed={showDetails}
-                  className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
-                    showDetails
-                      ? "bg-white/15 text-white"
-                      : "bg-white/5 text-osmo-200 hover:text-white"
-                  }`}
-                >
-                  Details
-                </button>
-              </div>
-            }
-            headlineValue={
-              undelegations != null
-                ? formatNumberWithCommas(undelegations.total, 0)
-                : "—"
-            }
-            headlineLabel="OSMO total unbonding"
-            headlineColor="text-osmo-accent"
-          />
-        </CardHeader>
-        <CardContent>
-          {/* Combined daily column chart: History (past total outstanding) then
+              }
+              headlineValue={
+                undelegations != null
+                  ? formatNumberWithCommas(undelegations.total, 0)
+                  : "—"
+              }
+              headlineLabel="OSMO total unbonding"
+              headlineColor="text-osmo-accent"
+            />
+          </CardHeader>
+          <CardContent>
+            {/* Combined daily column chart: History (past total outstanding) then
               Forecast (next 14d completing), split by the Today line. Rendered
               when either toggle is on. */}
-          {undelegationsLoading && showForecast ? (
-            <div className="flex min-h-[320px] items-center justify-center text-osmo-200">
-              Loading unbonding schedule…
-            </div>
-          ) : showForecast || showHistory ? (
-            undelegChartData.length === 0 ? (
+            {undelegationsLoading && showForecast ? (
               <div className="flex min-h-[320px] items-center justify-center text-osmo-200">
-                No unbonding data for this range
+                Loading unbonding schedule…
               </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={340}>
-                <BarChart
-                  data={undelegChartData}
-                  margin={{ top: 8, right: 16, left: 8, bottom: 8 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="rgba(255,255,255,0.1)"
-                  />
-                  <XAxis
-                    dataKey="label"
-                    stroke="#fff"
-                    tick={{ fill: "#e0d5f5", fontSize: 12 }}
-                    ticks={makeMonthlyTicks(
-                      undelegChartData.map((d) => d.label),
-                      // Only history rows carry a real timestamp for month-tick
-                      // thinning; forecast labels are short day labels that fit.
-                      // Timestamps must track the History toggle: with History
-                      // off the chart holds only forecast rows, and pairing
-                      // history timestamps against them by index would emit
-                      // forecast labels as bogus month ticks.
-                      showHistory ? undelegHistory.map((d) => d.timestamp) : [],
-                      undelegRange
-                    )}
-                    padding={shortRangeAxisPadding(undelegRange)}
-                    angle={-45}
-                    textAnchor="end"
-                    height={60}
-                  />
-                  <YAxis
-                    stroke="#fff"
-                    tick={{ fill: "#e0d5f5" }}
-                    tickFormatter={(v) => formatNumber(v, 0)}
-                  />
-                  <Tooltip
-                    cursor={{ fill: "rgba(255,255,255,0.06)" }}
-                    contentStyle={{
-                      backgroundColor: "rgba(31, 10, 41, 0.95)",
-                      backdropFilter: "blur(12px)",
-                      border: "1px solid rgba(255, 255, 255, 0.2)",
-                      borderRadius: "8px",
-                    }}
-                    labelStyle={{ color: "#fff" }}
-                    itemStyle={{ color: "#fff" }}
-                    formatter={(value, _n, p) => {
-                      const kind = p?.payload?.kind;
-                      const label =
-                        kind === "forecast"
-                          ? "Unbonding"
-                          : kind === "today"
-                            ? "Releasing"
-                            : "Completed";
-                      return [
-                        `${formatNumberWithCommas(Number(value), 0)} OSMO`,
-                        label,
-                      ];
-                    }}
-                  />
-                  {/* Today divider (history→forecast boundary), positioned by
+            ) : showForecast || showHistory ? (
+              undelegChartData.length === 0 ? (
+                <div className="flex min-h-[320px] items-center justify-center text-osmo-200">
+                  No unbonding data for this range
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={340}>
+                  <BarChart
+                    data={undelegChartData}
+                    margin={{ top: 8, right: 16, left: 8, bottom: 8 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="rgba(255,255,255,0.1)"
+                    />
+                    <XAxis
+                      dataKey="label"
+                      stroke="#fff"
+                      tick={{ fill: "#e0d5f5", fontSize: 12 }}
+                      ticks={makeMonthlyTicks(
+                        undelegChartData.map((d) => d.label),
+                        // Only history rows carry a real timestamp for month-tick
+                        // thinning; forecast labels are short day labels that fit.
+                        // Timestamps must track the History toggle: with History
+                        // off the chart holds only forecast rows, and pairing
+                        // history timestamps against them by index would emit
+                        // forecast labels as bogus month ticks.
+                        showHistory
+                          ? undelegHistory.map((d) => d.timestamp)
+                          : [],
+                        undelegRange
+                      )}
+                      padding={shortRangeAxisPadding(undelegRange)}
+                      angle={-45}
+                      textAnchor="end"
+                      height={60}
+                    />
+                    <YAxis
+                      stroke="#fff"
+                      tick={{ fill: "#e0d5f5" }}
+                      tickFormatter={(v) => formatNumber(v, 0)}
+                    />
+                    <Tooltip
+                      cursor={{ fill: "rgba(255,255,255,0.06)" }}
+                      contentStyle={{
+                        backgroundColor: "rgba(31, 10, 41, 0.95)",
+                        backdropFilter: "blur(12px)",
+                        border: "1px solid rgba(255, 255, 255, 0.2)",
+                        borderRadius: "8px",
+                      }}
+                      labelStyle={{ color: "#fff" }}
+                      itemStyle={{ color: "#fff" }}
+                      formatter={(value, _n, p) => {
+                        const kind = p?.payload?.kind;
+                        const label =
+                          kind === "forecast"
+                            ? "Unbonding"
+                            : kind === "today"
+                              ? "Releasing"
+                              : "Completed";
+                        return [
+                          `${formatNumberWithCommas(Number(value), 0)} OSMO`,
+                          label,
+                        ];
+                      }}
+                    />
+                    {/* Today divider (history→forecast boundary), positioned by
                       bar-band index so it lands reliably on the
                       mixed-label axis. Only when both parts are shown. */}
-                  {undelegBoundaryIndex >= 0 && (
-                    <UndelegBoundaryLine
-                      index={undelegBoundaryIndex}
-                      count={undelegChartData.length}
-                    />
-                  )}
-                  {/* One full-width bar per day; colour by kind (history purple,
-                      forecast lighter). No day is both, so no 0-value half-bars. */}
-                  <Bar dataKey="amount" radius={[4, 4, 0, 0]}>
-                    {undelegChartData.map((d, i) => (
-                      <Cell
-                        key={i}
-                        fill={d.kind === "forecast" ? "#B39DFF" : "#7C4DFF"}
+                    {undelegBoundaryIndex >= 0 && (
+                      <UndelegBoundaryLine
+                        index={undelegBoundaryIndex}
+                        count={undelegChartData.length}
                       />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )
-          ) : null}
+                    )}
+                    {/* One full-width bar per day; colour by kind (history purple,
+                      forecast lighter). No day is both, so no 0-value half-bars. */}
+                    <Bar dataKey="amount" radius={[4, 4, 0, 0]}>
+                      {undelegChartData.map((d, i) => (
+                        <Cell
+                          key={i}
+                          fill={d.kind === "forecast" ? "#B39DFF" : "#7C4DFF"}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )
+            ) : null}
 
-          {/* Details: the largest individual unbonding entries. Rendered below
+            {/* Details: the largest individual unbonding entries. Rendered below
               the chart (or alone) when the Details toggle is on. */}
-          {showDetails &&
-            (undelegationsLoading ? (
-              <div className="flex min-h-[200px] items-center justify-center text-osmo-200">
-                Loading unbonding entries…
-              </div>
-            ) : (undelegations?.topEntries ?? []).length === 0 ? (
-              <div className="flex min-h-[200px] items-center justify-center text-osmo-200">
-                No unbonding entries
-              </div>
-            ) : (
-              <div
-                data-screenshot-overflow-visible
-                className={`themed-scroll overflow-x-auto ${showForecast || showHistory ? "mt-6 border-t border-white/10 pt-4" : ""}`}
-              >
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-white/15 text-left text-osmo-200">
-                      <th className="py-2 pr-3 font-medium">#</th>
-                      <th className="py-2 pr-3 font-medium">Delegator</th>
-                      <th className="py-2 pr-3 font-medium">Validator</th>
-                      <th className="py-2 pr-3 text-right font-medium">
-                        Amount
-                      </th>
-                      <th className="py-2 text-right font-medium">Completes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(() => {
-                      const entries = undelegations?.topEntries ?? [];
-                      const pages = Math.max(1, Math.ceil(entries.length / 10));
-                      const page = Math.min(detailsPage, pages - 1);
-                      return entries.slice(page * 10, page * 10 + 10);
-                    })().map((e, i) => {
-                      const pages = Math.max(
-                        1,
-                        Math.ceil((undelegations?.topEntries ?? []).length / 10)
-                      );
-                      const page = Math.min(detailsPage, pages - 1);
-                      const rank = page * 10 + i + 1;
-                      return (
-                        <tr
-                          key={`${e.delegator}-${e.validator}-${e.completionTime}-${rank}`}
-                          className="border-b border-white/5"
-                        >
-                          <td className="py-2 pr-3 text-osmo-200 tabular-nums">
-                            {rank}
-                          </td>
-                          <td className="py-2 pr-3">
-                            <a
-                              href={`https://www.mintscan.io/osmosis/address/${e.delegator}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="font-mono text-xs text-osmo-100 underline-offset-2 hover:text-white hover:underline"
-                              title={e.delegator}
-                            >
-                              {shortenAddress(e.delegator)}
-                            </a>
-                          </td>
-                          <td className="py-2 pr-3 text-white">
-                            <span className="inline-flex items-center gap-1.5">
-                              <ValidatorAvatar operatorAddress={e.validator} />
-                              {e.moniker}
-                            </span>
-                          </td>
-                          <td className="py-2 pr-3 text-right text-white tabular-nums">
-                            {formatNumberWithCommas(e.amount, 0)} OSMO
-                          </td>
-                          <td className="py-2 text-right text-osmo-100 tabular-nums">
-                            {new Date(e.completionTime).toLocaleDateString(
-                              undefined,
-                              {
-                                year: "numeric",
-                                month: "short",
-                                day: "numeric",
-                              }
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {/* Pager: 10 rows/page. */}
-                {(() => {
-                  const total = (undelegations?.topEntries ?? []).length;
-                  const pages = Math.ceil(total / 10);
-                  if (pages <= 1) return null;
-                  const page = Math.min(detailsPage, pages - 1);
-                  return (
-                    <div className="mt-3 flex items-center justify-between text-sm text-osmo-200">
-                      <span>
-                        Showing {page * 10 + 1}–
-                        {Math.min((page + 1) * 10, total)} of Top {total}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDetailsPage((p) => Math.max(0, p - 1))
-                          }
-                          disabled={page === 0}
-                          className="rounded-md border border-white/15 bg-white/5 px-3 py-1 font-medium transition-colors hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Prev
-                        </button>
-                        <span className="tabular-nums">
-                          {page + 1} / {pages}
+            {showDetails &&
+              (undelegationsLoading ? (
+                <div className="flex min-h-[200px] items-center justify-center text-osmo-200">
+                  Loading unbonding entries…
+                </div>
+              ) : (undelegations?.topEntries ?? []).length === 0 ? (
+                <div className="flex min-h-[200px] items-center justify-center text-osmo-200">
+                  No unbonding entries
+                </div>
+              ) : (
+                <div
+                  data-screenshot-overflow-visible
+                  className={`themed-scroll overflow-x-auto ${showForecast || showHistory ? "mt-6 border-t border-white/10 pt-4" : ""}`}
+                >
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/15 text-left text-osmo-200">
+                        <th className="py-2 pr-3 font-medium">#</th>
+                        <th className="py-2 pr-3 font-medium">Delegator</th>
+                        <th className="py-2 pr-3 font-medium">Validator</th>
+                        <th className="py-2 pr-3 text-right font-medium">
+                          Amount
+                        </th>
+                        <th className="py-2 text-right font-medium">
+                          Completes
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        const entries = undelegations?.topEntries ?? [];
+                        const pages = Math.max(
+                          1,
+                          Math.ceil(entries.length / 10)
+                        );
+                        const page = Math.min(detailsPage, pages - 1);
+                        return entries.slice(page * 10, page * 10 + 10);
+                      })().map((e, i) => {
+                        const pages = Math.max(
+                          1,
+                          Math.ceil(
+                            (undelegations?.topEntries ?? []).length / 10
+                          )
+                        );
+                        const page = Math.min(detailsPage, pages - 1);
+                        const rank = page * 10 + i + 1;
+                        return (
+                          <tr
+                            key={`${e.delegator}-${e.validator}-${e.completionTime}-${rank}`}
+                            className="border-b border-white/5"
+                          >
+                            <td className="py-2 pr-3 text-osmo-200 tabular-nums">
+                              {rank}
+                            </td>
+                            <td className="py-2 pr-3">
+                              <a
+                                href={`https://www.mintscan.io/osmosis/address/${e.delegator}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-mono text-xs text-osmo-100 underline-offset-2 hover:text-white hover:underline"
+                                title={e.delegator}
+                              >
+                                {shortenAddress(e.delegator)}
+                              </a>
+                            </td>
+                            <td className="py-2 pr-3 text-white">
+                              <span className="inline-flex items-center gap-1.5">
+                                <ValidatorAvatar
+                                  operatorAddress={e.validator}
+                                />
+                                {e.moniker}
+                              </span>
+                            </td>
+                            <td className="py-2 pr-3 text-right text-white tabular-nums">
+                              {formatNumberWithCommas(e.amount, 0)} OSMO
+                            </td>
+                            <td className="py-2 text-right text-osmo-100 tabular-nums">
+                              {new Date(e.completionTime).toLocaleDateString(
+                                undefined,
+                                {
+                                  year: "numeric",
+                                  month: "short",
+                                  day: "numeric",
+                                }
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {/* Pager: 10 rows/page. */}
+                  {(() => {
+                    const total = (undelegations?.topEntries ?? []).length;
+                    const pages = Math.ceil(total / 10);
+                    if (pages <= 1) return null;
+                    const page = Math.min(detailsPage, pages - 1);
+                    return (
+                      <div className="mt-3 flex items-center justify-between text-sm text-osmo-200">
+                        <span>
+                          Showing {page * 10 + 1}–
+                          {Math.min((page + 1) * 10, total)} of Top {total}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDetailsPage((p) => Math.min(pages - 1, p + 1))
-                          }
-                          disabled={page >= pages - 1}
-                          className="rounded-md border border-white/15 bg-white/5 px-3 py-1 font-medium transition-colors hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Next
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDetailsPage((p) => Math.max(0, p - 1))
+                            }
+                            disabled={page === 0}
+                            className="rounded-md border border-white/15 bg-white/5 px-3 py-1 font-medium transition-colors hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Prev
+                          </button>
+                          <span className="tabular-nums">
+                            {page + 1} / {pages}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDetailsPage((p) => Math.min(pages - 1, p + 1))
+                            }
+                            disabled={page >= pages - 1}
+                            className="rounded-md border border-white/15 bg-white/5 px-3 py-1 font-medium transition-colors hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Next
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            ))}
+                    );
+                  })()}
+                </div>
+              ))}
 
-          {/* Nothing selected. */}
-          {!showForecast && !showHistory && !showDetails && (
-            <div className="flex min-h-[320px] items-center justify-center text-center text-osmo-200">
-              Select Forecast, History, or Details above to show data.
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            {/* Nothing selected. */}
+            {!showForecast && !showHistory && !showDetails && (
+              <div className="flex min-h-[320px] items-center justify-center text-center text-osmo-200">
+                Select Forecast, History, or Details above to show data.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </DeferUntilVisible>
 
       {/* Block rate — network performance (seconds per block), history from the
           SmartStake import; the cron computes it from daily block-height deltas. */}
-      <MetricLineChart
-        title="Block Rate"
-        data={historicalData}
-        dataKey="blockRate"
-        color="#81C784"
-        unit="s"
-        decimals={2}
-        events={NETWORK_EVENTS}
-        defaultRange="90d"
-      />
+      <DeferUntilVisible placeholderClassName="min-h-[480px]">
+        <MetricLineChart
+          title="Block Rate"
+          data={historicalData}
+          dataKey="blockRate"
+          color="#81C784"
+          unit="s"
+          decimals={2}
+          events={NETWORK_EVENTS}
+          defaultRange="90d"
+        />
+      </DeferUntilVisible>
 
       {/* IBC rate-limit utilization (15-minute monitor snapshots). */}
-      <RateLimitsCard />
+      <DeferUntilVisible placeholderClassName="min-h-[600px]">
+        <RateLimitsCard />
+      </DeferUntilVisible>
 
       {/* Footer: data sources + snapshot disclaimer (mirrors the Tokenomics
           footer). Validator set / voting power / uptime / undelegations are live
