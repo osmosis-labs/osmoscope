@@ -209,6 +209,10 @@ export async function GET() {
       marketCap,
       fdv,
       stakingRatio,
+      // Newest snapshot that carries a block rate (the network page's KPI strip
+      // reads it here so it doesn't need the full history to render).
+      blockRate:
+        history.findLast((r) => r.blockRate != null)?.blockRate ?? null,
       timestamp: latest.timestamp,
     };
 

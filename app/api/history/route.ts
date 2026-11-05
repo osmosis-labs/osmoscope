@@ -6,12 +6,13 @@ import { logger } from "@/lib/logger";
 import { parseHistoryQuery } from "@/lib/edge";
 
 // Historical data only changes once a day (written by the snapshot cron at 17:20
-// UTC), so cache the response at the CDN for an hour and serve stale while
+// UTC), so cache the response at the CDN and in the browser for an hour (a
+// repeat visit within the hour skips the ~230 KB download) and serve stale while
 // revalidating. This route reads query params (request.url) so it is inherently
 // dynamic; CDN caching is driven by the Cache-Control header below rather than
 // route-segment `revalidate` (which is incompatible with a dynamic route).
 const HISTORY_CACHE_CONTROL =
-  "public, s-maxage=3600, stale-while-revalidate=600";
+  "public, max-age=3600, s-maxage=3600, stale-while-revalidate=600";
 
 // First date charts display. The archive node is pruned before ~2021-12-15
 // (genesis -> 2021-12-14 returns no chain state), but the genesis..data-start gap

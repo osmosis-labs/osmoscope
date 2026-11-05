@@ -629,7 +629,12 @@ export function StakingView() {
   const { data: undelegations, isLoading: undelegationsLoading } =
     useUndelegations();
   const { data: metrics } = useOsmosisMetrics();
-  const { data: historicalData = [] } = useHistoricalData();
+  // History (~230 KB) only feeds the charts below the treemap, so it is fetched
+  // once the validator set has arrived rather than alongside the page's
+  // JavaScript and top-of-page data; it is in by the time those charts mount.
+  const { data: historicalData = [] } = useHistoricalData({
+    enabled: data != null || isError,
+  });
   // Pending Undelegations has three INDEPENDENT toggles that can each be on or
   // off: Forecast (forward 14-day completion schedule), History (imported daily
   // total-unbonding series, scoped by undelegRange), and Details (largest
@@ -1069,12 +1074,11 @@ export function StakingView() {
     showHistory && showForecast && undelegTodayIdx >= 0 ? undelegTodayIdx : -1;
 
   // --- Top-of-page KPI strip (mirrors the Tokenomics KpiSummary look) ---------
-  // Latest block rate = most recent historical row carrying it (not in the live
-  // validator API). Pending-undelegation subtitle compares the current total to
-  // the typical 90-day level from the imported history.
-  const latestBlockRate = [...historicalData]
-    .reverse()
-    .find((r) => r.blockRate != null)?.blockRate;
+  // Latest block rate = newest snapshot carrying it, from the metrics route (not
+  // in the live validator API), so the KPI strip doesn't wait for the history.
+  // Pending-undelegation subtitle compares the current total to the typical
+  // 90-day level from the undelegation history.
+  const latestBlockRate = metrics?.blockRate;
   // "vs typical" on the Pending Undelegations KPI: average OSMO completing per day
   // over the NEXT 14 days vs the average per day over the LAST 90 days — both from
   // the UndelegationDay flow series (same measure, so it's like-for-like). Reads as

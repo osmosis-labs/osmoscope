@@ -136,6 +136,7 @@ export interface OsmosisMetrics {
   marketCap: number | null; // price * circulating
   fdv: number | null; // price * totalSupply
   stakingRatio: number | null; // totalStaked / circulating (% of float staked)
+  blockRate: number | null; // seconds per block, from the newest snapshot that has it
   timestamp: string;
 }
 
