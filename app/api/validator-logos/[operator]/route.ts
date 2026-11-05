@@ -21,23 +21,32 @@ const PLACEHOLDER = "/Osmosis_Icon.png";
 let known: { at: number; operators: Set<string> } | null = null;
 // While the database is failing, retry the list at most once a minute.
 let lastAttempt = 0;
+// The list query in progress. A page load asks for ~30 logos at once, so every
+// request that arrives while it runs waits for it rather than answering 503.
+let inflight: Promise<void> | null = null;
 
 async function operatorsWithLogo(): Promise<Set<string> | null> {
   if (known && Date.now() - known.at < LIST_TTL_MS) return known.operators;
-  if (Date.now() - lastAttempt < 60_000) return known?.operators ?? null;
-  lastAttempt = Date.now();
-  try {
-    const rows = await prisma.validatorLogo.findMany({
-      where: { contentType: { not: null } },
-      select: { operatorAddress: true },
-    });
-    known = {
-      at: Date.now(),
-      operators: new Set(rows.map((r) => r.operatorAddress)),
-    };
-  } catch (error) {
-    logger.error("Validator logo list failed:", error);
+  if (!inflight && Date.now() - lastAttempt >= 60_000) {
+    lastAttempt = Date.now();
+    inflight = (async () => {
+      try {
+        const rows = await prisma.validatorLogo.findMany({
+          where: { contentType: { not: null } },
+          select: { operatorAddress: true },
+        });
+        known = {
+          at: Date.now(),
+          operators: new Set(rows.map((r) => r.operatorAddress)),
+        };
+      } catch (error) {
+        logger.error("Validator logo list failed:", error);
+      } finally {
+        inflight = null;
+      }
+    })();
   }
+  if (inflight) await inflight;
   return known?.operators ?? null;
 }
 
