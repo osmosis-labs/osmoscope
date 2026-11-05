@@ -629,12 +629,7 @@ export function StakingView() {
   const { data: undelegations, isLoading: undelegationsLoading } =
     useUndelegations();
   const { data: metrics } = useOsmosisMetrics();
-  // History (~230 KB) only feeds the charts below the treemap, so it is fetched
-  // once the validator set has arrived rather than alongside the page's
-  // JavaScript and top-of-page data; it is in by the time those charts mount.
-  const { data: historicalData = [] } = useHistoricalData({
-    enabled: data != null || isError,
-  });
+  const { data: historicalData = [] } = useHistoricalData();
   // Pending Undelegations has three INDEPENDENT toggles that can each be on or
   // off: Forecast (forward 14-day completion schedule), History (imported daily
   // total-unbonding series, scoped by undelegRange), and Details (largest
