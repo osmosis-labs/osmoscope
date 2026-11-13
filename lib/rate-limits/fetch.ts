@@ -141,6 +141,27 @@ async function fetchJson<T>(
   return (await response.json()) as T;
 }
 
+// Hex of the `flow` namespace prefix (2-byte length, then the name). State
+// pages come back in ascending raw-key order, and lowercase hex sorts the
+// same way, so every flow entry has been seen once a key sorts past this
+// prefix. The namespaces after it (pending_sends, pending_sends_expiry since
+// contract 0.2.0) hold a record per in-flight send and grow into the
+// thousands, so the dump stops there instead of paging through them.
+const FLOW_PREFIX_HEX = Buffer.concat([
+  lenPrefixBytes("flow".length),
+  Buffer.from("flow"),
+]).toString("hex");
+
+function lenPrefixBytes(length: number): Buffer {
+  const out = Buffer.alloc(2);
+  out.writeUInt16BE(length);
+  return out;
+}
+
+export function isPastFlowNamespace(hexKey: string): boolean {
+  return hexKey.slice(0, FLOW_PREFIX_HEX.length).toLowerCase() > FLOW_PREFIX_HEX;
+}
+
 async function dumpStateFrom(
   endpoint: string,
   height?: number,
@@ -148,9 +169,11 @@ async function dumpStateFrom(
 ): Promise<RateLimitPath[]> {
   const paths: RateLimitPath[] = [];
   let nextKey: string | null = null;
-  // The LCD caps state pages at 100 entries regardless of the requested limit;
-  // ~800 entries today, so cap pages generously as a runaway guard.
-  for (let page = 0; page < 100; page++) {
+  let pastFlow = false;
+  // The LCD caps state pages at 100 entries regardless of the requested limit.
+  // The flow namespace sorts near the start (~40 entries today), so this cap
+  // is only a runaway guard.
+  for (let page = 0; page < 100 && !pastFlow; page++) {
     const params = new URLSearchParams({ "pagination.limit": "1000" });
     if (nextKey) params.set("pagination.key", nextKey);
     const data: StatePage = await fetchJson(
@@ -159,6 +182,10 @@ async function dumpStateFrom(
       minHeight
     );
     for (const model of data.models ?? []) {
+      if (isPastFlowNamespace(model.key)) {
+        pastFlow = true;
+        break;
+      }
       const key = decodeFlowKey(model.key);
       if (!key) continue;
       const limits = JSON.parse(
@@ -174,7 +201,7 @@ async function dumpStateFrom(
   // would violate the "a partial dump is never returned" contract below —
   // downstream, missing paths read as recovered limits and trigger false
   // all-clear alerts — so refuse instead.
-  if (nextKey) {
+  if (nextKey && !pastFlow) {
     throw new Error(
       "rate-limiter state dump exceeded the page cap; refusing a truncated dump"
     );
