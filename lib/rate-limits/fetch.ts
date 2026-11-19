@@ -159,7 +159,9 @@ function lenPrefixBytes(length: number): Buffer {
 }
 
 export function isPastFlowNamespace(hexKey: string): boolean {
-  return hexKey.slice(0, FLOW_PREFIX_HEX.length).toLowerCase() > FLOW_PREFIX_HEX;
+  return (
+    hexKey.slice(0, FLOW_PREFIX_HEX.length).toLowerCase() > FLOW_PREFIX_HEX
+  );
 }
 
 async function dumpStateFrom(

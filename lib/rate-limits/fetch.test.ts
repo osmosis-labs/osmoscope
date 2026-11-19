@@ -121,11 +121,21 @@ test("fetchRateLimitPaths: returns decoded flow paths", async () => {
 
 test("fetchRateLimitPaths: stops paging once keys pass the flow namespace", async () => {
   const limit = {
-    quota: { name: "DAY", max_percentage_send: 10, max_percentage_recv: 10, duration: 86_400, channel_value: "1000" },
+    quota: {
+      name: "DAY",
+      max_percentage_send: 10,
+      max_percentage_recv: 10,
+      duration: 86_400,
+      channel_value: "1000",
+    },
     flow: { inflow: "0", outflow: "0", period_end: "9999999999999999999" },
   };
   const pendingNs = Buffer.from("pending_sends");
-  const pendingKey = Buffer.concat([lenPrefix(pendingNs), pendingNs, Buffer.from("x")])
+  const pendingKey = Buffer.concat([
+    lenPrefix(pendingNs),
+    pendingNs,
+    Buffer.from("x"),
+  ])
     .toString("hex")
     .toUpperCase();
   let calls = 0;
@@ -135,7 +145,10 @@ test("fetchRateLimitPaths: stops paging once keys pass the flow namespace", asyn
     return new Response(
       JSON.stringify({
         models: [
-          { key: flowKeyHex("any", "uosmo"), value: Buffer.from(JSON.stringify([limit])).toString("base64") },
+          {
+            key: flowKeyHex("any", "uosmo"),
+            value: Buffer.from(JSON.stringify([limit])).toString("base64"),
+          },
           { key: pendingKey, value: Buffer.from("{}").toString("base64") },
         ],
         pagination: { next_key: "bW9yZQ==" },
