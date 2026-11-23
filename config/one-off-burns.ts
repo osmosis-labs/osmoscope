@@ -49,4 +49,12 @@ export const ONE_OFF_BURNS: OneOffBurn[] = [
     label:
       "Community pool burn bringing total OSMO burned past 100 million (Prop 1057)",
   },
+  {
+    time: "2026-11-23T11:33:40Z",
+    height: 75902217,
+    amount: 1_573_781.268732,
+    label:
+      "Liquidity SubDAO burn of the OSMO left after the bOSMO resolution payout (Prop 1049)",
+    txHash: "408701E6DB938B733C07855A0A9A7E8969DA7C67EDF933FD13779F06D21A0FCF",
+  },
 ];
