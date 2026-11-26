@@ -95,6 +95,23 @@ export interface DelegationResponse {
   };
 }
 
+export interface UnbondingDelegationResponse {
+  unbonding_responses: Array<{
+    delegator_address: string;
+    validator_address: string;
+    entries: Array<{
+      creation_height: string;
+      completion_time: string;
+      initial_balance: string;
+      balance: string; // uosmo; staking only ever unbonds the bond denom
+    }>;
+  }>;
+  pagination?: {
+    next_key: string | null;
+    total: string;
+  };
+}
+
 export interface StakingPoolResponse {
   pool: {
     not_bonded_tokens: string;

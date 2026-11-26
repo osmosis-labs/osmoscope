@@ -15,6 +15,7 @@ import type {
   MintParamsResponse,
   InflationResponse,
   DelegationResponse,
+  UnbondingDelegationResponse,
   NumiaAprResponse,
   PoolManagerParamsResponse,
   StakingPoolResponse,
@@ -190,6 +191,32 @@ export async function fetchDelegations(address: string): Promise<number> {
     return uosmoToOsmo(totalStaked);
   } catch (error) {
     logger.error(`Error fetching delegations for ${address}:`, error);
+    // Return 0 instead of throwing to allow partial data fetch
+    return 0;
+  }
+}
+
+// Fetch OSMO an address is unbonding: no longer delegated, not yet liquid, but
+// still owned by the address. Without this, a restricted entity that undelegates
+// looks like its stake entered circulation for the 14-day unbonding period.
+export async function fetchUnbondingDelegations(
+  address: string
+): Promise<number> {
+  try {
+    const data: UnbondingDelegationResponse = await cachedFetch(
+      `${LCD_BASE_URL}/cosmos/staking/v1beta1/delegators/${address}/unbonding_delegations`,
+      true // Use long cache (24 hours)
+    );
+
+    const totalUnbonding = data.unbonding_responses.reduce(
+      (sum, ubd) =>
+        sum + ubd.entries.reduce((s, e) => s + parseFloat(e.balance), 0),
+      0
+    );
+
+    return uosmoToOsmo(totalUnbonding);
+  } catch (error) {
+    logger.error(`Error fetching unbonding delegations for ${address}:`, error);
     // Return 0 instead of throwing to allow partial data fetch
     return 0;
   }
@@ -481,8 +508,8 @@ export const RESTRICTED_ADDRESSES = [
 ];
 
 // Compute the restricted (non-circulating) OSMO held by known foundation,
-// strategic-reserve, and developer-reward entities: liquid balance + staked
-// amount for each, summed. The current mint-param dev-rewards receiver is added
+// strategic-reserve, and developer-reward entities: liquid + staked + unbonding
+// for each, summed. The current mint-param dev-rewards receiver is added
 // on top and de-duplicated against RESTRICTED_ADDRESSES so it is never counted
 // twice (mirrors GetRestrictedSupply in the mint keeper). Community pool and the
 // developer-vesting module account are handled separately by the caller, so they
@@ -499,7 +526,8 @@ export async function fetchRestrictedSupply(): Promise<number> {
   for (const addr of addresses) {
     const liquid = await fetchBalance(addr);
     const staked = await fetchDelegations(addr);
-    total += liquid + staked;
+    const unbonding = await fetchUnbondingDelegations(addr);
+    total += liquid + staked + unbonding;
   }
   return total;
 }
