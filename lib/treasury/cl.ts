@@ -71,7 +71,7 @@ interface RawAsset {
   denom: string;
   amount: string;
 }
-interface RawPosition {
+export interface RawClPosition {
   position: {
     position_id: string;
     pool_id: string;
@@ -158,19 +158,43 @@ export function clPositionToHoldings(pos: ClPosition): Holding[] {
   }));
 }
 
-// Fetch an address's CL positions as structured cards. No swallowing catch on the
-// list call (a failure should abort the snapshot, not silently drop positions);
-// only per-token pricing gaps are tolerated (flagged, not fatal).
-export async function fetchClPositions(
-  address: string,
-  priceMap: PriceMap
-): Promise<ClPosition[]> {
-  const posList = await fetchLcdJson<{ positions: RawPosition[] }>(
+// Fetch an address's raw CL positions from LCD without pricing them yet.
+// No swallowing catch (a failure should abort the snapshot, not silently drop
+// positions). Separating fetch from valuation lets buildTreasurySnapshot fetch
+// each address once, resolve missing prices, and derive both holdings and cards
+// from the exact same chain state.
+export async function fetchRawClPositions(
+  address: string
+): Promise<RawClPosition[]> {
+  const posList = await fetchLcdJson<{ positions: RawClPosition[] }>(
     `/osmosis/concentratedliquidity/v1beta1/positions/${address}`
   );
+  const positions = posList.positions || [];
+  logger.info(`CL positions for ${address}: ${positions.length}`);
+  return positions;
+}
 
+// All denoms referenced by a list of raw CL positions (underlying assets +
+// claimable rewards), for on-demand missing-price resolution.
+export function rawClPositionDenoms(positions: RawClPosition[]): string[] {
+  const denoms: string[] = [];
+  for (const p of positions) {
+    if (p.asset0?.denom) denoms.push(p.asset0.denom);
+    if (p.asset1?.denom) denoms.push(p.asset1.denom);
+    for (const c of p.claimable_spread_rewards || []) denoms.push(c.denom);
+    for (const c of p.claimable_incentives || []) denoms.push(c.denom);
+  }
+  return denoms;
+}
+
+// Pure valuation of raw CL positions against a (typically fully-resolved)
+// priceMap. Only per-token pricing gaps are tolerated (flagged, not fatal).
+export function valueClPositions(
+  rawPositions: RawClPosition[],
+  priceMap: PriceMap
+): ClPosition[] {
   const out: ClPosition[] = [];
-  for (const p of posList.positions || []) {
+  for (const p of rawPositions) {
     const pos = p.position;
     const a0 = p.asset0;
     const a1 = p.asset1;
@@ -236,8 +260,15 @@ export async function fetchClPositions(
     });
   }
 
-  logger.info(`CL positions for ${address}: ${out.length}`);
   return out;
+}
+
+// Fetch an address's CL positions as structured cards.
+export async function fetchClPositions(
+  address: string,
+  priceMap: PriceMap
+): Promise<ClPosition[]> {
+  return valueClPositions(await fetchRawClPositions(address), priceMap);
 }
 
 // Resolve a pool id to its two underlying token symbols via the poolmanager

@@ -8,6 +8,7 @@
 import { prisma, isDatabaseEnabled } from "../database";
 import { Prisma } from "@prisma/client";
 import { logger } from "../logger";
+import { utcHourBounds } from "../utc-time";
 import type { TreasurySnapshotData } from "./snapshot";
 
 // Save a treasury snapshot, replacing any existing row for the same UTC hour so
@@ -22,15 +23,7 @@ export async function saveTreasurySnapshot(
   }
 
   const ts = new Date(data.timestamp);
-  const hourStart = new Date(
-    Date.UTC(
-      ts.getUTCFullYear(),
-      ts.getUTCMonth(),
-      ts.getUTCDate(),
-      ts.getUTCHours()
-    )
-  );
-  const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000);
+  const { hourStart, hourEnd } = utcHourBounds(ts);
 
   try {
     // Interactive (callback) form, not the array form: the array form's fixed

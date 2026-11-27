@@ -1,6 +1,7 @@
 // Database-backed implementation of historical data functions
 import { prisma, isDatabaseEnabled } from "./database";
 import { logger } from "./logger";
+import { isSameUtcDay, utcDayBounds, utcDayStart } from "./utc-time";
 import { Prisma } from "@prisma/client";
 import type { HistoricalRecord as PrismaRecord } from "@prisma/client";
 import type { HistoricalRecord as JsonRecord } from "./historical-file";
@@ -124,11 +125,7 @@ export async function saveSnapshotToDatabase(data: JsonRecord): Promise<void> {
 
   try {
     const prismaData = jsonToPrisma(data);
-    const ts = prismaData.timestamp as Date;
-    const dayStart = new Date(
-      Date.UTC(ts.getUTCFullYear(), ts.getUTCMonth(), ts.getUTCDate())
-    );
-    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+    const { dayStart, dayEnd } = utcDayBounds(prismaData.timestamp as Date);
 
     // Interactive (callback) form, not the array form: the array form's fixed
     // 5s timeout also bounds transaction acquisition, which can throw "Unable
@@ -163,9 +160,7 @@ export async function upsertUndelegationDay(
   source: string
 ): Promise<void> {
   if (!isDatabaseEnabled()) return;
-  const day = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
-  );
+  const day = utcDayStart(date);
   await prisma.undelegationDay.upsert({
     where: { date: day },
     create: { date: day, amountCompleting, source },
@@ -219,13 +214,7 @@ export async function fillPendingUndelegationsToday(
     select: { id: true, timestamp: true, pendingUndelegations: true },
   });
   if (!latest || latest.pendingUndelegations != null) return false;
-  const now = new Date();
-  const t = latest.timestamp;
-  const isToday =
-    t.getUTCFullYear() === now.getUTCFullYear() &&
-    t.getUTCMonth() === now.getUTCMonth() &&
-    t.getUTCDate() === now.getUTCDate();
-  if (!isToday) return false;
+  if (!isSameUtcDay(latest.timestamp, new Date())) return false;
   // Guarded write: re-assert null-ness inside the UPDATE itself so a
   // concurrent writer (the gated build's delete-then-create, or a parallel
   // invocation) that set the value between our read and this write is never

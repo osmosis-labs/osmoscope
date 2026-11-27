@@ -9,21 +9,9 @@
 import { prisma, isDatabaseEnabled } from "../database";
 import { Prisma } from "@prisma/client";
 import { logger } from "../logger";
+import { utcHourBounds } from "../utc-time";
 import type { RateLimitSnapshotData } from "./snapshot";
 import type { AlertLevel, StoredAlertState } from "./alerts";
-
-// The UTC hour a snapshot timestamp falls in.
-function hourBounds(ts: Date): { hourStart: Date; hourEnd: Date } {
-  const hourStart = new Date(
-    Date.UTC(
-      ts.getUTCFullYear(),
-      ts.getUTCMonth(),
-      ts.getUTCDate(),
-      ts.getUTCHours()
-    )
-  );
-  return { hourStart, hourEnd: new Date(hourStart.getTime() + 60 * 60 * 1000) };
-}
 
 const snapshotRow = (data: RateLimitSnapshotData) => ({
   timestamp: new Date(data.timestamp),
@@ -42,7 +30,7 @@ export async function saveRateLimitSnapshot(
   }
 
   const ts = new Date(data.timestamp);
-  const { hourStart, hourEnd } = hourBounds(ts);
+  const { hourStart, hourEnd } = utcHourBounds(ts);
 
   // The per-denom raw flow readings (the queryable series), one row per
   // window: same hour-dedupe as the blob so the two stay in lockstep. Keyed by
@@ -108,7 +96,7 @@ export async function refreshRateLimitSnapshot(
     throw new Error("Database is not configured");
   }
 
-  const { hourStart, hourEnd } = hourBounds(new Date(data.timestamp));
+  const { hourStart, hourEnd } = utcHourBounds(new Date(data.timestamp));
   const { count } = await prisma.rateLimitSnapshot.updateMany({
     where: { timestamp: { gte: hourStart, lt: hourEnd } },
     data: snapshotRow(data),

@@ -250,6 +250,30 @@ async function clPositionHoldings(
   return positions.flatMap((p) => clPositionToHoldings(p));
 }
 
+// Price a holding from another chain (EVM / Solana, whose amount is already in
+// display units) by symbol using the median-priced Osmosis denom so a stray
+// mispriced variant can't win.
+function makeSymbolPricedHolding(
+  symbol: string,
+  info: string,
+  amount: number,
+  denom: string,
+  priceMap: PriceMap,
+  priceSymbol = symbol
+): Holding {
+  const bestDenom = bestDenomForSymbol(priceMap, priceSymbol, true);
+  const price = bestDenom ? priceMap[bestDenom].price : 0;
+  const priceUnavailable = !(price > 0);
+  return {
+    symbol,
+    info,
+    amount,
+    value: priceUnavailable ? 0 : amount * price,
+    denom,
+    priceUnavailable,
+  };
+}
+
 // --- EVM (Ethereum) balances for a 0x... address ---------------------------
 export async function evmHoldings(
   address: string,
@@ -258,13 +282,6 @@ export async function evmHoldings(
 ): Promise<Holding[]> {
   const holdings: Holding[] = [];
   const native = EVM_NATIVE_ASSETS[chainId];
-  // Reuse the same median-price, outlier-resistant selection so a
-  // mispriced variant (e.g. a "USDC" at $0.66) can't win — the EVM path had the
-  // same collision bug (ETH-address USDC was valued at $0.66).
-  const priceBySymbol = (symbol: string): PriceInfo => {
-    const denom = bestDenomForSymbol(priceMap, symbol, true);
-    return denom ? priceMap[denom] : { symbol, price: 0, exponent: 0 };
-  };
 
   // No swallowing catches below: fetchEvmRpc throws only after every RPC
   // endpoint has failed. Since this address (the Grants Program's Ethereum
@@ -279,16 +296,16 @@ export async function evmHoldings(
       native.decimals
     );
     if (amount > 0) {
-      const p = priceBySymbol(native.priceSymbol || native.symbol);
-      const priceUnavailable = !(p.price > 0);
-      holdings.push({
-        symbol: native.symbol,
-        info: "Ethereum",
-        amount,
-        value: priceUnavailable ? 0 : amount * p.price,
-        denom: `evm:${chainId}:native`,
-        priceUnavailable,
-      });
+      holdings.push(
+        makeSymbolPricedHolding(
+          native.symbol,
+          "Ethereum",
+          amount,
+          `evm:${chainId}:native`,
+          priceMap,
+          native.priceSymbol || native.symbol
+        )
+      );
     }
   }
 
@@ -301,16 +318,15 @@ export async function evmHoldings(
       token.decimals
     );
     if (amount <= 0) continue;
-    const p = priceBySymbol(token.symbol);
-    const priceUnavailable = !(p.price > 0);
-    holdings.push({
-      symbol: token.symbol,
-      info: "Ethereum",
-      amount,
-      value: priceUnavailable ? 0 : amount * p.price,
-      denom: `evm:${chainId}:${token.contract}`,
-      priceUnavailable,
-    });
+    holdings.push(
+      makeSymbolPricedHolding(
+        token.symbol,
+        "Ethereum",
+        amount,
+        `evm:${chainId}:${token.contract}`,
+        priceMap
+      )
+    );
   }
 
   return holdings;
@@ -326,10 +342,6 @@ export async function solanaHoldings(
   priceMap: PriceMap
 ): Promise<Holding[]> {
   const holdings: Holding[] = [];
-  const priceBySymbol = (symbol: string): PriceInfo => {
-    const denom = bestDenomForSymbol(priceMap, symbol, true);
-    return denom ? priceMap[denom] : { symbol, price: 0, exponent: 0 };
-  };
 
   // Native SOL.
   const solAmount = await fetchSolanaNativeBalance(
@@ -337,34 +349,31 @@ export async function solanaHoldings(
     SOLANA_NATIVE_ASSET.decimals
   );
   if (solAmount > 0) {
-    const p = priceBySymbol(
-      SOLANA_NATIVE_ASSET.priceSymbol || SOLANA_NATIVE_ASSET.symbol
+    holdings.push(
+      makeSymbolPricedHolding(
+        SOLANA_NATIVE_ASSET.symbol,
+        "Solana",
+        solAmount,
+        "sol:native",
+        priceMap,
+        SOLANA_NATIVE_ASSET.priceSymbol || SOLANA_NATIVE_ASSET.symbol
+      )
     );
-    const priceUnavailable = !(p.price > 0);
-    holdings.push({
-      symbol: SOLANA_NATIVE_ASSET.symbol,
-      info: "Solana",
-      amount: solAmount,
-      value: priceUnavailable ? 0 : solAmount * p.price,
-      denom: "sol:native",
-      priceUnavailable,
-    });
   }
 
   // Allowlisted SPL tokens.
   for (const token of SOLANA_TOKEN_ALLOWLIST) {
     const amount = await fetchSolanaSplBalance(address, token.mint);
     if (amount <= 0) continue;
-    const p = priceBySymbol(token.symbol);
-    const priceUnavailable = !(p.price > 0);
-    holdings.push({
-      symbol: token.symbol,
-      info: "Solana",
-      amount,
-      value: priceUnavailable ? 0 : amount * p.price,
-      denom: `sol:${token.mint}`,
-      priceUnavailable,
-    });
+    holdings.push(
+      makeSymbolPricedHolding(
+        token.symbol,
+        "Solana",
+        amount,
+        `sol:${token.mint}`,
+        priceMap
+      )
+    );
   }
 
   return holdings;
@@ -390,8 +399,8 @@ export async function decomposeBankDenom(
   return [standardHolding(denom, rawAmount, priceMap)];
 }
 
-// Bank balances (with decomposition) + CL positions for an arbitrary address.
-export async function addressHoldings(
+// Bank balances (with GAMM / Margined decomposition) for an Osmosis address.
+export async function addressBankHoldings(
   address: string,
   priceMap: PriceMap
 ): Promise<Holding[]> {
@@ -412,10 +421,19 @@ export async function addressHoldings(
       ))
     );
   }
-
-  holdings.push(...(await clPositionHoldings(address, priceMap)));
-
   return holdings;
+}
+
+// Bank balances (with decomposition) + CL positions for an arbitrary address.
+export async function addressHoldings(
+  address: string,
+  priceMap: PriceMap
+): Promise<Holding[]> {
+  const [bank, cl] = await Promise.all([
+    addressBankHoldings(address, priceMap),
+    clPositionHoldings(address, priceMap),
+  ]);
+  return [...bank, ...cl];
 }
 
 export { gammHoldings, clPositionHoldings, standardHolding, makeHolding };
