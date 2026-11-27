@@ -14,8 +14,6 @@ import {
   RATE_LIMIT_LCD_FALLBACKS,
 } from "@/config/rate-limits";
 
-export { RATE_LIMITER_CONTRACT };
-
 // Primary first, then the config-listed public fallbacks.
 const LCD_ENDPOINTS = [LCD_BASE_URL, ...RATE_LIMIT_LCD_FALLBACKS];
 

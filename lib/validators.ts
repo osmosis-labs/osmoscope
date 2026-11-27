@@ -621,22 +621,6 @@ export function giniCoefficient(validators: ValidatorInfo[]): number {
   return (2 * weighted) / (n * total) - (n + 1) / n;
 }
 
-// Aggregate staking pool: bonded vs. currently-unbonding OSMO. `notBonded` is the
-// total pending-undelegation amount across the whole chain (no per-delegator
-// enumeration needed).
-export interface StakingPool {
-  bonded: number;
-  notBonded: number;
-}
-export async function fetchStakingPool(): Promise<StakingPool> {
-  const data: { pool: { bonded_tokens: string; not_bonded_tokens: string } } =
-    await cachedFetch(`${LCD_BASE_URL}/cosmos/staking/v1beta1/pool`, true);
-  return {
-    bonded: uosmoToOsmo(data.pool.bonded_tokens),
-    notBonded: uosmoToOsmo(data.pool.not_bonded_tokens),
-  };
-}
-
 // Decentralization snapshot: the derived metrics plus the set they came from.
 export interface DecentralizationMetrics {
   validatorCount: number;

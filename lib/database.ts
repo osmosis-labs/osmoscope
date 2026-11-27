@@ -163,23 +163,3 @@ export const prisma = new Proxy({} as PrismaClient, {
 export function isDatabaseEnabled(): boolean {
   return !!(process.env.POSTGRES_PRISMA_URL || process.env.DATABASE_URL);
 }
-
-// Test database connection
-export async function testDatabaseConnection(): Promise<boolean> {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    logger.info("Database connection successful");
-    return true;
-  } catch (error) {
-    logger.error("Database connection failed:", error);
-    return false;
-  }
-}
-
-// Close database connection (for cleanup)
-export async function closeDatabaseConnection(): Promise<void> {
-  await prisma.$disconnect();
-}
-
-// Type exports for convenience
-export type { HistoricalRecord } from "@prisma/client";
