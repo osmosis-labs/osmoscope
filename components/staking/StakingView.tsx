@@ -1540,7 +1540,7 @@ export function StakingView() {
         enabled={!isLoading}
         placeholderClassName="min-h-[968px] lg:min-h-[480px]"
       >
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <MetricLineChart
             title="Nakamoto Coefficient"
             explainer="Minimum validators to exceed ⅓ of bonded stake, over time. Higher is more decentralized."
