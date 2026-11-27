@@ -22,6 +22,7 @@ import type { HistoricalRecord } from "@/lib/historical-file";
 import { useState, useRef, useCallback } from "react";
 import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
 import { ChartHeader } from "./ChartHeader";
+import { CHART_TOOLTIP_STYLE } from "./tooltipStyle";
 import { InfoTooltip } from "../ui/InfoTooltip";
 
 // The stacked series (bottom to top) with a plain-English explainer of what each
@@ -206,13 +207,7 @@ export function TokenBalancesChart({
               tickFormatter={(value) => formatNumber(value, 0)}
             />
             <Tooltip
-              contentStyle={{
-                backgroundColor: "rgba(31, 10, 41, 0.95)",
-                backdropFilter: "blur(12px)",
-                border: "1px solid rgba(255, 255, 255, 0.2)",
-                borderRadius: "8px",
-                boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-              }}
+              contentStyle={CHART_TOOLTIP_STYLE}
               labelStyle={{ color: "#fff" }}
               formatter={(value) =>
                 formatNumberWithCommas(Number(value)) + " OSMO"
