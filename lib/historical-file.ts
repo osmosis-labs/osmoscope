@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import { logger } from "./logger";
 import { isDatabaseEnabled } from "./database";
+import { isSameUtcDay } from "./utc-time";
 import {
   saveSnapshotToDatabase,
   backfillRevenueInDatabase,
@@ -119,15 +120,9 @@ async function shouldSaveSnapshot(
   }
 
   // No epoch on the record: dedup by calendar day (UTC).
-  const now = new Date(currentData.timestamp);
-  const sameDayExists = history.some((r) => {
-    const d = new Date(r.timestamp);
-    return (
-      d.getUTCFullYear() === now.getUTCFullYear() &&
-      d.getUTCMonth() === now.getUTCMonth() &&
-      d.getUTCDate() === now.getUTCDate()
-    );
-  });
+  const sameDayExists = history.some((r) =>
+    isSameUtcDay(r.timestamp, currentData.timestamp)
+  );
   if (sameDayExists) {
     logger.info("Snapshot for this day already exists, skipping");
     return false;
@@ -182,15 +177,9 @@ export async function saveSnapshot(data: HistoricalRecord): Promise<boolean> {
       }
 
       // Check if this is a retry attempt - remove today's old snapshot if exists
-      const now = new Date(data.timestamp);
-      history = history.filter((record) => {
-        const recordDate = new Date(record.timestamp);
-        const isSameDay =
-          recordDate.getUTCFullYear() === now.getUTCFullYear() &&
-          recordDate.getUTCMonth() === now.getUTCMonth() &&
-          recordDate.getUTCDate() === now.getUTCDate();
-        return !isSameDay; // Remove any snapshots from today
-      });
+      history = history.filter(
+        (record) => !isSameUtcDay(record.timestamp, data.timestamp)
+      );
 
       // Add new snapshot
       history.push(data);

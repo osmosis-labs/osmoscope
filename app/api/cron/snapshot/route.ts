@@ -9,6 +9,7 @@ import { logger } from "@/lib/logger";
 import { pruneHistory } from "@/lib/retention";
 import { fetchBondedValidators } from "@/lib/validators";
 import { refreshValidatorLogos } from "@/lib/validator-logos";
+import { isSameUtcDay } from "@/lib/utc-time";
 import { verifyCronAuth } from "@/lib/cron-auth";
 
 // Epoch-aware daily snapshot. Run by .github/workflows/cron.yml shortly
@@ -61,17 +62,13 @@ async function runEpochSnapshot(): Promise<Record<string, unknown>> {
   // stale all day. If the epoch gate then fires, the DB save replaces the
   // same-day row, so no duplicate accumulates.
   const newest = history[history.length - 1];
-  if (newest && newest.dayEpoch != null) {
-    const n = new Date(newest.timestamp);
-    const now = new Date();
-    const sameUtcDay =
-      n.getUTCFullYear() === now.getUTCFullYear() &&
-      n.getUTCMonth() === now.getUTCMonth() &&
-      n.getUTCDate() === now.getUTCDate();
-    if (sameUtcDay) {
-      logger.info("Today's epoch snapshot already exists; skipping cron run");
-      return { saved: false, reason: "already-captured-today" };
-    }
+  if (
+    newest &&
+    newest.dayEpoch != null &&
+    isSameUtcDay(newest.timestamp, new Date())
+  ) {
+    logger.info("Today's epoch snapshot already exists; skipping cron run");
+    return { saved: false, reason: "already-captured-today" };
   }
 
   // Poll until a NEW epoch is live (current > last snapshot's epoch), then snap.

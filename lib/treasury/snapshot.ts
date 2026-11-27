@@ -3,10 +3,10 @@
 // summing each associated address. Heavy (LCD + CosmWasm + EVM + price calls) —
 // run from the hourly cron, not per request. Server-only.
 import { logger } from "../logger";
+import { mapLimit } from "../async";
 import { buildPriceMap, resolveMissingPrices } from "./prices";
 import {
-  addressHoldings,
-  clPositionHoldings,
+  addressBankHoldings,
   decomposeBankDenom,
   evmHoldings,
   solanaHoldings,
@@ -15,7 +15,15 @@ import {
   type Holding,
 } from "./holdings";
 import { fetchLcdJson } from "./fetch";
-import { fetchClPositions, fetchPoolPairSymbols, type ClPosition } from "./cl";
+import {
+  clPositionToHoldings,
+  fetchPoolPairSymbols,
+  fetchRawClPositions,
+  rawClPositionDenoms,
+  valueClPositions,
+  type ClPosition,
+  type RawClPosition,
+} from "./cl";
 import {
   ASSOCIATED_ADDRESSES,
   COMMUNITY_POOL_CL_ADDRESS,
@@ -112,27 +120,6 @@ export interface TreasurySnapshotData {
   vaultPositions: VaultPositionCard[];
   // Diagnostics: all assets we couldn't price (union across holders).
   unpricedSymbols: string[];
-}
-
-// Run `fn` over `items` with at most `limit` in flight; preserves input order.
-// Bounds concurrency so the snapshot's dozens of LCD/CosmWasm/EVM calls run in
-// parallel (fitting the cron's maxDuration) without hammering any one endpoint.
-async function mapLimit<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  async function worker() {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i], i);
-    }
-  }
-  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
-  await Promise.all(workers);
-  return results;
 }
 
 // Aggregate a flat holdings list into per-symbol AssetTotals (value-desc).
@@ -328,49 +315,79 @@ export async function buildTreasurySnapshot(
     pool: Array<{ denom: string; amount: string }>;
   }>("/cosmos/distribution/v1beta1/community_pool");
 
-  const [bankBatches, clHoldings, govClHoldings] = await Promise.all([
+  const [bankBatches, mainClRaw, govClRaw] = await Promise.all([
     mapLimit(poolData.pool || [], CONCURRENCY, (item) =>
       decomposeBankDenom(item.denom, parseFloat(item.amount || "0"), priceMap)
     ),
-    clPositionHoldings(COMMUNITY_POOL_CL_ADDRESS, priceMap),
-    clPositionHoldings(GOVERNANCE_MODULE_ADDRESS, priceMap),
+    fetchRawClPositions(COMMUNITY_POOL_CL_ADDRESS),
+    fetchRawClPositions(GOVERNANCE_MODULE_ADDRESS),
   ]);
 
-  const mainHoldings: Holding[] = [
-    ...bankBatches.flat(),
-    ...clHoldings,
-    ...govClHoldings,
-  ];
+  const mainBankHoldings: Holding[] = bankBatches.flat();
 
-  // --- Associated addresses (gather RAW holdings first) ----------------------
-  // Collect each holder's raw holdings without aggregating yet, so we can resolve
-  // held-but-unpriced denoms in one pass before valuing anything.
+  // --- Associated addresses (gather RAW holdings + raw CL first) -------------
+  // Collect each holder's raw bank holdings and raw CL positions in one pass,
+  // so we resolve held-but-unpriced denoms once and then value both holdings
+  // and CL position cards from the exact same fetched chain state.
   const rawAssociated = await mapLimit(
     ASSOCIATED_ADDRESSES,
     CONCURRENCY,
-    async (a) => ({
-      meta: a,
-      holdings:
-        a.chain === "ethereum"
-          ? await evmHoldings(a.address, "1", priceMap)
-          : a.chain === "solana"
-            ? await solanaHoldings(a.address, priceMap)
-            : await addressHoldings(a.address, priceMap),
-    })
+    async (
+      a
+    ): Promise<{
+      meta: (typeof ASSOCIATED_ADDRESSES)[number];
+      bankHoldings: Holding[];
+      rawCl: RawClPosition[];
+    }> => {
+      if (a.chain === "ethereum") {
+        return {
+          meta: a,
+          bankHoldings: await evmHoldings(a.address, "1", priceMap),
+          rawCl: [],
+        };
+      }
+      if (a.chain === "solana") {
+        return {
+          meta: a,
+          bankHoldings: await solanaHoldings(a.address, priceMap),
+          rawCl: [],
+        };
+      }
+      // Sequential, not Promise.all: mapLimit already runs CONCURRENCY holders
+      // at once, and doubling that against lcd.osmosis.zone invites 429s.
+      const bankHoldings = await addressBankHoldings(a.address, priceMap);
+      const rawCl = await fetchRawClPositions(a.address);
+      return { meta: a, bankHoldings, rawCl };
+    }
   );
 
   // --- Resolve prices for ONLY the denoms actually held ----------------------
   // Numia leaves ~2700 denoms unpriced; resolving all of them via SQS/CoinGecko
   // up-front took ~90s. Instead, gather the denoms these holdings reference and
-  // price just those (a few dozen), then re-value the affected holdings.
+  // price just those (a few dozen), then value CL positions and re-value bank
+  // holdings against the complete price map.
   const heldDenoms = [
-    ...mainHoldings,
-    ...rawAssociated.flatMap((r) => r.holdings),
-  ].map((h) => h.denom);
+    ...mainBankHoldings.map((h) => h.denom),
+    ...rawClPositionDenoms(mainClRaw),
+    ...rawClPositionDenoms(govClRaw),
+    ...rawAssociated.flatMap((r) => [
+      ...r.bankHoldings.map((h) => h.denom),
+      ...rawClPositionDenoms(r.rawCl),
+    ]),
+  ];
   await resolveMissingPrices(priceMap, heldDenoms);
 
-  // Re-value against the now-complete price map (EVM synthetic denoms untouched).
-  const mainRevalued = mainHoldings.map((h) => revalueHolding(h, priceMap));
+  // Value the community pool's CL positions once against the complete map,
+  // feeding both mainRevalued holdings and the CL position cards below.
+  const mainClPositions = valueClPositions(mainClRaw, priceMap);
+  const govClPositions = valueClPositions(govClRaw, priceMap);
+
+  // Re-value bank holdings + append valued CL holdings.
+  const mainRevalued = [
+    ...mainBankHoldings.map((h) => revalueHolding(h, priceMap)),
+    ...mainClPositions.flatMap(clPositionToHoldings),
+    ...govClPositions.flatMap(clPositionToHoldings),
+  ];
 
   // Keep priced lines worth >= $1 (matches the sheet), PLUS any unpriced-but-held
   // line (nonzero amount, no price) so it still lands in the Community Pool's
@@ -415,10 +432,18 @@ export async function buildTreasurySnapshot(
   }
   const groups = new Map<string, GroupAcc>();
 
-  for (const { meta, holdings } of rawAssociated) {
-    const revalued = holdings
-      .map((h) => revalueHolding(h, priceMap))
-      .filter((h) => Number.isFinite(h.value));
+  const associatedClCards: ClPositionCard[] = [];
+
+  for (const { meta, bankHoldings, rawCl } of rawAssociated) {
+    const holderClPositions = valueClPositions(rawCl, priceMap);
+    const holderLabel = meta.groupLabel ?? meta.label;
+    for (const p of holderClPositions) {
+      associatedClCards.push({ ...p, holderLabel });
+    }
+    const revalued = [
+      ...bankHoldings.map((h) => revalueHolding(h, priceMap)),
+      ...holderClPositions.flatMap(clPositionToHoldings),
+    ].filter((h) => Number.isFinite(h.value));
     const key = meta.group ?? `single:${meta.address}`;
     const acc = groups.get(key);
     if (acc) {
@@ -429,7 +454,7 @@ export async function buildTreasurySnapshot(
         acc.description = meta.description;
     } else {
       groups.set(key, {
-        label: meta.groupLabel ?? meta.label,
+        label: holderLabel,
         holdings: revalued,
         addresses: [{ address: meta.address, chain: meta.chain }],
         primary: { address: meta.address, chain: meta.chain },
@@ -456,26 +481,13 @@ export async function buildTreasurySnapshot(
   const totalValue = holders.reduce((s, h) => s + h.totalValue, 0);
 
   // --- CL position cards -----------------------------------------------------
-  // Structured positions (range + per-token + rewards) for the frontend-style
-  // cards, tagged with the entity that holds them. Fetched here (prices already
-  // resolved). The community pool's CL positions live at the dedicated CL holder
-  // address and the governance module account; associated Osmosis addresses may
-  // hold positions too.
-  const clSources: Array<{ label: string; address: string }> = [
-    { label: "Community Pool", address: COMMUNITY_POOL_CL_ADDRESS },
-    { label: "Community Pool", address: GOVERNANCE_MODULE_ADDRESS },
-    ...ASSOCIATED_ADDRESSES.filter((a) => a.chain === "osmosis").map((a) => ({
-      label: a.groupLabel ?? a.label,
-      address: a.address,
-    })),
-  ];
-  const clBatches = await mapLimit(clSources, CONCURRENCY, async (src) => {
-    const positions = await fetchClPositions(src.address, priceMap);
-    return positions.map((p) => ({ ...p, holderLabel: src.label }));
-  });
-  const clPositions: ClPositionCard[] = clBatches
-    .flat()
-    .sort((a, b) => b.value - a.value);
+  // Built from the exact same CL positions valued above so card totals and
+  // holder totals can never drift and no address is queried twice.
+  const clPositions: ClPositionCard[] = [
+    ...mainClPositions.map((p) => ({ ...p, holderLabel: "Community Pool" })),
+    ...govClPositions.map((p) => ({ ...p, holderLabel: "Community Pool" })),
+    ...associatedClCards,
+  ].sort((a, b) => b.value - a.value);
 
   // --- Vault / classic-pool position cards -----------------------------------
   // Magma + Margined vaults and GAMM classic pools already decompose into the

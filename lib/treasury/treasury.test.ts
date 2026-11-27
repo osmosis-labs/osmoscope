@@ -8,7 +8,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { tickToBasePrice } from "./cl";
+import {
+  rawClPositionDenoms,
+  tickToBasePrice,
+  valueClPositions,
+  type RawClPosition,
+} from "./cl";
 import { bestDenomForSymbol, type Holding } from "./holdings";
 import {
   aggregateBySymbol,
@@ -254,4 +259,38 @@ test("isMoveConfirmed: only the newest three count", () => {
 test("isMoveConfirmed: never confirms zero or non-finite readings", () => {
   assert.equal(isMoveConfirmed([0, 0, 0]), false);
   assert.equal(isMoveConfirmed([NaN, NaN, NaN]), false);
+});
+
+test("rawClPositionDenoms and valueClPositions: collect denoms and value assets + rewards", () => {
+  const raw: RawClPosition[] = [
+    {
+      position: {
+        position_id: "42",
+        pool_id: "1252",
+        lower_tick: "0",
+        upper_tick: "100000",
+      },
+      asset0: { denom: "uosmo", amount: "2000000" },
+      asset1: { denom: "ibc/USDC", amount: "5000000" },
+      claimable_spread_rewards: [{ denom: "uosmo", amount: "1000000" }],
+      claimable_incentives: [{ denom: "ibc/INCENT", amount: "3000000" }],
+    },
+  ];
+  assert.deepEqual(rawClPositionDenoms(raw), [
+    "uosmo",
+    "ibc/USDC",
+    "uosmo",
+    "ibc/INCENT",
+  ]);
+  const prices = priceMap([
+    ["uosmo", "OSMO", 0.5],
+    ["ibc/USDC", "USDC", 1.0],
+    ["ibc/INCENT", "INC", 2.0],
+  ]);
+  const [pos] = valueClPositions(raw, prices);
+  assert.equal(pos.positionId, "42");
+  assert.equal(pos.outOfRange, false);
+  assert.equal(pos.lowerPrice, 1);
+  // 2 OSMO ($1) + 5 USDC ($5) + 1 OSMO reward ($0.5) + 3 INC reward ($6) = $12.5
+  assert.equal(pos.value, 12.5);
 });

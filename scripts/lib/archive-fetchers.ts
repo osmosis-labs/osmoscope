@@ -1,4 +1,5 @@
 import { logger } from "../../lib/logger";
+import { mapLimit } from "../../lib/async";
 import {
   queryArchiveNode,
   queryArchiveNodeWithFallback,
@@ -12,25 +13,6 @@ import {
 // serially took ~24s/date. A small concurrency bound overlaps them (~3-5s/date)
 // without hammering the node.
 const CONCURRENCY = 5;
-
-// Run `fn` over `items` with at most `limit` in flight at once; preserves order.
-async function mapLimit<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  async function worker() {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i]);
-    }
-  }
-  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
-  await Promise.all(workers);
-  return results;
-}
 
 // Known addresses
 const BURN_ADDRESS = "osmo1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmcn030";

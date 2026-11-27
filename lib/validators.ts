@@ -6,6 +6,8 @@
 // osmosis-lcd fetch/cache layer).
 import { cachedFetch, LCD_BASE_URL, uosmoToOsmo } from "./osmosis-lcd";
 import { logger } from "./logger";
+import { mapLimit } from "./async";
+import { utcDayStart } from "./utc-time";
 import { bech32 } from "bech32";
 import { createHash } from "crypto";
 import { REST_FALLBACK_ENDPOINTS } from "@/config/lcd-endpoints";
@@ -185,41 +187,52 @@ interface SlashingParamsResponse {
   params: { signed_blocks_window: string };
 }
 
+// Fetch slashing signed-blocks window and paginate all signing_infos into a
+// consensus-address -> SigningInfo map. Shared by enrichWithUptime (live API)
+// and indexValidatorDaily (daily cron). Returns null if window is unavailable.
+async function fetchSlashingSigningInfos(): Promise<{
+  window: number;
+  infoByAddr: Map<string, SigningInfo>;
+} | null> {
+  const paramsResp: SlashingParamsResponse = await cachedFetch(
+    `${LCD_BASE_URL}/cosmos/slashing/v1beta1/params`,
+    true
+  );
+  const window = Number(paramsResp.params?.signed_blocks_window) || 0;
+  if (window <= 0) return null;
+
+  const infoByAddr = new Map<string, SigningInfo>();
+  let key: string | null = null;
+  for (let page = 0; page < 20; page++) {
+    const p = new URLSearchParams({ "pagination.limit": "500" });
+    if (key) p.set("pagination.key", key);
+    const data: SigningInfosResponse = await cachedFetch(
+      `${LCD_BASE_URL}/cosmos/slashing/v1beta1/signing_infos?${p.toString()}`,
+      false
+    );
+    for (const s of data.info) infoByAddr.set(s.address, s);
+    key = data.pagination?.next_key ?? null;
+    if (!key) break;
+  }
+  return { window, infoByAddr };
+}
+
 // Enrich validators in-place with uptime over the slashing signed-blocks window:
 // uptime = 1 − missed_blocks_counter / signed_blocks_window, joined via the
 // derived consensus address. Non-fatal: if slashing data can't be fetched, every
 // validator's uptime stays null (the leaderboard just omits the column value).
 async function enrichWithUptime(validators: ValidatorInfo[]): Promise<void> {
   try {
-    const paramsResp: SlashingParamsResponse = await cachedFetch(
-      `${LCD_BASE_URL}/cosmos/slashing/v1beta1/params`,
-      true
-    );
-    const window = Number(paramsResp.params?.signed_blocks_window) || 0;
-    if (window <= 0) return;
-
-    // Build a consensus-address -> missed-count map, paginating signing_infos.
-    const missedByAddr = new Map<string, number>();
-    let key: string | null = null;
-    for (let page = 0; page < 20; page++) {
-      const p = new URLSearchParams({ "pagination.limit": "500" });
-      if (key) p.set("pagination.key", key);
-      const data: SigningInfosResponse = await cachedFetch(
-        `${LCD_BASE_URL}/cosmos/slashing/v1beta1/signing_infos?${p.toString()}`,
-        false
-      );
-      for (const s of data.info)
-        missedByAddr.set(s.address, Number(s.missed_blocks_counter) || 0);
-      key = data.pagination?.next_key ?? null;
-      if (!key) break;
-    }
+    const slashing = await fetchSlashingSigningInfos();
+    if (!slashing) return;
 
     for (const v of validators) {
       const consAddr = consAddressByOperator.get(v.operatorAddress);
       if (!consAddr) continue;
-      const missed = missedByAddr.get(consAddr);
-      if (missed === undefined) continue;
-      v.uptime = Math.max(0, Math.min(1, 1 - missed / window));
+      const info = slashing.infoByAddr.get(consAddr);
+      if (!info) continue;
+      const missed = Number(info.missed_blocks_counter) || 0;
+      v.uptime = Math.max(0, Math.min(1, 1 - missed / slashing.window));
     }
   } catch (error) {
     logger.warn(
@@ -250,33 +263,13 @@ export async function indexValidatorDaily(
     const { prisma, isDatabaseEnabled } = await import("./database");
     if (!isDatabaseEnabled()) return;
 
-    const paramsResp: SlashingParamsResponse = await cachedFetch(
-      `${LCD_BASE_URL}/cosmos/slashing/v1beta1/params`,
-      true
-    );
-    const window = Number(paramsResp.params?.signed_blocks_window) || 0;
-    if (window <= 0) return;
-
-    // consensus address -> signing info (uptime inputs + slash state).
-    const infoByAddr = new Map<string, SigningInfo>();
-    let key: string | null = null;
-    for (let page = 0; page < 20; page++) {
-      const p = new URLSearchParams({ "pagination.limit": "500" });
-      if (key) p.set("pagination.key", key);
-      const data: SigningInfosResponse = await cachedFetch(
-        `${LCD_BASE_URL}/cosmos/slashing/v1beta1/signing_infos?${p.toString()}`,
-        false
-      );
-      for (const s of data.info) infoByAddr.set(s.address, s);
-      key = data.pagination?.next_key ?? null;
-      if (!key) break;
-    }
+    const slashing = await fetchSlashingSigningInfos();
+    if (!slashing) return;
+    const { window, infoByAddr } = slashing;
 
     // UTC midnight for today's ValidatorDaily key.
     const now = new Date();
-    const day = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-    );
+    const day = utcDayStart(now);
 
     // Existing snapshot rows carry the last-seen slash state (for transition
     // detection). Load once, keyed by operator.
@@ -665,26 +658,6 @@ export async function fetchDecentralizationMetrics(): Promise<DecentralizationMe
 // each entry by its completion day. ~13s across the set, so this is cached / cron-
 // driven, never a hot per-request path.
 // ---------------------------------------------------------------------------
-
-// Bounded-concurrency map so we don't fire ~70 LCD calls at once (rate limits).
-async function mapLimit<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  async function worker() {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i]);
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, worker)
-  );
-  return results;
-}
 
 interface UnbondingResponse {
   unbonding_responses: {
