@@ -14,7 +14,6 @@ import {
   fetchSolanaSplBalance,
 } from "./fetch";
 import type { PriceMap, PriceInfo } from "./prices";
-import { fetchClPositions, clPositionToHoldings } from "./cl";
 import {
   EVM_NATIVE_ASSETS,
   EVM_TOKEN_ALLOWLIST,
@@ -237,19 +236,6 @@ async function marginedVaultHoldings(
   );
 }
 
-// --- Concentrated-liquidity positions for an address -----------------------
-// Flat holdings for value aggregation, derived from the SAME structured fetch
-// (fetchClPositions) the display cards use — one source of truth, so the summed
-// value and the cards can't drift. The positions list endpoint already returns
-// asset0/asset1 + rewards, so no per-position detail call is needed.
-async function clPositionHoldings(
-  address: string,
-  priceMap: PriceMap
-): Promise<Holding[]> {
-  const positions = await fetchClPositions(address, priceMap);
-  return positions.flatMap((p) => clPositionToHoldings(p));
-}
-
 // Price a holding from another chain (EVM / Solana, whose amount is already in
 // display units) by symbol using the median-priced Osmosis denom so a stray
 // mispriced variant can't win.
@@ -423,20 +409,6 @@ export async function addressBankHoldings(
   }
   return holdings;
 }
-
-// Bank balances (with decomposition) + CL positions for an arbitrary address.
-export async function addressHoldings(
-  address: string,
-  priceMap: PriceMap
-): Promise<Holding[]> {
-  const [bank, cl] = await Promise.all([
-    addressBankHoldings(address, priceMap),
-    clPositionHoldings(address, priceMap),
-  ]);
-  return [...bank, ...cl];
-}
-
-export { gammHoldings, clPositionHoldings, standardHolding, makeHolding };
 
 // --- Sorting / categorization ----------------------------------------------
 function sortingPriority(symbol: string, info: string): number {

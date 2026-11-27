@@ -353,10 +353,10 @@ export async function buildTreasurySnapshot(
           rawCl: [],
         };
       }
-      const [bankHoldings, rawCl] = await Promise.all([
-        addressBankHoldings(a.address, priceMap),
-        fetchRawClPositions(a.address),
-      ]);
+      // Sequential, not Promise.all: mapLimit already runs CONCURRENCY holders
+      // at once, and doubling that against lcd.osmosis.zone invites 429s.
+      const bankHoldings = await addressBankHoldings(a.address, priceMap);
+      const rawCl = await fetchRawClPositions(a.address);
       return { meta: a, bankHoldings, rawCl };
     }
   );

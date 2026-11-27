@@ -263,14 +263,6 @@ export function valueClPositions(
   return out;
 }
 
-// Fetch an address's CL positions as structured cards.
-export async function fetchClPositions(
-  address: string,
-  priceMap: PriceMap
-): Promise<ClPosition[]> {
-  return valueClPositions(await fetchRawClPositions(address), priceMap);
-}
-
 // Resolve a pool id to its two underlying token symbols via the poolmanager
 // endpoint. Used to label a vault whose current decomposition is one-sided (e.g.
 // an out-of-range Margined vault that holds only OSMO) with its true pair.
