@@ -14,6 +14,7 @@ import { formatPercentage, formatNumberWithCommas } from "@/lib/utils";
 import { useRef } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { ScreenshotButtons } from "./ScreenshotButtons";
+import { CHART_TOOLTIP_STYLE } from "./charts/tooltipStyle";
 
 export function OsmosisDashboard() {
   const { data, isLoading, error } = useOsmosisMetrics();
@@ -110,6 +111,7 @@ export function OsmosisDashboard() {
                 <ScreenshotButtons
                   targetRef={burnedPieChartRef}
                   filename="osmo-burned-percentage"
+                  watermark={false}
                   shareText="Share of OSMO supply burned"
                 />
               </div>
@@ -168,13 +170,7 @@ export function OsmosisDashboard() {
                       formatter={(value) =>
                         formatNumberWithCommas(Number(value)) + " OSMO"
                       }
-                      contentStyle={{
-                        backgroundColor: "rgba(31, 10, 41, 0.95)",
-                        backdropFilter: "blur(12px)",
-                        border: "1px solid rgba(255, 255, 255, 0.2)",
-                        borderRadius: "8px",
-                        boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-                      }}
+                      contentStyle={CHART_TOOLTIP_STYLE}
                       labelStyle={{ color: "#fff" }}
                       itemStyle={{ color: "#fff" }}
                     />
@@ -191,6 +187,8 @@ export function OsmosisDashboard() {
               className="pointer-events-none absolute inset-0 flex items-center justify-center"
               aria-hidden="true"
             >
+              {/* eslint-disable-next-line @next/next/no-img-element -- static
+                  decorative icon, class-sized; next/image adds no value. */}
               <img
                 src="/Osmosis_Icon.png"
                 alt=""

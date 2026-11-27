@@ -38,6 +38,7 @@ import { ScreenshotButtons } from "../ScreenshotButtons";
 import { InfoTooltip } from "../ui/InfoTooltip";
 import { DeferUntilVisible } from "../ui/DeferUntilVisible";
 import { StakingRatioChart } from "../charts/StakingRatioChart";
+import { CHART_TOOLTIP_STYLE } from "../charts/tooltipStyle";
 import { RateLimitsCard } from "./RateLimitsCard";
 import {
   NETWORK_EVENTS,
@@ -307,12 +308,7 @@ function MetricLineChart({
                 tickFormatter={(v) => `${v.toFixed(decimals)}${unit}`}
               />
               <Tooltip
-                contentStyle={{
-                  backgroundColor: "rgba(31, 10, 41, 0.95)",
-                  backdropFilter: "blur(12px)",
-                  border: "1px solid rgba(255, 255, 255, 0.2)",
-                  borderRadius: "8px",
-                }}
+                contentStyle={CHART_TOOLTIP_STYLE}
                 labelStyle={{ color: "#fff" }}
                 itemStyle={{ color: "#fff" }}
                 formatter={(value) => [
@@ -1515,12 +1511,7 @@ export function StakingView() {
                 content={<TreemapCell />}
               >
                 <Tooltip
-                  contentStyle={{
-                    backgroundColor: "rgba(31, 10, 41, 0.95)",
-                    backdropFilter: "blur(12px)",
-                    border: "1px solid rgba(255, 255, 255, 0.2)",
-                    borderRadius: "8px",
-                  }}
+                  contentStyle={CHART_TOOLTIP_STYLE}
                   labelStyle={{ color: "#fff" }}
                   itemStyle={{ color: "#fff" }}
                   formatter={(value, _n, p) => [
@@ -1745,12 +1736,7 @@ export function StakingView() {
                     />
                     <Tooltip
                       cursor={{ fill: "rgba(255,255,255,0.06)" }}
-                      contentStyle={{
-                        backgroundColor: "rgba(31, 10, 41, 0.95)",
-                        backdropFilter: "blur(12px)",
-                        border: "1px solid rgba(255, 255, 255, 0.2)",
-                        borderRadius: "8px",
-                      }}
+                      contentStyle={CHART_TOOLTIP_STYLE}
                       labelStyle={{ color: "#fff" }}
                       itemStyle={{ color: "#fff" }}
                       formatter={(value, _n, p) => {
