@@ -33,6 +33,9 @@ const COSMWASM_BASES = [
 ];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Per-request timeout across LCD, CosmWasm, and RPC calls so one hung node
+// fails over to the next endpoint instead of stalling the hourly cron.
+const FETCH_TIMEOUT_MS = 15_000;
 
 // Fetch JSON from an Osmosis LCD with retries per base and fallback across bases.
 export async function fetchLcdJson<T = unknown>(path: string): Promise<T> {
@@ -46,8 +49,12 @@ export async function fetchLcdJson<T = unknown>(path: string): Promise<T> {
       if (attempt > 0) await sleep(initialBackoffMs * 2 ** (attempt - 1));
       const url = base + (path.startsWith("/") ? path : "/" + path);
       try {
-        const resp = await fetch(url);
+        const resp = await fetch(url, {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
         if (resp.ok) return (await resp.json()) as T;
+        await resp.body?.cancel().catch(() => {});
         // Retry/fall back on 5xx (transient) and on 401/403/429: lcd.osmosis.zone
         // BLOCKS some paths with 403 and rate-limits with 429, but another base
         // serves them fine — so these must fall through, never abort the snapshot.
@@ -99,11 +106,15 @@ export async function fetchCosmwasmSmartData<T = unknown>(
     for (;;) {
       if (attempt > 0) await sleep(initialBackoffMs * 2 ** (attempt - 1));
       try {
-        const resp = await fetch(base + path);
+        const resp = await fetch(base + path, {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
         if (resp.ok) {
           const body = (await resp.json()) as { data?: T };
           return body?.data ?? null;
         }
+        await resp.body?.cancel().catch(() => {});
         lastError = new Error(`HTTP ${resp.status} from ${base + path}`);
         const isRateLimit = resp.status === 429 || resp.status === 403;
         const is5xx = resp.status >= 500 && resp.status < 600;
@@ -125,11 +136,65 @@ export async function fetchCosmwasmSmartData<T = unknown>(
   return null;
 }
 
-// --- EVM (Ethereum mainnet) JSON-RPC ---------------------------------------
+// --- Shared JSON-RPC failover (EVM + Solana) -------------------------------
 
-export function isEvmAddress(address: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test(String(address || "").trim());
+// Strip query strings / paths from logged RPC URLs so keyed provider URLs
+// never leak credentials into logs or error messages.
+function endpointLabel(endpoint: string, chainLabel: string): string {
+  try {
+    return new URL(endpoint).origin;
+  } catch {
+    return `<invalid ${chainLabel} RPC URL>`;
+  }
 }
+
+async function fetchJsonRpc<T>(
+  endpoints: string[],
+  chainLabel: string,
+  method: string,
+  params: unknown[],
+  requireResult: boolean
+): Promise<T | undefined> {
+  const payload = { jsonrpc: "2.0", id: 1, method, params };
+  let lastError: Error | null = null;
+
+  for (const endpoint of endpoints) {
+    const label = endpointLabel(endpoint, chainLabel);
+    try {
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (!resp.ok) {
+        await resp.body?.cancel().catch(() => {});
+        lastError = new Error(`HTTP ${resp.status} from ${label}`);
+        continue;
+      }
+      const data = (await resp.json()) as { result?: T; error?: unknown };
+      if (data.error) {
+        lastError = new Error(`RPC error: ${JSON.stringify(data.error)}`);
+        continue;
+      }
+      if (requireResult && data.result === undefined) {
+        lastError = new Error(`Empty result from ${label}`);
+        continue;
+      }
+      return data.result;
+    } catch (e) {
+      lastError = e as Error;
+      logger.warn(
+        `${chainLabel} RPC ${method} at ${label}: ${lastError.message}`
+      );
+    }
+  }
+  throw new Error(
+    `All ${chainLabel} RPC endpoints failed for ${method}. Last: ${lastError?.message ?? "unknown"}`
+  );
+}
+
+// --- EVM (Ethereum mainnet) JSON-RPC ---------------------------------------
 
 async function fetchEvmRpc(
   chainId: string,
@@ -140,37 +205,14 @@ async function fetchEvmRpc(
   if (!endpoints?.length) {
     throw new Error(`No EVM RPC endpoints for chainId ${chainId}`);
   }
-  const payload = { jsonrpc: "2.0", id: 1, method, params };
-  let lastError: Error | null = null;
-
-  for (const endpoint of endpoints) {
-    try {
-      const resp = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!resp.ok) {
-        lastError = new Error(`HTTP ${resp.status} from ${endpoint}`);
-        continue;
-      }
-      const data = (await resp.json()) as {
-        result?: string;
-        error?: unknown;
-      };
-      if (data.error) {
-        lastError = new Error(`RPC error: ${JSON.stringify(data.error)}`);
-        continue;
-      }
-      return data.result ?? "0x";
-    } catch (e) {
-      lastError = e as Error;
-      logger.warn(`EVM RPC ${method} at ${endpoint}: ${lastError.message}`);
-    }
-  }
-  throw new Error(
-    `All EVM RPC endpoints failed for ${method}. Last: ${lastError?.message ?? "unknown"}`
+  const result = await fetchJsonRpc<string>(
+    endpoints,
+    "EVM",
+    method,
+    params,
+    false
   );
+  return result ?? "0x";
 }
 
 // Convert a hex quantity to a decimal number, scaled by `decimals`, using BigInt
@@ -226,13 +268,6 @@ export async function fetchErc20Balance(
 // lamports (native SOL), getTokenAccountsByOwner returns SPL token accounts.
 // Rotates endpoints on failure like the EVM path.
 // ---------------------------------------------------------------------------
-function endpointLabel(endpoint: string): string {
-  try {
-    return new URL(endpoint).origin;
-  } catch {
-    return "<invalid Solana RPC URL>";
-  }
-}
 
 async function fetchSolanaRpc<T>(
   method: string,
@@ -240,41 +275,13 @@ async function fetchSolanaRpc<T>(
 ): Promise<T> {
   const endpoints = SOLANA_RPC_ENDPOINTS;
   if (!endpoints?.length) throw new Error("No Solana RPC endpoints configured");
-  const payload = { jsonrpc: "2.0", id: 1, method, params };
-  let lastError: Error | null = null;
-
-  for (const endpoint of endpoints) {
-    // Keyed provider URLs carry the API key in the query string, so messages
-    // name the endpoint by origin only.
-    const label = endpointLabel(endpoint);
-    try {
-      const resp = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!resp.ok) {
-        lastError = new Error(`HTTP ${resp.status} from ${label}`);
-        continue;
-      }
-      const data = (await resp.json()) as { result?: T; error?: unknown };
-      if (data.error) {
-        lastError = new Error(`RPC error: ${JSON.stringify(data.error)}`);
-        continue;
-      }
-      if (data.result === undefined) {
-        lastError = new Error(`Empty result from ${label}`);
-        continue;
-      }
-      return data.result;
-    } catch (e) {
-      lastError = e as Error;
-      logger.warn(`Solana RPC ${method} at ${label}: ${lastError.message}`);
-    }
-  }
-  throw new Error(
-    `All Solana RPC endpoints failed for ${method}. Last: ${lastError?.message ?? "unknown"}`
-  );
+  return (await fetchJsonRpc<T>(
+    endpoints,
+    "Solana",
+    method,
+    params,
+    true
+  )) as T;
 }
 
 // Native SOL balance (lamports → SOL). getBalance returns { value: lamports }.

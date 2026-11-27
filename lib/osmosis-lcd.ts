@@ -34,12 +34,14 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Helper to perform fetch with retry logic for rate limiting. Exported so
 // sibling LCD modules (lib/governance.ts) reuse the same 429 backoff instead
 // of hand-rolling bare fetches. `timeoutMs` bounds each ATTEMPT (not the
-// whole retry loop); omitted = no timeout, preserving existing callers.
+// whole retry loop) so a stalled socket can't hang a route or cron indefinitely.
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+
 export async function fetchWithRetry(
   url: string,
   maxRetries = 3,
   baseDelay = 1000,
-  timeoutMs?: number
+  timeoutMs = DEFAULT_FETCH_TIMEOUT_MS
 ): Promise<Response> {
   let lastError: Error | null = null;
 
@@ -49,11 +51,13 @@ export async function fetchWithRetry(
         headers: {
           Accept: "application/json",
         },
-        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+        signal: AbortSignal.timeout(timeoutMs),
       });
 
-      // If we get a 429, wait and retry with exponential backoff
-      if (response.status === 429) {
+      // If we get a 429, wait and retry with exponential backoff. On the final
+      // attempt, return the 429 response directly rather than sleeping again.
+      if (response.status === 429 && attempt < maxRetries - 1) {
+        await response.body?.cancel().catch(() => {});
         const retryDelay = baseDelay * Math.pow(2, attempt);
         logger.warn(
           `Rate limited (429) for ${url}, retrying in ${retryDelay}ms (attempt ${attempt + 1}/${maxRetries})`

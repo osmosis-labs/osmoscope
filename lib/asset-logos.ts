@@ -28,14 +28,14 @@ import {
   PRICE_OVERRIDES_BY_DENOM,
 } from "@/config/community-pool";
 
-const ASSETLIST_URL =
+export const ASSETLIST_URL =
   "https://raw.githubusercontent.com/osmosis-labs/assetlists/main/osmosis-1/generated/frontend/assetlist.json";
 
 // Boundary validation: every URI the map can ever serve is rendered as an
 // <img src> by every visitor, so only the repo-controlled hosting path is
 // accepted — one mistaken/compromised assetlist entry must not become a
 // third-party image request.
-const ALLOWED_LOGO_PREFIX = "https://raw.githubusercontent.com/";
+export const ALLOWED_LOGO_PREFIX = "https://raw.githubusercontent.com/";
 
 export interface AssetlistLogoAsset {
   symbol?: string;
@@ -93,48 +93,35 @@ export function buildSymbolLogoMapFrom(
   return bySymbol;
 }
 
-function createAbortController(timeoutMs: number) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  const cleanup = () => clearTimeout(timeout);
-  controller.signal.addEventListener("abort", cleanup, { once: true });
-  return { controller, cleanup };
-}
-
 export async function fetchSymbolLogoMap(): Promise<Record<string, string>> {
   try {
-    const assetlist = createAbortController(10_000);
+    const resp = await fetch(ASSETLIST_URL, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!resp.ok) throw new Error(`assetlist HTTP ${resp.status}`);
+    const data = (await resp.json()) as { assets: AssetlistLogoAsset[] };
+
+    // Best-effort: a Numia outage just leaves the assetlist-only map.
+    let numiaTokens: NumiaLogoToken[] = [];
     try {
-      const resp = await fetch(ASSETLIST_URL, {
-        headers: { Accept: "application/json" },
-        signal: assetlist.controller.signal,
+      // Logos are cosmetic: one short attempt, no retries.
+      const numiaResp = await numiaFetch("/tokens/v2/all", {
+        attempts: 1,
+        timeoutMs: 15_000,
       });
-      if (!resp.ok) throw new Error(`assetlist HTTP ${resp.status}`);
-      const data = (await resp.json()) as { assets: AssetlistLogoAsset[] };
-
-      // Best-effort: a Numia outage just leaves the assetlist-only map.
-      let numiaTokens: NumiaLogoToken[] = [];
-      try {
-        // Logos are cosmetic: one short attempt, no retries.
-        const numiaResp = await numiaFetch("/tokens/v2/all", {
-          attempts: 1,
-          timeoutMs: 15_000,
-        });
-        if (numiaResp.ok) {
-          numiaTokens = (await numiaResp.json()) as NumiaLogoToken[];
-        } else {
-          logger.warn(
-            `Numia symbol join skipped for logo map: HTTP ${numiaResp.status}`
-          );
-        }
-      } catch (error) {
-        logger.warn("Numia symbol join skipped for logo map:", error);
+      if (numiaResp.ok) {
+        numiaTokens = (await numiaResp.json()) as NumiaLogoToken[];
+      } else {
+        logger.warn(
+          `Numia symbol join skipped for logo map: HTTP ${numiaResp.status}`
+        );
       }
-
-      return buildSymbolLogoMapFrom(data.assets ?? [], numiaTokens);
-    } finally {
-      assetlist.cleanup();
+    } catch (error) {
+      logger.warn("Numia symbol join skipped for logo map:", error);
     }
+
+    return buildSymbolLogoMapFrom(data.assets ?? [], numiaTokens);
   } catch (error) {
     logger.warn(
       "Assetlist symbol-logo fetch failed; rows show text only:",

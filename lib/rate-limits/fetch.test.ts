@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   decodeFlowKey,
+  fetchAssetMaps,
   fetchRateLimitPaths,
   type ContractRateLimit,
 } from "./fetch";
@@ -273,6 +274,42 @@ test("fetchRateLimitPaths: rejects a fallback whose pages lag its latest block",
   }) as typeof fetch;
   try {
     await assert.rejects(() => fetchRateLimitPaths(), /below 4990/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchAssetMaps: rejects non-allowlisted logo URIs while keeping symbols", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        assets: [
+          {
+            coinMinimalDenom: "uosmo",
+            symbol: "OSMO",
+            logoURIs: {
+              svg: "https://raw.githubusercontent.com/cosmos/chain-registry/master/osmosis/images/osmo.svg",
+            },
+          },
+          {
+            coinMinimalDenom: "ibc/EVIL",
+            symbol: "EVIL",
+            logoURIs: { svg: "https://evil.example/tracker.svg" },
+          },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    )) as typeof fetch;
+  try {
+    const { symbols, logos } = await fetchAssetMaps();
+    assert.equal(symbols.get("uosmo"), "OSMO");
+    assert.equal(symbols.get("ibc/EVIL"), "EVIL");
+    assert.equal(
+      logos.get("uosmo"),
+      "https://raw.githubusercontent.com/cosmos/chain-registry/master/osmosis/images/osmo.svg"
+    );
+    assert.equal(logos.get("ibc/EVIL"), undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }
