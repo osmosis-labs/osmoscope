@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { refreshRecentRevenue, refreshRecentStakingApr } from "@/lib/snapshot";
-import { logger } from "@/lib/logger";
+import { verifyCronAuth } from "@/lib/cron-auth";
 
 // Hourly protocol-revenue refresh. Run by .github/workflows/cron.yml.
 //
@@ -29,15 +29,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function GET(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    logger.error("CRON_SECRET is not set; refusing to run revenue cron");
-    return NextResponse.json({ error: "Cron not configured" }, { status: 500 });
-  }
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authError = verifyCronAuth(request, "revenue");
+  if (authError) return authError;
 
   const revenueFilled = await refreshRecentRevenue();
   const stakingAprFilled = await refreshRecentStakingApr();

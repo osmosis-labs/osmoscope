@@ -9,6 +9,7 @@ import { logger } from "@/lib/logger";
 import { pruneHistory } from "@/lib/retention";
 import { fetchBondedValidators } from "@/lib/validators";
 import { refreshValidatorLogos } from "@/lib/validator-logos";
+import { verifyCronAuth } from "@/lib/cron-auth";
 
 // Epoch-aware daily snapshot. Run by .github/workflows/cron.yml shortly
 // after the daily epoch window, NOT by page traffic.
@@ -99,15 +100,8 @@ async function runEpochSnapshot(): Promise<Record<string, unknown>> {
 }
 
 export async function GET(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    logger.error("CRON_SECRET is not set; refusing to run snapshot cron");
-    return NextResponse.json({ error: "Cron not configured" }, { status: 500 });
-  }
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authError = verifyCronAuth(request, "snapshot");
+  if (authError) return authError;
 
   // Protocol-revenue maintenance is handled by its own hourly cron
   // (/api/cron/revenue), NOT here: this snapshot cron only fires twice a day in a

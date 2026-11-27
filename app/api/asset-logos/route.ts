@@ -11,14 +11,24 @@ let cache: { at: number; map: Record<string, string> } | null = null;
 // Negative-result backoff: while upstream is failing, retry at most once a
 // minute instead of on every request (each attempt costs two upstream fetches).
 let lastAttempt = 0;
+// Coalesce concurrent cold/stale refreshes so simultaneous requests wait for
+// the in-flight fetch instead of hitting the backoff gate and getting {}.
+let inflight: Promise<void> | null = null;
 
 export async function GET() {
   const stale = !cache || Date.now() - cache.at > 60 * 60_000;
-  if (stale && Date.now() - lastAttempt > 60_000) {
+  if (stale && !inflight && Date.now() - lastAttempt > 60_000) {
     lastAttempt = Date.now();
-    const map = await fetchSymbolLogoMap(); // never throws; {} on failure
-    if (Object.keys(map).length > 0) cache = { at: Date.now(), map };
+    inflight = (async () => {
+      try {
+        const map = await fetchSymbolLogoMap(); // never throws; {} on failure
+        if (Object.keys(map).length > 0) cache = { at: Date.now(), map };
+      } finally {
+        inflight = null;
+      }
+    })();
   }
+  if (inflight) await inflight;
   const map = cache?.map ?? {};
   return NextResponse.json(
     { logos: map },
