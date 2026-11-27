@@ -10,25 +10,19 @@ export const maxDuration = 30;
 let cache: { at: number; map: Record<string, string> } | null = null;
 // Negative-result backoff: while upstream is failing, retry at most once a
 // minute instead of on every request (each attempt costs two upstream fetches).
-let lastAttempt = 0;
-// Coalesce concurrent cold/stale refreshes so simultaneous requests wait for
-// the in-flight fetch instead of hitting the backoff gate and getting {}.
-let inflight: Promise<void> | null = null;
+// Stamped only after a failed attempt, so concurrent cold requests each fetch
+// rather than hitting the gate mid-fetch and getting {}. The refresh stays
+// request-scoped: on Workers a promise shared with a request that is later
+// cancelled may never settle, which would wedge every waiter on the isolate.
+let lastFailure = 0;
 
 export async function GET() {
   const stale = !cache || Date.now() - cache.at > 60 * 60_000;
-  if (stale && !inflight && Date.now() - lastAttempt > 60_000) {
-    lastAttempt = Date.now();
-    inflight = (async () => {
-      try {
-        const map = await fetchSymbolLogoMap(); // never throws; {} on failure
-        if (Object.keys(map).length > 0) cache = { at: Date.now(), map };
-      } finally {
-        inflight = null;
-      }
-    })();
+  if (stale && Date.now() - lastFailure > 60_000) {
+    const map = await fetchSymbolLogoMap(); // never throws; {} on failure
+    if (Object.keys(map).length > 0) cache = { at: Date.now(), map };
+    else lastFailure = Date.now();
   }
-  if (inflight) await inflight;
   const map = cache?.map ?? {};
   return NextResponse.json(
     { logos: map },
