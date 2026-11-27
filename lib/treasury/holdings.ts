@@ -418,7 +418,7 @@ export async function addressHoldings(
   return holdings;
 }
 
-export { gammHoldings, clPositionHoldings, standardHolding, makeHolding };
+export { clPositionHoldings };
 
 // --- Sorting / categorization ----------------------------------------------
 function sortingPriority(symbol: string, info: string): number {

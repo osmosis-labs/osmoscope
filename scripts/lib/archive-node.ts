@@ -99,16 +99,6 @@ let lastRequestTime = 0;
 // Types & Interfaces
 // ===================================
 
-export interface EpochInfo {
-  identifier: string;
-  start_time: string;
-  duration: string;
-  current_epoch: string;
-  current_epoch_start_time: string;
-  current_epoch_start_height: string;
-  epoch_counting_started: boolean;
-}
-
 export interface EpochCache {
   [date: string]: {
     blockHeight: number;
@@ -571,8 +561,7 @@ async function queryBlockHeader(height: number): Promise<BlockHeader> {
 async function interpolationSearchBlockByTimestamp(
   targetTime: Date,
   minHeight: number,
-  maxHeight: number,
-  _avgBlockTimeMs: number
+  maxHeight: number
 ): Promise<number> {
   logger.debug(
     `Interpolation search for timestamp ${targetTime.toISOString()} between blocks ${minHeight}-${maxHeight}`
@@ -719,8 +708,7 @@ async function findBlockHeightForDate(date: string): Promise<number> {
   const blockHeight = await interpolationSearchBlockByTimestamp(
     targetTime,
     minHeight,
-    maxHeight,
-    0 // avgBlockTimeMs is unused by the search; interpolation is time-based
+    maxHeight
   );
 
   logger.info(`Found block ${blockHeight} for date ${date}`);
@@ -761,15 +749,4 @@ export function validateSupply(supply: number): boolean {
 export function validateInflationRate(rate: number): boolean {
   // Historical inflation rate typically 5-20%
   return rate >= 0 && rate <= 25;
-}
-
-export function validateStaking(amount: number): boolean {
-  // Can't stake more than total supply
-  return amount >= 0 && amount <= 800_000_000;
-}
-
-export function validatePercentage(value: string | number): boolean {
-  const num = typeof value === "string" ? parseFloat(value) : value;
-  // Distribution proportions are decimals between 0 and 1
-  return num >= 0 && num <= 1;
 }
