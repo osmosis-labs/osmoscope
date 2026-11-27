@@ -12,6 +12,7 @@ import {
   saveRateLimitSnapshot,
 } from "@/lib/rate-limits/store";
 import { logger } from "@/lib/logger";
+import { verifyCronAuth } from "@/lib/cron-auth";
 
 // IBC rate-limit trip monitor. Run by .github/workflows/cron.yml
 // every 15 minutes: dumps the rate limiter contract's state, computes
@@ -150,15 +151,8 @@ async function sendDegradedNotice(
 }
 
 export async function GET(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    logger.error("CRON_SECRET is not set; refusing to run rate-limit cron");
-    return NextResponse.json({ error: "Cron not configured" }, { status: 500 });
-  }
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authError = verifyCronAuth(request, "rate-limit");
+  if (authError) return authError;
 
   // Manual delivery test (?test=1): push a clearly-labelled synthetic alert
   // through the REAL dispatcher (every configured channel and chat, real

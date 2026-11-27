@@ -87,60 +87,7 @@ Examples:
 
 const CLI_OPTIONS = parseCliArgs();
 const CHECKPOINT_INTERVAL = 10; // Save progress every 10 days
-const CHECKPOINT_FILE = path.join(
-  process.cwd(),
-  "data",
-  "archive-progress.json"
-);
 const OUTPUT_FILE = path.join(process.cwd(), "data", "history-archive.json");
-
-interface Checkpoint {
-  lastProcessedDate: string;
-  recordsGenerated: number;
-  errors: Array<{ date: string; error: string }>;
-  startTime: string;
-}
-
-// ===================================
-// Checkpoint Management
-// ===================================
-
-function _loadCheckpoint(): Checkpoint | null {
-  try {
-    if (fs.existsSync(CHECKPOINT_FILE)) {
-      const content = fs.readFileSync(CHECKPOINT_FILE, "utf-8");
-      return JSON.parse(content);
-    }
-  } catch (error: unknown) {
-    logger.warn("Failed to load checkpoint:", error);
-  }
-  return null;
-}
-
-function _saveCheckpoint(checkpoint: Checkpoint): void {
-  try {
-    // Ensure data directory exists
-    const dataDir = path.dirname(CHECKPOINT_FILE);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-
-    fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify(checkpoint, null, 2));
-    logger.info(`✓ Checkpoint saved: ${checkpoint.recordsGenerated} records`);
-  } catch (error: unknown) {
-    logger.error("Failed to save checkpoint:", error);
-  }
-}
-
-function _clearCheckpoint(): void {
-  try {
-    if (fs.existsSync(CHECKPOINT_FILE)) {
-      fs.unlinkSync(CHECKPOINT_FILE);
-    }
-  } catch (error: unknown) {
-    logger.warn("Failed to clear checkpoint:", error);
-  }
-}
 
 // ===================================
 // Inflation Rate Calculator
@@ -257,12 +204,6 @@ function calculateEstimatedTime(start: Date, end: Date): string {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
 
   return `${hours}h ${minutes}m (${days} days, ~${totalQueries} queries)`;
-}
-
-function _addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
 }
 
 // ===================================
@@ -493,9 +434,10 @@ async function populateHistoricalData(): Promise<HistoricalRecord[]> {
             : undefined,
         };
 
+        const existed = dataMap.has(dateStr);
         dataMap.set(dateStr, record);
         logger.info(
-          `  ✓ Record ${dataMap.has(dateStr) ? "updated" : "created"} for ${dateStr}`
+          `  ✓ Record ${existed ? "updated" : "created"} for ${dateStr}`
         );
         logger.info(`    Supply: ${totalSupply.toLocaleString()} OSMO`);
         logger.info(

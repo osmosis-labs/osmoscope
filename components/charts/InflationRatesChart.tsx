@@ -25,6 +25,7 @@ import { recurringBurned } from "@/lib/one-off-burns";
 import { useState, useMemo, useRef } from "react";
 import { TimeRange, filterDataByTimeRange } from "../TimeRangeSelector";
 import { ChartHeader } from "./ChartHeader";
+import { CHART_TOOLTIP_STYLE } from "./tooltipStyle";
 import { InfoTooltip } from "../ui/InfoTooltip";
 
 // Custom tooltip to show only one "Net Inflation" value
@@ -38,16 +39,7 @@ function CustomTooltip({
   const data = payload[0].payload as Record<string, number | null>;
 
   return (
-    <div
-      style={{
-        backgroundColor: "rgba(31, 10, 41, 0.95)",
-        backdropFilter: "blur(12px)",
-        border: "1px solid rgba(255, 255, 255, 0.2)",
-        borderRadius: "8px",
-        padding: "12px",
-        boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-      }}
-    >
+    <div style={{ ...CHART_TOOLTIP_STYLE, padding: "12px" }}>
       <p style={{ color: "#fff", marginBottom: "8px", fontWeight: "500" }}>
         {label}
       </p>

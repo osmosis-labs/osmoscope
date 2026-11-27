@@ -24,6 +24,8 @@ interface ScreenshotButtonsProps {
   csvRows?: () => CsvRow[];
   /** CSV download filename (no extension). Defaults to `filename`. */
   csvFilename?: string;
+  /** Stamp the Osmosis brandmark on the capture. Default true. */
+  watermark?: boolean;
 }
 
 // Generic fallback caption when a chart doesn't pass its own shareText.
@@ -37,6 +39,7 @@ export function ScreenshotButtons({
   shareText,
   csvRows,
   csvFilename,
+  watermark = true,
 }: ScreenshotButtonsProps) {
   const [isCapturing, setIsCapturing] = useState(false);
   // Synchronous re-entry lock. The buttons are disabled while capturing, but a
@@ -113,7 +116,7 @@ export function ScreenshotButtons({
           }
         }
         await Promise.all(fontPromises);
-      } catch (e) {
+      } catch {
         // Font loading may fail, continue anyway
       }
 
@@ -226,8 +229,7 @@ export function ScreenshotButtons({
       // Copy the original canvas to the new one
       ctx.drawImage(originalCanvas, 0, 0);
 
-      // Add watermark across entire background (skip for burned percentage chart)
-      if (filename !== "osmo-burned-percentage") {
+      if (watermark) {
         try {
           // Load watermark SVG
           const watermarkResponse = await fetch("/Osmosis_Brandmark.svg");
@@ -249,7 +251,7 @@ export function ScreenshotButtons({
             "data:image/svg+xml;base64," +
             btoa(unescape(encodeURIComponent(watermarkSvg)));
 
-          await new Promise<void>((resolve, reject) => {
+          await new Promise<void>((resolve) => {
             img.onload = () => {
               try {
                 // Scale watermark to 12.5% of canvas width for small top watermark
@@ -294,7 +296,7 @@ export function ScreenshotButtons({
       capturingRef.current = false;
       setIsCapturing(false);
     }
-  }, [targetRef]);
+  }, [targetRef, watermark]);
 
   // Share to X. The X intent URL can only carry text + a link (it can't upload
   // a locally-generated image), and the link's rich preview is the generic
@@ -348,9 +350,6 @@ export function ScreenshotButtons({
     const canvas = await captureScreenshot();
     if (!canvas) return;
 
-    // Force a reflow to ensure canvas is fully rendered
-    canvas.offsetHeight;
-
     // Wait for any pending canvas operations
     await new Promise((resolve) =>
       requestAnimationFrame(() => {
@@ -382,7 +381,7 @@ export function ScreenshotButtons({
       console.error("Failed to copy to clipboard:", error);
       // Note: Use the save button if clipboard access is not available
     }
-  }, [captureScreenshot, filename]);
+  }, [captureScreenshot]);
 
   return (
     <div

@@ -51,7 +51,6 @@ export default async function OpengraphImage() {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
-        {/* eslint-disable-next-line @next/next/no-img-element -- ImageResponse renders to a static PNG; next/image is not available here. */}
         <img src={iconSrc} width={104} height={104} alt="" />
         <div style={{ fontSize: 88, fontWeight: 800, letterSpacing: "-2px" }}>
           OSMOscope

@@ -14,6 +14,7 @@ import { formatPercentage, formatNumberWithCommas } from "@/lib/utils";
 import { useRef } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { ScreenshotButtons } from "./ScreenshotButtons";
+import { CHART_TOOLTIP_STYLE } from "./charts/tooltipStyle";
 
 export function OsmosisDashboard() {
   const { data, isLoading, error } = useOsmosisMetrics();
@@ -91,17 +92,17 @@ export function OsmosisDashboard() {
       )}
 
       {/* OSMO Inflation (full width) */}
-      <div className="grid gap-6">
-        <InflationRatesChart
-          inflationRate={data.inflationRate}
-          burnRate={data.burnRate}
-          netInflation={data.netInflation}
-          historicalData={historicalData}
-        />
-      </div>
+      <InflationRatesChart
+        inflationRate={data.inflationRate}
+        burnRate={data.burnRate}
+        netInflation={data.netInflation}
+        historicalData={historicalData}
+      />
 
-      {/* Row: OSMO Burned doughnut and line chart */}
-      <div className="grid gap-6 lg:grid-cols-[1fr_2fr]">
+      {/* Row: OSMO Burned doughnut and line chart. minmax(0, …) tracks, not
+          bare 1fr / auto: those floor at the content's min-content width, so
+          the charts' measured widths pushed both cards past a phone viewport. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
         <Card ref={burnedPieChartRef}>
           <CardHeader>
             <div className="flex items-start justify-between">
@@ -110,6 +111,7 @@ export function OsmosisDashboard() {
                 <ScreenshotButtons
                   targetRef={burnedPieChartRef}
                   filename="osmo-burned-percentage"
+                  watermark={false}
                   shareText="Share of OSMO supply burned"
                 />
               </div>
@@ -168,13 +170,7 @@ export function OsmosisDashboard() {
                       formatter={(value) =>
                         formatNumberWithCommas(Number(value)) + " OSMO"
                       }
-                      contentStyle={{
-                        backgroundColor: "rgba(31, 10, 41, 0.95)",
-                        backdropFilter: "blur(12px)",
-                        border: "1px solid rgba(255, 255, 255, 0.2)",
-                        borderRadius: "8px",
-                        boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-                      }}
+                      contentStyle={CHART_TOOLTIP_STYLE}
                       labelStyle={{ color: "#fff" }}
                       itemStyle={{ color: "#fff" }}
                     />
@@ -191,6 +187,8 @@ export function OsmosisDashboard() {
               className="pointer-events-none absolute inset-0 flex items-center justify-center"
               aria-hidden="true"
             >
+              {/* eslint-disable-next-line @next/next/no-img-element -- static
+                  decorative icon, class-sized; next/image adds no value. */}
               <img
                 src="/Osmosis_Icon.png"
                 alt=""
@@ -203,15 +201,13 @@ export function OsmosisDashboard() {
         <BurnChart burned={data.burned} historicalData={historicalData} />
       </div>
 
-      {/* Row: Circulating Supply (full width) */}
-      <div className="grid gap-6">
-        <TokenBalancesChart
-          burned={data.burned}
-          totalSupply={data.totalSupply}
-          circulating={data.circulating}
-          historicalData={historicalData}
-        />
-      </div>
+      {/* Circulating Supply (full width) */}
+      <TokenBalancesChart
+        burned={data.burned}
+        totalSupply={data.totalSupply}
+        circulating={data.circulating}
+        historicalData={historicalData}
+      />
 
       {/* Fee Flow Chart */}
       <FeeFlowChart historicalData={historicalData} />

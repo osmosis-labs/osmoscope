@@ -323,9 +323,11 @@ async function fetchRouterPrice(denom: string): Promise<number | null> {
 }
 
 // The denom's display exponent per SQS's asset list, cached for the process.
+// Failed / empty fetches are cleared so a transient outage doesn't permanently
+// disable router cross-checks for the lifetime of the process.
 async function fetchSqsExponent(denom: string): Promise<number | null> {
   if (sqsExponents == null) {
-    sqsExponents = (async () => {
+    const pending = (async () => {
       const map: Record<string, number> = {};
       try {
         const resp = await fetch(`${SQS_API_URL}/tokens/metadata`, {
@@ -349,6 +351,12 @@ async function fetchSqsExponent(denom: string): Promise<number | null> {
       }
       return map;
     })();
+    sqsExponents = pending;
+    const resolved = await pending;
+    if (Object.keys(resolved).length === 0 && sqsExponents === pending) {
+      sqsExponents = null;
+    }
+    return resolved[denom] ?? null;
   }
   const exps = await sqsExponents;
   return exps[denom] ?? null;
@@ -517,6 +525,7 @@ async function fetchCoinGeckoPrices(
   const chunkSize = 8;
   const maxRetries = 4;
   const baseSleepMs = 5000;
+  const timeoutMs = 15_000;
 
   for (let i = 0; i < ids.length; i += chunkSize) {
     const chunk = ids.slice(i, i + chunkSize);
@@ -526,7 +535,10 @@ async function fetchCoinGeckoPrices(
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const resp = await fetch(url);
+        const resp = await fetch(url, {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
         if (resp.status === 200) {
           const data = (await resp.json()) as Record<string, { usd?: number }>;
           for (const id of chunk) {
@@ -535,8 +547,9 @@ async function fetchCoinGeckoPrices(
           }
           break;
         }
+        await resp.body?.cancel().catch(() => {});
         if (resp.status === 429) {
-          await sleep(baseSleepMs * attempt);
+          if (attempt < maxRetries) await sleep(baseSleepMs * attempt);
           continue;
         }
         logger.warn(`CoinGecko HTTP ${resp.status} for ${chunk.join(",")}`);
@@ -545,10 +558,10 @@ async function fetchCoinGeckoPrices(
         logger.warn(
           `CoinGecko fetch error for ${chunk.join(",")}: ${(e as Error).message}`
         );
-        await sleep(baseSleepMs * attempt);
+        if (attempt < maxRetries) await sleep(baseSleepMs * attempt);
       }
     }
-    await sleep(3000);
+    if (i + chunkSize < ids.length) await sleep(3000);
   }
 
   return results;

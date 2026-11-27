@@ -34,12 +34,14 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Helper to perform fetch with retry logic for rate limiting. Exported so
 // sibling LCD modules (lib/governance.ts) reuse the same 429 backoff instead
 // of hand-rolling bare fetches. `timeoutMs` bounds each ATTEMPT (not the
-// whole retry loop); omitted = no timeout, preserving existing callers.
+// whole retry loop) so a stalled socket can't hang a route or cron indefinitely.
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+
 export async function fetchWithRetry(
   url: string,
   maxRetries = 3,
   baseDelay = 1000,
-  timeoutMs?: number
+  timeoutMs = DEFAULT_FETCH_TIMEOUT_MS
 ): Promise<Response> {
   let lastError: Error | null = null;
 
@@ -49,11 +51,13 @@ export async function fetchWithRetry(
         headers: {
           Accept: "application/json",
         },
-        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+        signal: AbortSignal.timeout(timeoutMs),
       });
 
-      // If we get a 429, wait and retry with exponential backoff
-      if (response.status === 429) {
+      // If we get a 429, wait and retry with exponential backoff. On the final
+      // attempt, return the 429 response directly rather than sleeping again.
+      if (response.status === 429 && attempt < maxRetries - 1) {
+        await response.body?.cancel().catch(() => {});
         const retryDelay = baseDelay * Math.pow(2, attempt);
         logger.warn(
           `Rate limited (429) for ${url}, retrying in ${retryDelay}ms (attempt ${attempt + 1}/${maxRetries})`
@@ -173,7 +177,7 @@ export async function fetchBalance(address: string): Promise<number> {
 
 // Fetch staked/delegated balance of a specific address
 // Use long cache since delegations rarely change (once a day at most)
-export async function fetchDelegations(address: string): Promise<number> {
+async function fetchDelegations(address: string): Promise<number> {
   try {
     const data: DelegationResponse = await cachedFetch(
       `${LCD_BASE_URL}/cosmos/staking/v1beta1/delegations/${address}`,
@@ -199,9 +203,7 @@ export async function fetchDelegations(address: string): Promise<number> {
 // Fetch OSMO an address is unbonding: no longer delegated, not yet liquid, but
 // still owned by the address. Without this, a restricted entity that undelegates
 // looks like its stake entered circulation for the 14-day unbonding period.
-export async function fetchUnbondingDelegations(
-  address: string
-): Promise<number> {
+async function fetchUnbondingDelegations(address: string): Promise<number> {
   try {
     const data: UnbondingDelegationResponse = await cachedFetch(
       `${LCD_BASE_URL}/cosmos/staking/v1beta1/delegators/${address}/unbonding_delegations`,
@@ -239,7 +241,7 @@ export async function fetchCommunityPool(): Promise<number> {
 }
 
 // Fetch mint params to get developer reward addresses
-export async function fetchMintParams(): Promise<string[]> {
+async function fetchMintParams(): Promise<string[]> {
   try {
     const data: MintParamsResponse = await cachedFetch(
       `${LCD_BASE_URL}/osmosis/mint/v1beta1/params`
@@ -539,82 +541,3 @@ export async function fetchRestrictedSupply(): Promise<number> {
 // restricted.
 export const DEVELOPER_VESTING_MODULE_ADDRESS =
   "osmo1vqy8rqqlydj9wkcyvct9zxl3hc4eqgu3d7hd9k";
-
-// Restricted supply for the live metrics endpoint. Prefer the most recent
-// snapshot value (the daily cron computes and stores it), which avoids the ~34
-// throttled LCD calls the live computation needs. Falls back to computing it
-// live (restricted address set + dev-vesting module) only when no snapshot value
-// exists yet. Dynamic import of historical-file to avoid pulling the DB/storage
-// layer into modules that only need the LCD client.
-async function getLatestRestrictedSupply(): Promise<number> {
-  try {
-    const { getHistory } = await import("./historical-file");
-    const history = await getHistory();
-    for (let i = history.length - 1; i >= 0; i--) {
-      const r = history[i].restrictedSupply;
-      if (r != null && r > 0) return r;
-    }
-  } catch (error) {
-    logger.warn("Could not read restricted supply from history:", error);
-  }
-  // Fallback: compute live (slower).
-  logger.info("No snapshot restricted supply; computing live");
-  const [restrictedEntities, devVestingBalance] = await Promise.all([
-    fetchRestrictedSupply(),
-    fetchBalance(DEVELOPER_VESTING_MODULE_ADDRESS),
-  ]);
-  return restrictedEntities + devVestingBalance;
-}
-
-// Calculate all metrics.
-//
-// Circulating (public float) follows the chain's own methodology
-// (mint keeper GetCirculatingSupply): circulating = total - restricted, where
-// restricted = developer-vesting module balance + community pool + the
-// restricted address set (liquid + staked). Osmometer keeps restricted and
-// community as separate reported columns, so restrictedSupply below EXCLUDES the
-// community pool (reported separately) but INCLUDES the dev-vesting module, and
-// circulating is computed as total - restricted - community to reconcile.
-export async function calculateOsmosisMetrics() {
-  try {
-    // Fetch critical data first.
-    const [mintedSupply, burnedAmount, inflationRate] = await Promise.all([
-      fetchTotalSupply(),
-      fetchBalance(BURN_ADDRESS),
-      fetchInflation(),
-    ]);
-
-    // Community pool (live, one cheap call) and restricted supply.
-    //
-    // Restricted is NOT computed live here: doing so meant ~34 sequential,
-    // throttled LCD calls (balance + delegations for ~17 restricted addresses),
-    // which dominated cold page-load time (~12s). Restricted changes slowly, so
-    // we read the most recent value from the daily snapshot history instead
-    // (written by the snapshot cron), and only fall back to the live computation
-    // if history has no restricted value yet.
-    const [communitySupply, restrictedSupply] = await Promise.all([
-      fetchCommunityPool(),
-      getLatestRestrictedSupply(),
-    ]);
-
-    // Total supply (minted - burned). Burn is the balance sitting at the burn
-    // address; it is removed from supply.
-    const totalSupply = mintedSupply - burnedAmount;
-
-    // Circulating supply (public float).
-    const circulating = totalSupply - restrictedSupply - communitySupply;
-
-    return {
-      burned: burnedAmount,
-      totalSupply: totalSupply,
-      circulating: circulating,
-      inflationRate: inflationRate,
-      mintedSupply: mintedSupply,
-      restrictedSupply: restrictedSupply,
-      communitySupply: communitySupply,
-    };
-  } catch (error) {
-    logger.error("Error calculating Osmosis metrics:", error);
-    throw error;
-  }
-}

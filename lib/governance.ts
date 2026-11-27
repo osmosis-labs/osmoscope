@@ -35,8 +35,6 @@ import {
   TX_INDEX_ENDPOINTS,
 } from "@/config/lcd-endpoints";
 
-export { ARCHIVE_LCD };
-
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 
 // Per-attempt timeout on every LCD call in this module: these run inside the
@@ -138,7 +136,7 @@ export function extractVoterProposalIds(
 // numbered pages advance reliably); per-voter counts are small (tens of txs),
 // so the page cap is generous headroom, and hitting it throws rather than
 // silently undercounting a voter.
-export async function fetchVoterProposalIds(
+async function fetchVoterProposalIds(
   account: string,
   baseUrl: string
 ): Promise<Set<number>> {
