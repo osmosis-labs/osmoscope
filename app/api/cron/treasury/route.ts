@@ -12,6 +12,7 @@ import {
 } from "@/lib/treasury/store";
 import { isMoveConfirmed, MOVE_CONFIRMATIONS } from "@/lib/treasury/move-gate";
 import { logger } from "@/lib/logger";
+import { verifyCronAuth } from "@/lib/cron-auth";
 
 // Hourly community-pool / DAO-treasury snapshot. Run by
 // .github/workflows/cron.yml, NOT by page traffic — the build fans out to dozens of LCD,
@@ -36,15 +37,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function GET(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    logger.error("CRON_SECRET is not set; refusing to run treasury cron");
-    return NextResponse.json({ error: "Cron not configured" }, { status: 500 });
-  }
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authError = verifyCronAuth(request, "treasury");
+  if (authError) return authError;
 
   try {
     // Pass the last good main-pool value so the builder's proportional-move gate

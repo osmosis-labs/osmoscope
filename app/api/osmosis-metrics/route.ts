@@ -12,6 +12,8 @@ import type { OsmosisMetrics } from "@/types/osmosis";
 // figures only change at the epoch boundary, so the snapshot is epoch-fresh and
 // reading it back is near-instant (vs. the previous live computation that did
 // ~40 throttled LCD calls per cold load). Response is CDN-cached 5 minutes.
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const history = await getHistory();

@@ -4,6 +4,7 @@ import { buildTreasurySnapshot } from "@/lib/treasury/snapshot";
 import { logger } from "@/lib/logger";
 
 // The live build fans out to many chain calls and takes ~30s; allow it (dev only).
+export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // Serves the latest stored community-pool / DAO-treasury snapshot for the
