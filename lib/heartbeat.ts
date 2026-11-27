@@ -147,12 +147,14 @@ export async function sendNotice(
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ chat_id: target.chatId, text }),
+            signal: AbortSignal.timeout(15_000),
           }
         )
       : await fetchFn(target.url, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ text }),
+          signal: AbortSignal.timeout(15_000),
         });
   if (!response.ok) {
     // Status only: the URL carries the bot token.

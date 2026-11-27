@@ -11,6 +11,7 @@ import { logger } from "./logger";
 
 const REVENUE_API_URL =
   "https://www.datalenses.zone/numia/osmosis/lensesV2/business/revenue_share_by_source";
+const REVENUE_TIMEOUT_MS = 20_000;
 
 // One day's protocol revenue by source (USD). `date` is YYYY-MM-DD (UTC).
 export interface DailyRevenue {
@@ -46,7 +47,10 @@ export async function fetchDailyRevenue(
     `Fetching protocol revenue from Data Lenses (${startDate} → ${endDate})`
   );
 
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(REVENUE_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(
       `Data Lenses revenue fetch failed: HTTP ${response.status} ${response.statusText}`

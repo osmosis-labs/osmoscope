@@ -2,7 +2,7 @@
 // must leave a denom unpriced rather than value it at 10^6 to 10^18 too much.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildPriceMap, effectivePriceRow } from "./prices";
+import { buildPriceMap, effectivePriceRow, fetchSqsUsdPrice } from "./prices";
 import { decomposeBankDenom } from "./holdings";
 import { aggregateBySymbol } from "./snapshot";
 import {
@@ -250,4 +250,44 @@ test("YieldETH keeps a CoinGecko fallback through its own symbol", async () => {
     await import("../../config/community-pool");
   assert.equal(DENOM_SYMBOL_OVERRIDES[YIELDETH], "YieldETH");
   assert.equal(COINGECKO_ID_BY_SYMBOL.YieldETH, COINGECKO_ID_BY_SYMBOL.ETH);
+});
+
+test("fetchSqsUsdPrice recovers after a transient /tokens/metadata failure", async () => {
+  const originalFetch = globalThis.fetch;
+  let metadataCalls = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/tokens/prices")) {
+      return new Response(
+        JSON.stringify({ "ibc/OUTLIER": { usdc: "999999999" } }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }
+    if (url.includes("/tokens/metadata")) {
+      metadataCalls++;
+      if (metadataCalls === 1) return new Response("down", { status: 503 });
+      return new Response(JSON.stringify({ "ibc/OUTLIER": { decimals: 6 } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("/router/quote")) {
+      return new Response(JSON.stringify({ amount_out: "420000" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+
+  try {
+    // First call: metadata 503 -> cannot corroborate outlier -> drops price.
+    assert.equal(await fetchSqsUsdPrice("ibc/OUTLIER"), null);
+    // Second call: metadata must retry (not stay stuck on an empty cached map)
+    // and resolve via router quote ($0.42).
+    assert.equal(await fetchSqsUsdPrice("ibc/OUTLIER"), 0.42);
+    assert.equal(metadataCalls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

@@ -9,6 +9,7 @@
 // here so downstream code only sees real limits.
 import { logger } from "../logger";
 import { LCD_BASE_URL } from "../osmosis-lcd";
+import { ALLOWED_LOGO_PREFIX, ASSETLIST_URL } from "../asset-logos";
 import {
   RATE_LIMITER_CONTRACT,
   RATE_LIMIT_LCD_FALLBACKS,
@@ -24,12 +25,6 @@ export const HISTORICAL_LCD_ENDPOINTS = [
   "https://osmosis-api.polkachu.com",
   "https://rest.lavenderfive.com:443/osmosis",
 ];
-
-// Generated frontend assetlist, used only to label denoms with human-readable
-// symbols in alerts. A fetch failure degrades to truncated denoms, never to a
-// hard error.
-const ASSETLIST_URL =
-  "https://raw.githubusercontent.com/osmosis-labs/assetlists/main/osmosis-1/generated/frontend/assetlist.json";
 
 // Shapes as stored by the contract (Vec<RateLimit> per path). Amounts are
 // Uint256 decimal strings; period_end is a nanosecond timestamp string.
@@ -294,7 +289,9 @@ export async function fetchAssetMaps(): Promise<{
       if (!asset.coinMinimalDenom) continue;
       if (asset.symbol) symbols.set(asset.coinMinimalDenom, asset.symbol);
       const logo = asset.logoURIs?.svg ?? asset.logoURIs?.png;
-      if (logo) logos.set(asset.coinMinimalDenom, logo);
+      if (logo && logo.startsWith(ALLOWED_LOGO_PREFIX)) {
+        logos.set(asset.coinMinimalDenom, logo);
+      }
     }
   } catch (error) {
     logger.warn(
