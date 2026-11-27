@@ -137,6 +137,7 @@ export function makeMonthlyTicks(
   if (timestamps.length === 0) return undefined;
 
   const ticks: string[] = [];
+  const tickStarts: number[] = []; // ms timestamp of each tick's first point
   const seen = new Set<string>();
   let prevKey = "";
   timestamps.forEach((ts, i) => {
@@ -146,10 +147,24 @@ export function makeMonthlyTicks(
       const label = labels[i];
       if (label !== undefined && !seen.has(label)) {
         ticks.push(label);
+        tickStarts.push(d.getTime());
         seen.add(label);
       }
       prevKey = key;
     }
   });
+  // A window that opens late in a month (1Y from 27 Nov) gets a tick for that
+  // partial month only a few points before the next month's tick, and the two
+  // angled labels overprint ("Nov 2025" over "Dec 2025"). Charts that render
+  // every tick (interval 0) can't thin it away, so drop the stub month's tick.
+  if (
+    ticks.length > 1 &&
+    tickStarts[1] - tickStarts[0] < MIN_LEADING_TICK_GAP_MS
+  ) {
+    ticks.shift();
+  }
   return ticks;
 }
+
+// Minimum span the first (possibly partial) month must cover to keep its tick.
+const MIN_LEADING_TICK_GAP_MS = 10 * 86_400_000;
