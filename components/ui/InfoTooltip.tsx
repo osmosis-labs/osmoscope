@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 // Matches bare or full URLs, plus *.osmosis.zone shorthands, so explainer text
@@ -84,11 +84,34 @@ export function InfoTooltip({
   // stranded on a link inside the just-hidden popover.
   const buttonRef = useRef<HTMLButtonElement>(null);
 
+  const popoverRef = useRef<HTMLSpanElement>(null);
+
   // Report the effective open state up. useEffect so the parent update happens
   // after render, not during it.
   useEffect(() => {
     onOpen?.(open);
   }, [open, onOpen]);
+
+  // Keep the open popover inside the viewport. `align` picks the side, but a
+  // `?` that sits mid-row on a phone (e.g. after a long treasury holder name)
+  // can still push a centred 16rem popover past the edge. The popover remounts
+  // on every open, so it is always measured from its unshifted position.
+  useLayoutEffect(() => {
+    const el = popoverRef.current;
+    if (!open || !el) return;
+    const margin = 8;
+    const viewport = document.documentElement.clientWidth;
+    const { left, right } = el.getBoundingClientRect();
+    const shift =
+      left < margin
+        ? margin - left
+        : right > viewport - margin
+          ? viewport - margin - right
+          : 0;
+    // `transform`, not a margin (ignored when anchored with right-0) and not
+    // `translate` (Tailwind v4's -translate-x-1/2 centring already uses it).
+    if (shift !== 0) el.style.transform = `translateX(${shift}px)`;
+  }, [open]);
 
   return (
     // Focus/blur live on the WRAPPER, not the button, and blur only closes when
@@ -158,23 +181,26 @@ export function InfoTooltip({
       >
         ?
       </button>
-      {/* Pointer-events enabled only when open, so links inside are clickable and
-          focusable; the wrapper's focus containment keeps it open while a link
-          inside has focus. */}
-      <span
-        role="tooltip"
-        className={`absolute z-20 w-64 rounded-lg border border-white/20 bg-osmo-900 p-3 text-left text-xs leading-relaxed font-normal tracking-normal text-osmo-100 normal-case shadow-xl transition-opacity duration-150 ${
-          align === "end"
-            ? "right-0"
-            : align === "start"
-              ? "left-0"
-              : "left-1/2 -translate-x-1/2"
-        } ${placement === "top" ? "bottom-6" : "top-6"} ${
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-      >
-        {linkify(text)}
-      </span>
+      {/* Mounted only while open. A hidden-but-mounted popover still takes up
+          layout, so one near a viewport edge widened the page and gave phones a
+          horizontal scroll even with every tooltip closed. Focusing the `?`
+          opens it, so its links still mount in time for the next Tab; the
+          wrapper's focus containment keeps it open while a link has focus. */}
+      {open && (
+        <span
+          ref={popoverRef}
+          role="tooltip"
+          className={`absolute z-20 w-64 rounded-lg border border-white/20 bg-osmo-900 p-3 text-left text-xs leading-relaxed font-normal tracking-normal text-osmo-100 normal-case shadow-xl ${
+            align === "end"
+              ? "right-0"
+              : align === "start"
+                ? "left-0"
+                : "left-1/2 -translate-x-1/2"
+          } ${placement === "top" ? "bottom-6" : "top-6"}`}
+        >
+          {linkify(text)}
+        </span>
+      )}
     </span>
   );
 }

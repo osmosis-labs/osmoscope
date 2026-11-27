@@ -91,17 +91,17 @@ export function OsmosisDashboard() {
       )}
 
       {/* OSMO Inflation (full width) */}
-      <div className="grid gap-6">
-        <InflationRatesChart
-          inflationRate={data.inflationRate}
-          burnRate={data.burnRate}
-          netInflation={data.netInflation}
-          historicalData={historicalData}
-        />
-      </div>
+      <InflationRatesChart
+        inflationRate={data.inflationRate}
+        burnRate={data.burnRate}
+        netInflation={data.netInflation}
+        historicalData={historicalData}
+      />
 
-      {/* Row: OSMO Burned doughnut and line chart */}
-      <div className="grid gap-6 lg:grid-cols-[1fr_2fr]">
+      {/* Row: OSMO Burned doughnut and line chart. minmax(0, …) tracks, not
+          bare 1fr / auto: those floor at the content's min-content width, so
+          the charts' measured widths pushed both cards past a phone viewport. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
         <Card ref={burnedPieChartRef}>
           <CardHeader>
             <div className="flex items-start justify-between">
@@ -203,15 +203,13 @@ export function OsmosisDashboard() {
         <BurnChart burned={data.burned} historicalData={historicalData} />
       </div>
 
-      {/* Row: Circulating Supply (full width) */}
-      <div className="grid gap-6">
-        <TokenBalancesChart
-          burned={data.burned}
-          totalSupply={data.totalSupply}
-          circulating={data.circulating}
-          historicalData={historicalData}
-        />
-      </div>
+      {/* Circulating Supply (full width) */}
+      <TokenBalancesChart
+        burned={data.burned}
+        totalSupply={data.totalSupply}
+        circulating={data.circulating}
+        historicalData={historicalData}
+      />
 
       {/* Fee Flow Chart */}
       <FeeFlowChart historicalData={historicalData} />

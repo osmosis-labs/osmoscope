@@ -746,7 +746,7 @@ export function TreasuryView() {
       {/* Value pies: by token and by address. Stack to one column below xl (not
           lg) so each pie keeps a full-width, wide legend sooner — otherwise the
           side-by-side legends get squeezed and symbols like PEPE wrap. */}
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <ValuePie
           title="Value by Asset"
           full={tokenFull}
